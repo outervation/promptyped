@@ -37,8 +37,7 @@ testIt aiApiSite aiApiKey model = do
             configCacheDir = "/home/dfxs/memoisationDir_03",
             configBuildTimeoutSeconds = 1000,
             configBuildNumJobs = 32,
-            configBinanceApiKey = "",
-            configBinanceApiSecret = "",
+            configEnvVars = [],
             configTaskMaxFailures = RemainingFailureTolerance 10,
             configForbiddenFiles =
               [ ForbiddenFile "go.mod" cannotModifyDepReason,

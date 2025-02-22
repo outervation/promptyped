@@ -104,8 +104,7 @@ data Config = Config
     configCacheDir :: FilePath,
     configBuildTimeoutSeconds :: Int,
     configBuildNumJobs :: Int,
-    configBinanceApiKey :: Text,
-    configBinanceApiSecret :: Text,
+    configEnvVars :: [(Text, Text)],
     configTaskMaxFailures :: RemainingFailureTolerance,
     configForbiddenFiles :: [ForbiddenFile]
   }
@@ -219,10 +218,7 @@ newtype AppM a = AppM
 getEnvVars :: AppM [(String, String)]
 getEnvVars = do
   cfg <- ask
-  pure
-    [ ("BINANCE_API_KEY", T.unpack $ configBinanceApiKey cfg),
-      ("BINANCE_API_SECRET", T.unpack $ configBinanceApiSecret cfg)
-    ]
+  pure $ map (bimap T.unpack T.unpack) $ configEnvVars cfg
 
 runApp :: Config -> AppState -> AppM a -> IO (Either AppError (a, AppState))
 runApp config appState app =
