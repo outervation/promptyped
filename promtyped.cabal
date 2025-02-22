@@ -1,0 +1,98 @@
+cabal-version:   3.4
+name:            promtyped
+version:         0.1.0.0
+license:         MIT
+license-file:    LICENSE
+category:        Language
+build-type:      Simple
+extra-doc-files: CHANGELOG.md
+
+executable promtyped
+    main-is:            Main.hs
+    hs-source-dirs:     app
+    other-modules:
+        Core
+        CPlusPlus
+        FileSystem
+        GoLang
+        Logging
+        Memoise
+        BuildSystem
+        PromptCommon
+        PromptTexts
+        OpenRouterClient
+        ShapeChecker
+        Tools
+
+    default-language:   GHC2024
+    default-extensions: NoImplicitPrelude
+    ghc-options:        -Wall
+    build-depends:
+        HUnit,
+        QuickCheck,
+        aeson,
+        aeson-schemas,
+        async,
+        base >=4.20,
+        containers,
+        data-default-class,
+        directory,
+        extra,
+        filepath,
+        groups,
+        hslogger,
+        hspec,
+        hspec-core,
+        http-client,
+        http-client-tls,
+        http-types,
+        mtl,
+        process,
+        raw-strings-qq,
+        relude ^>=1.2.0,
+        scientific,
+        servant,
+        servant-client,
+        servant-client-core,
+        temporary,
+        text,
+        time,
+        transformers,
+        vector
+
+test-suite promtyped-tests
+    type:               exitcode-stdio-1.0
+    main-is:            Spec.hs
+    hs-source-dirs:     test app
+    other-modules:
+        MemoiseSpec
+        Core
+        Memoise
+        FileSystem
+        FileSystemSpec
+
+    default-language:   GHC2024
+    default-extensions: NoImplicitPrelude
+    ghc-options:        -Wall -threaded -rtsopts -with-rtsopts=-N
+    build-depends:
+        HUnit,
+        QuickCheck,
+        aeson,
+        async,
+        base >=4.20,
+        containers,
+        directory,
+        extra,
+        filepath,
+        groups,
+        hslogger,
+        hspec,
+        hspec-core,
+        mtl,
+        process,
+        relude ^>=1.2.0,
+        temporary,
+        text,
+        time,
+        transformers,
+        vector
