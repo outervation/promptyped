@@ -20,10 +20,10 @@ import FileSystem qualified as FS
 import Relude
 import ShapeChecker (checkShapesMatch)
 
-data Tool = ToolOpenFile | ToolCloseFile | ToolAppendFile | ToolReplaceFile | ToolInsertInFile | ToolEditFile | ToolPanic | ToolReturn
+data Tool = ToolOpenFile | ToolCloseFile | ToolAppendFile | ToolReplaceFile | ToolInsertInFile | ToolEditFile | ToolRevertFile | ToolPanic | ToolReturn
   deriving (Eq, Ord, Show)
 
-data ToolCall a = ToolCallOpenFile [OpenFileArg] | ToolCallCloseFile [CloseFileArg] | ToolCallAppendFile [AppendFileArg] | ToolCallReplaceFile [AppendFileArg] | ToolCallEditFile [EditFileArg] | ToolCallInsertInFile [InsertInFileArg] | ToolCallPanic PanicArg | ToolCallReturn a
+data ToolCall a = ToolCallOpenFile [OpenFileArg] | ToolCallCloseFile [CloseFileArg] | ToolCallAppendFile [AppendFileArg] | ToolCallReplaceFile [AppendFileArg] | ToolCallEditFile [EditFileArg] | ToolCallRevertFile [RevertFileArg] | ToolCallInsertInFile [InsertInFileArg] | ToolCallPanic PanicArg | ToolCallReturn a
   deriving (Generic, Eq, Ord, Show)
 
 instance (ToJSON a) => ToJSON (ToolCall a)
@@ -37,6 +37,7 @@ toolCallTool (ToolCallAppendFile _) = ToolAppendFile
 toolCallTool (ToolCallReplaceFile _) = ToolReplaceFile
 toolCallTool (ToolCallEditFile _) = ToolEditFile
 toolCallTool (ToolCallInsertInFile _) = ToolInsertInFile
+toolCallTool (ToolCallRevertFile _) = ToolRevertFile
 toolCallTool (ToolCallPanic _) = ToolPanic
 toolCallTool (ToolCallReturn _) = ToolReturn
 
@@ -95,6 +96,15 @@ data InsertInFileArg = InsertInFileArg
 instance ToJSON InsertInFileArg
 
 instance FromJSON InsertInFileArg
+
+data RevertFileArg = RevertFileArg
+  { fileName :: Text
+  }
+  deriving (Generic, Show, Eq, Ord)
+
+instance ToJSON RevertFileArg
+
+instance FromJSON RevertFileArg
 
 truncateAppendFileArg :: AppendFileArg -> AppendFileArg
 truncateAppendFileArg (AppendFileArg name text) = AppendFileArg name $ T.take 100 text
@@ -234,12 +244,13 @@ fromJ txt = do
 
 toolArgFormatAndDesc :: Tool -> (Text, Text)
 toolArgFormatAndDesc ToolReturn = ("{ }", "Return a value; format depends on the task and is described further down below.")
-toolArgFormatAndDesc ToolOpenFile = (toJ OpenFileArg {fileName = "someFile.cc"}, "Load a file into the context")
-toolArgFormatAndDesc ToolCloseFile = (toJ CloseFileArg {fileName = "someFile.cc"}, "Remove a file from the context")
-toolArgFormatAndDesc ToolAppendFile = (toJ AppendFileArg {fileName = "somefile.cc", text = "someCodeHere()"}, "Append code/text to a file. Can be used to create a new file.")
-toolArgFormatAndDesc ToolReplaceFile = (toJ AppendFileArg {fileName = "somefile.cc", text = "someCodeHere()"}, "Replace a file with the provided code/text to a file. Can be used to create a new file. Prefer this over editing when the file is small.")
-toolArgFormatAndDesc ToolEditFile = (toJ EditFileArg {fileName = "somefile.cc", startLineNum = 5, endLineNum = 10, text = "someCodeHere()"}, "Replace text in [startLineNum, endLineNum] with the text you provide. Note if making multiple edits to the same file, the start/end line numbers of different edits cannot overlap. IMPORTANT: if you insert more lines than you're replacing, the rest will be inserted, not replaced. So inserting 2 lines at at startLineNum=15 endLineNum=15 will only replace the existing line 15 in the file, and add the second provided line after that, it won't replace lines 15 and 16. Note too that the line-numbers are provided to you at the START of the line in every file.")
-toolArgFormatAndDesc ToolInsertInFile = (toJ InsertInFileArg {fileName = "somefile.cc", lineNum = 17, text = "someCodeHere()"}, "Insert the provided text into the file at lineNum, not replacing/overwriting the content on that line (instead it's moved to below the inserted text).")
+toolArgFormatAndDesc ToolOpenFile = (toJ OpenFileArg {fileName = "someFile.go"}, "Load a file into the context")
+toolArgFormatAndDesc ToolCloseFile = (toJ CloseFileArg {fileName = "someFile.go"}, "Remove a file from the context")
+toolArgFormatAndDesc ToolAppendFile = (toJ AppendFileArg {fileName = "somefile.go", text = "someCodeHere()"}, "Append code/text to a file. Can be used to create a new file.")
+toolArgFormatAndDesc ToolReplaceFile = (toJ AppendFileArg {fileName = "somefile.go", text = "someCodeHere()"}, "Replace a file with the provided code/text to a file. Can be used to create a new file. Prefer this over editing when the file is small.")
+toolArgFormatAndDesc ToolEditFile = (toJ EditFileArg {fileName = "somefile.go", startLineNum = 5, endLineNum = 10, text = "someCodeHere()"}, "Replace text in [startLineNum, endLineNum] with the text you provide. Note if making multiple edits to the same file, the start/end line numbers of different edits cannot overlap. IMPORTANT: if you insert more lines than you're replacing, the rest will be inserted, not replaced. So inserting 2 lines at at startLineNum=15 endLineNum=15 will only replace the existing line 15 in the file, and add the second provided line after that, it won't replace lines 15 and 16. Note too that the line-numbers are provided to you at the START of the line in every file.")
+toolArgFormatAndDesc ToolInsertInFile = (toJ InsertInFileArg {fileName = "somefile.go", lineNum = 17, text = "someCodeHere()"}, "Insert the provided text into the file at lineNum, not replacing/overwriting the content on that line (instead it's moved to below the inserted text).")
+toolArgFormatAndDesc ToolRevertFile = (toJ RevertFileArg {fileName = "someFile.go"}, "Revert un-added changes in an open file; changes are committed when compilation and unit tests succeed, so will revert to the last version of the file before compilation or unit tests failed. Use this if you get the file in a state you can't recover it from.")
 toolArgFormatAndDesc ToolPanic = (toJ PanicArg {reason = "This task is impossible for me to do because ..."}, "Call this if you can't complete the task due to it being impossible or not having enough information")
 
 mkToolCallSyntax :: Tool -> Text -> Text
@@ -433,6 +444,7 @@ processToolArgs tool@ToolAppendFile args = ToolCallAppendFile <$> processArgsOfT
 processToolArgs tool@ToolReplaceFile args = ToolCallReplaceFile <$> processArgsOfType tool args
 processToolArgs tool@ToolEditFile args = ToolCallEditFile <$> processArgsOfType tool args
 processToolArgs tool@ToolInsertInFile args = ToolCallInsertInFile <$> processArgsOfType tool args
+processToolArgs tool@ToolRevertFile args = ToolCallRevertFile <$> processArgsOfType tool args
 processToolArgs tool@ToolPanic args = ToolCallPanic <$> processArgOfType tool args
 processToolArgs tool@ToolReturn args = ToolCallReturn <$> processArgOfType tool args
 
@@ -536,7 +548,7 @@ runTool :: forall bs a. (ToJSON a, FromJSON a, Show a, BS.BuildSystem bs) => Too
 runTool (ToolCallOpenFile args) origCtxt = do
   theState <- get
   cfg <- ask
-  let initialCtxt = origCtxt -- addToContextAi origCtxt OtherMsg (toJ fullCall)
+  let initialCtxt = origCtxt
   ctxtUpdates <- forM args $ \(OpenFileArg fileName) -> do
     let exists = fileExists fileName theState
         alreadyOpen = fileAlreadyOpen fileName theState
@@ -549,7 +561,7 @@ runTool (ToolCallOpenFile args) origCtxt = do
   return $ foldl' (\acc f -> f acc) initialCtxt ctxtUpdates
 runTool (ToolCallCloseFile args) origCtxt = do
   theState <- get
-  let initialCtxt = origCtxt -- addToContextAi origCtxt OtherMsg (toJ fullCall)
+  let initialCtxt = origCtxt
   ctxtUpdates <- forM args $ \(CloseFileArg fileName) -> do
     let alreadyOpen = fileAlreadyOpen fileName theState
     case alreadyOpen of
@@ -559,7 +571,7 @@ runTool (ToolCallCloseFile args) origCtxt = do
         pure $ \ctxt -> mkSuccess ctxt OtherMsg ("Closed file: " <> fileName)
   return $ foldl' (\acc f -> f acc) initialCtxt ctxtUpdates
 runTool (ToolCallAppendFile args) origCtxt = do
-  let initialCtxt = origCtxt -- addToContextAi origCtxt OtherMsg (toJ . ToolCallAppendFile @a $ map truncateAppendFileArg args)
+  let initialCtxt = origCtxt
   ctxtUpdates <- forM args $ \(AppendFileArg fileName txt) -> pure $ \ctxt ->
     handleFileOperation @bs
       fileName
@@ -570,7 +582,7 @@ runTool (ToolCallAppendFile args) origCtxt = do
       ctxt
   foldlM (\acc f -> f acc) initialCtxt ctxtUpdates
 runTool (ToolCallReplaceFile args) origCtxt = do
-  let initialCtxt = origCtxt -- addToContextAi origCtxt OtherMsg (toJ . ToolCallReplaceFile @a $ map truncateAppendFileArg args)
+  let initialCtxt = origCtxt
   let replaceFile txt fileName = FS.clearFileOnDisk fileName >> FS.appendToFile fileName txt
   ctxtUpdates <- forM args $ \(AppendFileArg fileName txt) -> pure $ \ctxt ->
     handleFileOperation @bs
@@ -582,7 +594,7 @@ runTool (ToolCallReplaceFile args) origCtxt = do
       ctxt
   foldlM (\acc f -> f acc) initialCtxt ctxtUpdates
 runTool (ToolCallInsertInFile args) origCtxt = do
-  let initialCtxt = origCtxt -- addToContextAi origCtxt OtherMsg (toJ . ToolCallInsertInFile @a $ map truncateInsertInFileArg args)
+  let initialCtxt = origCtxt
       sortedArgAttempt = validateAndSortInsertInFileArgs args
   case sortedArgAttempt of
     Left err -> pure $ mkError initialCtxt OtherMsg ("Error in InsertInFile arguments: " <> err)
@@ -597,7 +609,7 @@ runTool (ToolCallInsertInFile args) origCtxt = do
           ctxt
       foldlM (\acc f -> f acc) initialCtxt ctxtUpdates
 runTool (ToolCallEditFile args) origCtxt = do
-  let initialCtxt = origCtxt -- addToContextAi origCtxt OtherMsg (toJ . ToolCallEditFile @a $ map truncateEditFileArg args)
+  let initialCtxt = origCtxt
       sortedArgAttempt = validateAndSortEditFileArgs args
   case sortedArgAttempt of
     Left err -> pure $ mkError initialCtxt OtherMsg ("Error in EditFile arguments: " <> err)
@@ -611,6 +623,19 @@ runTool (ToolCallEditFile args) origCtxt = do
           ("Edited file: " <> fileName)
           ctxt
       foldlM (\acc f -> f acc) initialCtxt ctxtUpdates
+runTool (ToolCallRevertFile args) origCtxt = do
+  cfg <- ask
+  let initialCtxt = origCtxt
+      baseDir = configBaseDir cfg
+  ctxtUpdates <- forM args $ \(RevertFileArg fileName) -> pure $ \ctxt ->
+    handleFileOperation @bs
+      fileName
+      (FS.gitRevertFile baseDir)
+      RequiresOpenFileTrue
+      "cannot revert file that hasn't been opened: "
+      ("Reverted file: " <> fileName)
+      ctxt
+  foldlM (\acc f -> f acc) initialCtxt ctxtUpdates
 runTool (ToolCallPanic arg) _ = throwError $ "AI panicked due to reason= " <> show arg
 runTool (ToolCallReturn arg) ctxt = pure $ addToContextUser ctxt OtherMsg ("Attempted to return value: " <> show arg)
 

@@ -45,6 +45,8 @@ approachSummary =
 It's designed to be an LLM-developed and managed application, so the design should involve many small files, allowing the LLM to easily read and update them without needing to keep large files in context. The amount of dependencies among files should be minimised, so that each file can be understood with a minimum number of other files in context (but at the same time, putting all dependencies in a single source file isn't ideal if that file is really big the aim is to minimise context needed, not just number of files).
 
 IMPORTANT NOTE: To keep context size minimal you won't see your full previous responses/history, so I recommend keeping a journal in "journal.txt", which you can append a short summary of what you're trying to do at each step, and what you plan to do next, in case you expect to have future steps in that task and don't want to lose your train of thought between responses.
+
+When you make changes to a source file, if compilation and unit tests pass then the file is added and committed to a git repo in the base directory. You may use the revert tool where necessary to get back to the last version of a file when compilation and all tests passed.
 |]
 
 projectSummary :: Text -> Text

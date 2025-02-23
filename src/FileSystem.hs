@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module FileSystem (replaceInFile, readFileToText, readFileToTextAndOpen, appendToFile, ensureLineNumbers, toFilePath, getFileNames, fileExistsOnDisk, clearFileOnDisk, runProcessWithTimeout, getFileNamesRecursive, handleExitCode, runAll, gitInit, gitAddAndCommit, ensureNoLineNumbers, addLineNumbersToText, updateOpenedFile, reloadOpenFiles, gitSetupUser) where
+module FileSystem (replaceInFile, readFileToText, readFileToTextAndOpen, appendToFile, ensureLineNumbers, toFilePath, getFileNames, fileExistsOnDisk, clearFileOnDisk, runProcessWithTimeout, getFileNamesRecursive, handleExitCode, runAll, gitInit, gitAddAndCommit, ensureNoLineNumbers, addLineNumbersToText, updateOpenedFile, reloadOpenFiles, gitSetupUser, gitRevertFile) where
 
 import Control.Concurrent.Async (concurrently)
 import Control.Exception (IOException, bracket, try)
@@ -357,3 +357,8 @@ gitAddAndCommit file = do
   liftIO (runAll [gitAdd basePath file, gitCommit basePath ("Modified " <> file)]) >>= \case
     Left err -> throwError err
     Right () -> pure ()
+
+gitRevertFile :: FilePath -> FilePath -> IO (Either Text ())
+gitRevertFile basePath name = DIR.withCurrentDirectory basePath $ do
+  res <- runProcessWithTimeout 10 "." [] "git" ["restore", name]
+  handleExitCode ("'git restore " <> (T.pack name) <> "'") res
