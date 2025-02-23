@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module FileSystem (replaceInFile, readFileToText, readFileToTextAndOpen, appendToFile, ensureLineNumbers, toFilePath, getFileNames, fileExistsOnDisk, clearFileOnDisk, runProcessWithTimeout, getFileNamesRecursive, handleExitCode, runAll, gitInit, gitAddAndCommit, ensureNoLineNumbers, addLineNumbersToText, updateOpenedFile, reloadOpenFiles) where
+module FileSystem (replaceInFile, readFileToText, readFileToTextAndOpen, appendToFile, ensureLineNumbers, toFilePath, getFileNames, fileExistsOnDisk, clearFileOnDisk, runProcessWithTimeout, getFileNamesRecursive, handleExitCode, runAll, gitInit, gitAddAndCommit, ensureNoLineNumbers, addLineNumbersToText, updateOpenedFile, reloadOpenFiles, gitSetupUser) where
 
 import Control.Concurrent.Async (concurrently)
 import Control.Exception (IOException, bracket, try)
@@ -46,10 +46,12 @@ updateOpenedFile fileName = do
   let fmtErr err = "Internal error: failed ensuring no line numbers for " <> fileName <> ": " <> err :: Text
   case fileAlreadyOpen fileName theState of
     False -> throwError $ "Internal error: tried to update non-opened file " <> fileName
-    True -> when (isNothing $ isFileForbidden cfg fileName) $
-      liftIO (ensureNoLineNumbers (toFilePath cfg fileName)) >>= \case
-        Left err -> throwError (fmtErr err)
-        Right contents -> modify' (updateOpenFile fileName (addLineNumbersToText contents))
+    True ->
+      when (isNothing $ isFileForbidden cfg fileName)
+        $ liftIO (ensureNoLineNumbers (toFilePath cfg fileName))
+        >>= \case
+          Left err -> throwError (fmtErr err)
+          Right contents -> modify' (updateOpenFile fileName (addLineNumbersToText contents))
 
 reloadOpenFiles :: AppM ()
 reloadOpenFiles = do
@@ -121,59 +123,59 @@ appendToFile fileName text = do
 
 removeLineNumberComment :: Text -> Text
 removeLineNumberComment line =
-    -- \|
-    --      Removes an existing `/* digits */` comment at the start of a line
-    --      (possibly after some indentation), plus *one space* that follows it,
-    --      if present.
-    --
-    --      For example, if the line is:
-    --
-    --          "    /* 12 */   let x = 42"
-    --
-    --      we want to keep the leading indentation `"    "` intact,
-    --      remove the whole `"/* 12 */"` (including one space), and
-    --      end up with:
-    --
-    --          "    let x = 42"
-    --
-    --      Then `addLineNumbers` will prepend a fresh `/* lineNum */` comment
-    --      again, without accumulating spaces over multiple runs.
-    --
+  -- \|
+  --      Removes an existing `/* digits */` comment at the start of a line
+  --      (possibly after some indentation), plus *one space* that follows it,
+  --      if present.
+  --
+  --      For example, if the line is:
+  --
+  --          "    /* 12 */   let x = 42"
+  --
+  --      we want to keep the leading indentation `"    "` intact,
+  --      remove the whole `"/* 12 */"` (including one space), and
+  --      end up with:
+  --
+  --          "    let x = 42"
+  --
+  --      Then `addLineNumbers` will prepend a fresh `/* lineNum */` comment
+  --      again, without accumulating spaces over multiple runs.
+  --
 
-      -- 1. Separate out the leading indentation (or leading spaces).
-      let (leadingSpaces, afterIndent) = T.span (== ' ') line
-       in case T.stripPrefix "/*" afterIndent of
-            Nothing -> line -- does not start with "/*" after indentation
-            Just afterOpen ->
-              -- afterOpen should look like: " digits */ ...rest..."
-              let (digitsPart, afterDigits) = T.breakOn "*/" afterOpen
-               in case T.stripPrefix "*/" afterDigits of
-                    Nothing ->
-                      -- There's no "*/" after the "/*" => not a proper comment, leave as-is
+  -- 1. Separate out the leading indentation (or leading spaces).
+  let (leadingSpaces, afterIndent) = T.span (== ' ') line
+   in case T.stripPrefix "/*" afterIndent of
+        Nothing -> line -- does not start with "/*" after indentation
+        Just afterOpen ->
+          -- afterOpen should look like: " digits */ ...rest..."
+          let (digitsPart, afterDigits) = T.breakOn "*/" afterOpen
+           in case T.stripPrefix "*/" afterDigits of
+                Nothing ->
+                  -- There's no "*/" after the "/*" => not a proper comment, leave as-is
+                  line
+                Just afterClose ->
+                  -- Check if the part between "/*" and "*/" is all digits (when stripped).
+                  if T.all isDigit (T.strip digitsPart)
+                    then
+                      -- Remove the comment plus exactly *one* space after it, if that space exists.
+                      let afterOneSpace =
+                            case T.uncons afterClose of
+                              Just (' ', rest) -> rest -- remove one space
+                              _ -> afterClose
+                       in leadingSpaces <> afterOneSpace
+                    else
+                      -- The part between "/*" and "*/" wasn't pure digits => keep original line
                       line
-                    Just afterClose ->
-                      -- Check if the part between "/*" and "*/" is all digits (when stripped).
-                      if T.all isDigit (T.strip digitsPart)
-                        then
-                          -- Remove the comment plus exactly *one* space after it, if that space exists.
-                          let afterOneSpace =
-                                case T.uncons afterClose of
-                                  Just (' ', rest) -> rest -- remove one space
-                                  _ -> afterClose
-                           in leadingSpaces <> afterOneSpace
-                        else
-                          -- The part between "/*" and "*/" wasn't pure digits => keep original line
-                          line
 
 addLineNumbers :: V.Vector Text -> V.Vector Text
 addLineNumbers = V.imap addComment
 
 addComment :: Int -> Text -> Text
 addComment idx originalLine =
-      let comment = "/* " <> T.pack (show idx) <> " */"
-       in if T.null originalLine
-            then comment
-            else comment <> " " <> originalLine
+  let comment = "/* " <> T.pack (show idx) <> " */"
+   in if T.null originalLine
+        then comment
+        else comment <> " " <> originalLine
 
 ensureNoLineNumbers :: FilePath -> IO (Either Text Text)
 ensureNoLineNumbers filepath = do
@@ -298,6 +300,37 @@ gitInit :: FilePath -> IO (Either Text ())
 gitInit path = DIR.withCurrentDirectory path $ do
   res <- runProcessWithTimeout 10 "." [] "git" ["init"]
   handleExitCode "'git init'" res
+
+gitSetupUser :: Config -> IO (Either Text ())
+gitSetupUser cfg = do
+  runAll [setupName, setupEmail]
+  where
+    userName = configGitUserName cfg
+    userEmail = configGitUserEmail cfg
+    setupName = do
+      res <-
+        runProcessWithTimeout
+          10
+          "."
+          []
+          "git"
+          [ "config",
+            "user.name",
+            T.unpack userName
+          ]
+      handleExitCode ("'git config user.name " <> userName <> "'") res
+    setupEmail = do
+      res <-
+        runProcessWithTimeout
+          10
+          "."
+          []
+          "git"
+          [ "config",
+            "user.email",
+            T.unpack userEmail
+          ]
+      handleExitCode ("'git config user.email " <> userEmail <> "'") res
 
 gitAdd :: FilePath -> Text -> IO (Either Text ())
 gitAdd path name = DIR.withCurrentDirectory path $ do

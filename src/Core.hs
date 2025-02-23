@@ -105,6 +105,8 @@ data Config = Config
     configBuildTimeoutSeconds :: Int,
     configBuildNumJobs :: Int,
     configEnvVars :: [(Text, Text)],
+    configGitUserName :: Text,
+    configGitUserEmail :: Text,
     configTaskMaxFailures :: RemainingFailureTolerance,
     configForbiddenFiles :: [ForbiddenFile]
   }

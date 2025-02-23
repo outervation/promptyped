@@ -8,7 +8,7 @@ import Core
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
 import Data.Time.Clock (NominalDiffTime, secondsToNominalDiffTime)
-import FileSystem (gitInit, handleExitCode, runAll, runProcessWithTimeout)
+import FileSystem (gitInit, gitSetupUser, handleExitCode, runAll, runProcessWithTimeout)
 import PromptTexts (binanceApiDoc)
 import Relude
 import System.Directory qualified as Dir
@@ -21,15 +21,23 @@ eitherToMaybe _ = Nothing
 
 setupDirectoryGo ::
   -- | Path to the project directory
-  FilePath ->
+  Config ->
   IO (Maybe Text)
-setupDirectoryGo path = do
+setupDirectoryGo cfg = do
   Dir.createDirectoryIfMissing True path
   Dir.withCurrentDirectory path $ do
     let goModFile = path FP.</> "go.mod"
     alreadyExists <- Dir.doesFileExist goModFile
-    eitherToMaybe <$> runAll [makeIfNotAlreadyExists alreadyExists, addDeps, addDocs, gitInit path]
+    eitherToMaybe
+      <$> runAll
+        [ makeIfNotAlreadyExists alreadyExists,
+          addDeps,
+          addDocs,
+          gitInit path,
+          gitSetupUser cfg
+        ]
   where
+    path = configBaseDir cfg
     timeout = 60
 
     tidyIt = do
@@ -118,7 +126,7 @@ instance BuildSystem GoLang where
     let timeout = secondsToNominalDiffTime . fromIntegral $ configBuildTimeoutSeconds cfg
     liftIO $ runTestsGo timeout baseDir envVars
 
-  setupProject cfg = liftIO $ setupDirectoryGo $ configBaseDir cfg
+  setupProject cfg = liftIO $ setupDirectoryGo cfg
 
   isBuildableFile fileName = pure $ isCPlusPlusFileExtension fileName
 

@@ -7,33 +7,30 @@ category:        Language
 build-type:      Simple
 extra-doc-files: CHANGELOG.md
 
-executable promtyped
-    main-is:            Main.hs
-    hs-source-dirs:     app
-    other-modules:
+library
+    exposed-modules:
         Core
-        CPlusPlus
         FileSystem
-        GoLang
-        Logging
         Memoise
-        BuildSystem
         PromptCommon
         PromptTexts
+        Engine
+        Tools
+        CPlusPlus
+        GoLang
+        Logging
+        BuildSystem
         OpenRouterClient
         ShapeChecker
-        Tools
 
+    hs-source-dirs:     src
     default-language:   GHC2024
     default-extensions: NoImplicitPrelude
     ghc-options:        -Wall
     build-depends:
-        HUnit,
-        QuickCheck,
-        aeson,
-        aeson-schemas,
-        async,
         base >=4.20,
+        aeson,
+        async,
         containers,
         data-default-class,
         directory,
@@ -41,8 +38,6 @@ executable promtyped
         filepath,
         groups,
         hslogger,
-        hspec,
-        hspec-core,
         http-client,
         http-client-tls,
         http-types,
@@ -50,10 +45,40 @@ executable promtyped
         process,
         raw-strings-qq,
         relude ^>=1.2.0,
-        scientific,
         servant,
         servant-client,
         servant-client-core,
+        text,
+        time,
+        transformers,
+        vector
+
+executable promtyped
+    main-is:            Main.hs
+    hs-source-dirs:     app
+    default-language:   GHC2024
+    default-extensions: NoImplicitPrelude
+    ghc-options:        -Wall
+    build-depends:
+        promtyped,
+        HUnit,
+        QuickCheck,
+        aeson,
+        aeson-schemas,
+        async,
+        base >=4.20,
+        containers,
+        directory,
+        extra,
+        filepath,
+        groups,
+        hslogger,
+        hspec,
+        hspec-core,
+        mtl,
+        process,
+        relude ^>=1.2.0,
+        scientific,
         temporary,
         text,
         time,
@@ -63,22 +88,18 @@ executable promtyped
 test-suite promtyped-tests
     type:               exitcode-stdio-1.0
     main-is:            Spec.hs
-    hs-source-dirs:     test app
+    hs-source-dirs:     test
     other-modules:
         MemoiseSpec
-        Core
-        Memoise
-        FileSystem
         FileSystemSpec
 
     default-language:   GHC2024
     default-extensions: NoImplicitPrelude
     ghc-options:        -Wall -threaded -rtsopts -with-rtsopts=-N
     build-depends:
+        promtyped,
         HUnit,
         QuickCheck,
-        aeson,
-        async,
         base >=4.20,
         containers,
         directory,

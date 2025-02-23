@@ -533,7 +533,7 @@ openFile fileName cfg = do
   FS.updateOpenedFile fileName
 
 runTool :: forall bs a. (ToJSON a, FromJSON a, Show a, BS.BuildSystem bs) => ToolCall a -> Context -> AppM Context
-runTool fullCall@(ToolCallOpenFile args) origCtxt = do
+runTool (ToolCallOpenFile args) origCtxt = do
   theState <- get
   cfg <- ask
   let initialCtxt = origCtxt -- addToContextAi origCtxt OtherMsg (toJ fullCall)
@@ -547,7 +547,7 @@ runTool fullCall@(ToolCallOpenFile args) origCtxt = do
         unless exists $ modify' (addExistingFile fileName "")
         pure $ \ctxt -> mkSuccess ctxt OtherMsg ("Opened file: " <> fileName)
   return $ foldl' (\acc f -> f acc) initialCtxt ctxtUpdates
-runTool fullCall@(ToolCallCloseFile args) origCtxt = do
+runTool (ToolCallCloseFile args) origCtxt = do
   theState <- get
   let initialCtxt = origCtxt -- addToContextAi origCtxt OtherMsg (toJ fullCall)
   ctxtUpdates <- forM args $ \(CloseFileArg fileName) -> do

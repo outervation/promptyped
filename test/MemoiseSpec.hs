@@ -83,8 +83,8 @@ testWithCache useExistingCache = do
             configCacheDir = "./",
             configBuildTimeoutSeconds = 60,
             configBuildNumJobs = 1,
-            configBinanceApiKey = "",
-            configBinanceApiSecret = "",
+            configGitUserName = "",
+            configGitUserEmail = "",
             configTaskMaxFailures = 1,
             configForbiddenFiles = []
           }
