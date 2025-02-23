@@ -46,8 +46,7 @@ instance FromJSON ThingsWithDependencies
 
 topologicalSortThingsWithDependencies :: [ExistingFile] -> ThingsWithDependencies -> Either Text [ThingWithDependencies]
 topologicalSortThingsWithDependencies existingFiles (ThingsWithDependencies files) = do
-  let existingFileNames = map existingFileName existingFiles
-  let isDoc name = isDocFileExtension name -- && elem name existingFileNames
+  let isDoc name = isDocFileExtension name && elem name (map existingFileName existingFiles)
   -- 1. Build a map from fileName -> ThingWithDependencies
   let fileMap :: Map Text ThingWithDependencies
       fileMap = Map.fromList [(f.name, f) | f <- files]

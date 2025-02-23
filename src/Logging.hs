@@ -1,4 +1,4 @@
-module Logging (logInfo, logWarn, initializeLogger) where
+module Logging (logInfo, logWarn, logDebug, initializeLogger) where
 
 import Data.Text as T
 import Relude
@@ -7,21 +7,27 @@ import System.Log.Handler (setFormatter)
 import System.Log.Handler.Simple
 import System.Log.Logger
 
-initializeLogger :: FilePath -> Priority -> IO ()
-initializeLogger logFile priority = do
+initializeLogger :: FilePath -> FilePath -> Priority -> IO ()
+initializeLogger mainLogFile debugLogFile priority = do
   removeAllHandlers
-  -- Create a file handler
-  theFileHandler <- fileHandler logFile priority
+
+  -- Create main file handler for non-debug logs
+  mainHandler <- fileHandler mainLogFile priority
+
+  -- Create debug file handler that only accepts debug messages
+  debugHandler <- fileHandler debugLogFile DEBUG
 
   -- Create a formatter that includes timestamp
   let format = simpleLogFormatter "[$time $loggername $prio] $msg"
 
-  -- Set the formatter for the handler
-  let handler = setFormatter theFileHandler format
+  -- Set formatters for both handlers
+  let mainHandlerFormatted = setFormatter mainHandler format
+      debugHandlerFormatted = setFormatter debugHandler format
 
-  -- Update the root logger
-  updateGlobalLogger rootLoggerName (setLevel priority)
-  updateGlobalLogger rootLoggerName (addHandler handler)
+  -- Update the root logger with both handlers
+  updateGlobalLogger rootLoggerName (setLevel (min priority DEBUG)) -- Ensure DEBUG messages are processed
+  updateGlobalLogger rootLoggerName (addHandler mainHandlerFormatted)
+  updateGlobalLogger rootLoggerName (addHandler debugHandlerFormatted)
 
 logInfo :: Text -> Text -> IO ()
 logInfo context msg = do
@@ -30,3 +36,7 @@ logInfo context msg = do
 logWarn :: Text -> Text -> IO ()
 logWarn context msg = do
   warningM (T.unpack context) (T.unpack msg)
+
+logDebug :: Text -> Text -> IO ()
+logDebug context msg = do
+  debugM (T.unpack context) (T.unpack msg)

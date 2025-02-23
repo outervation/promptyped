@@ -302,7 +302,7 @@ gitInit path = DIR.withCurrentDirectory path $ do
   handleExitCode "'git init'" res
 
 gitSetupUser :: Config -> IO (Either Text ())
-gitSetupUser cfg = do
+gitSetupUser cfg = DIR.withCurrentDirectory (configBaseDir cfg) $ do
   runAll [setupName, setupEmail]
   where
     userName = configGitUserName cfg

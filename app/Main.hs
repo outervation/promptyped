@@ -13,6 +13,7 @@ import GoLang (GoLang)
 import Logging qualified
 import PromptCommon
 import Relude
+import System.FilePath qualified as FP
 import System.Log.Logger qualified as Logger
 
 data AppConfig = AppConfig
@@ -21,7 +22,7 @@ data AppConfig = AppConfig
     modelName :: Text,
     baseDir :: Text,
     cacheDir :: Text,
-    logFilePath :: Text,
+    logFileDir :: Text,
     buildTimeoutSeconds :: Int,
     buildNumJobs :: Int,
     gitUserName :: Text,
@@ -63,7 +64,12 @@ makeGoBinanceApiDataRecorder aCfg = do
   existingFileNames <- FS.getFileNamesRecursive ["build", "contrib", ".git"] (T.unpack $ baseDir aCfg)
   let existingFiles = map (`ExistingFile` "") existingFileNames
   let initialState = AppState mempty [] existingFiles (CompileTestState Nothing Nothing)
-  Logging.initializeLogger (T.unpack $ logFilePath aCfg) Logger.INFO
+  let logDir = T.unpack $ logFileDir aCfg
+  let logPath = logDir FP.</> "promptyped_binapi_downloader.log"
+  let debugLogPath = logDir FP.</> "promptyped_binapi_downloader.debug.log"
+  Logging.initializeLogger logPath debugLogPath Logger.INFO
+  liftIO $ Logging.logInfo "Initial config" (show cfg)
+  liftIO $ Logging.logInfo "Initial state" (show initialState)
   res <- runApp cfg initialState (makeProject @GoLang)
   putTextLn $ "Result: " <> show res
 

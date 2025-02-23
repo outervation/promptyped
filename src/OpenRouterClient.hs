@@ -385,7 +385,7 @@ retryWithDelay maxAttempts delayMicros shouldLog action = go maxAttempts
 sendQuery :: Text -> Text -> Text -> Text -> Text -> [Message] -> IO (Either Text QueryResult)
 sendQuery apiSite apiKey siteUrl siteName model msgs = do
   let query = if apiSite /= "openrouter.ai" then sendQueryRaw else sendQueryStreaming
-  Logging.logInfo "sendQuery" (show msgs)
+  Logging.logDebug "sendQuery" (show msgs)
   queryResult <- retryWithDelay 5 3000000 ShouldLog $ query apiSite apiKey siteUrl siteName model msgs
   case queryResult of
     Left err -> pure $ Left $ "Error sending query to openrouter: " <> show err
