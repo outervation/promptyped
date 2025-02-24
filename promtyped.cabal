@@ -58,6 +58,9 @@ executable promtyped
     hs-source-dirs:     app
     default-language:   GHC2024
     default-extensions: NoImplicitPrelude
+    other-modules:
+       AppConfig 
+       BinanceApiDataRecorder
     ghc-options:        -Wall
     build-depends:
         promtyped,
