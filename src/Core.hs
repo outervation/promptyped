@@ -26,6 +26,9 @@ instance ToJSON OpenFile
 
 instance FromJSON OpenFile
 
+renderOpenFile :: OpenFile -> Text
+renderOpenFile (OpenFile name contents) = "{ openFileName: " <> name <> ", openFileContents:\n" <> contents <> "\n}"
+
 data ExistingFile = ExistingFile
   { existingFileName :: Text,
     existingFileDesc :: Text
