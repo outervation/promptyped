@@ -1,0 +1,13 @@
+{
+    "apiKey": "sk-or-v1-123456789...",
+    "apiSite": "openrouter.ai",
+    "modelName": "openai/o3-mini-high",
+    "baseDir": "/home/userName/gobinapi",
+    "cacheDir": "/home/userName/memoisationDir",
+    "logFileDir": "/home/userName/logs",
+    "buildTimeoutSeconds": 1000,
+    "buildNumJobs": 32,
+    "gitUserName": "User Name",
+    "gitUserEmail": "user.name@domain.com",
+    "taskMaxFailures": 10
+}
