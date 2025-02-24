@@ -1,5 +1,4 @@
 **Promptyped**
-*Naming things is a nontrivial problem*
 
 This repository provides a structured way to integrate Large Language Models (LLMs) into typed workflows; a preliminary, embedded implementation of a NOn-deterministic exTremely-high-level Programming Language, (a NOTPL). It achieves this via typed prompts/responses, tools (functions the model can call), smart context management and a build/test system abstraction. The goal is to guide an LLM through multi-step tasks, ensuring outputs conform to expected types, source files compile and unit tests pass, and allowing the LLM to “call” predefined tools to manipulate files or perform other actions necessary for task completion.
 
