@@ -8,6 +8,7 @@ module Tools where
 
 import BuildSystem qualified as BS
 import Control.Monad.Except
+import Text.Regex.PCRE qualified as PCRE
 import Core
 import Data.Aeson as AE
 import Data.Aeson.Types qualified as AET
@@ -272,6 +273,25 @@ toolsToDescription tools = toolSummary <> "\nAll available tools: \n" <> T.unlin
 
 tmp :: Text
 tmp = "AppendFile<[{\"fileName\":\"websocket_client.h\",\"text\":\"#pragma once\\n\\n#include <libwebsockets.h>\\n#include \\\"config.h\\\"\\n#include \\\"simdjson.h\\\"\\n#include \\\"book_data.h\\\"\\n#include \\\"trade_data.h\\\"\\n#include <spdlog/spdlog.h>\\n#include <functional>\\n\\nnamespace websocket {\\n\\nstruct Handler {\\n    virtual void on_trade(const trade_data::TradeEvent& trade) = 0;\\n    virtual void on_agg_trade(const trade_data::AggTradeEvent& agg_trade) = 0;\\n    virtual void on_book_update(const book_data::BookUpdate& update) = 0;\\n    virtual void on_best_bid_ask(const book_data::BestBidAsk& update) = 0;\\n    virtual void request_snapshot(const std::string& symbol) = 0;\\n    virtual ~Handler() = default;\\n};\\n\\nnamespace core {\\n    bool check_sequence_gap(uint64_t last_update_id, const book_data::BookUpdate& update);\\n    void process_message(simdjson::ondemand::document& doc, Handler& handler);\\n}\\n\\nclass WebSocketClient {\\npublic:\\n    WebSocketClient(config::BinanceConfig config, Handler& handler);\\n    ~WebSocketClient();\\n\\n    void connect();\\n    void poll(int timeout_ms = 0);\\n\\nprivate:\\n    static int lws_callback(lws* wsi, lws_callback_reasons reason, void* user, void* in, size_t len);\\n    int handle_callback(lws* wsi, lws_callback_reasons reason, void* in, size_t len);\\n\\n    lws_context* context = nullptr;\\n    lws* wsi = nullptr;\\n    config::BinanceConfig config;\\n    Handler& handler;\\n    simdjson::ondemand::parser json_parser;\\n};\\n\\n} // namespace websocket\\n\"}]>\nOpenFile=<[{\"fileName\":\"websocket_client.h\"}]>\n\nReturn=<[{\"createdFiles\":[{\"createdFileName\":\"websocket_client.h\",\"createdFileSummary\":\"Libwebsockets wrapper for Binance with message processing core. Handles WS connection lifecycle, message parsing using simdjson, sequence gap detection, and event dispatch to handler interfaces. Separates pure message validation (check_sequence_gap) from IO-bound WS ops. Uses config::BinanceConfig for endpoints and symbols. Pure core logic in namespace allows testing without live connection.\"}]}]>"
+
+-- | Extract all occurrences of the pattern:
+--
+--    RAWSTRING[someName]=[R| ...contents... |R]
+--
+-- Returns a list of (someName, contents) pairs.
+extractRawStrings :: Text -> [(Text, Text)]
+extractRawStrings input =
+  -- The '(?s)' inline modifier makes '.' match newlines as well, allowing
+  -- multiline contents in the second capturing group.
+  let pattern  = "RAWSTRING\\[([^\\]]+)\\]=\\[R\\|(?s)(.*?)\\|R\\]" :: String
+      -- The ':: [[Text]]' means we get a list of matches,
+      -- each match is a list of captured groups:
+      --   index 0 = the entire match
+      --   index 1 = the text matching ([^\\]]+)
+      --   index 2 = the text matching (?s)(.*?)
+      allMatches :: [[String]]
+      allMatches = (T.unpack input) PCRE.=~ pattern
+   in map (\matchGroups -> (T.pack (matchGroups !! 1), T.pack (matchGroups !! 2))) allMatches
 
 extractFnCalls :: Text -> Text -> Either Text [AET.Object]
 extractFnCalls fullText fnName =

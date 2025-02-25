@@ -83,6 +83,7 @@ testWithCache useExistingCache = do
             configCacheDir = "./",
             configBuildTimeoutSeconds = 60,
             configBuildNumJobs = 1,
+            configEnvVars = [],
             configGitUserName = "",
             configGitUserEmail = "",
             configTaskMaxFailures = 1,

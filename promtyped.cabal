@@ -45,6 +45,7 @@ library
         process,
         raw-strings-qq,
         relude ^>=1.2.0,
+        regex-pcre,
         servant,
         servant-client,
         servant-client-core,
@@ -95,6 +96,7 @@ test-suite promtyped-tests
     other-modules:
         MemoiseSpec
         FileSystemSpec
+        ToolsSpec
 
     default-language:   GHC2024
     default-extensions: NoImplicitPrelude
