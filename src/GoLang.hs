@@ -105,7 +105,7 @@ runTestsGo ::
   IO (Maybe Text)
 runTestsGo timeout dir newEnv = Dir.withCurrentDirectory dir $ do
   putTextLn $ "Testing Go project in dir " <> toText dir
-  testResult <- runProcessWithTimeout timeout "." newEnv "go" ["test", "./..."]
+  testResult <- runProcessWithTimeout timeout "." newEnv "go" ["test", "-timeout", "20s", "./..."]
   eitherToMaybe <$> handleExitCode "'go test'" testResult
 
 isCPlusPlusFileExtension :: Text -> Bool
@@ -129,6 +129,8 @@ instance BuildSystem GoLang where
   setupProject cfg = liftIO $ setupDirectoryGo cfg
 
   isBuildableFile fileName = pure $ isCPlusPlusFileExtension fileName
+
+  getIgnoredDirs = pure $ ["build", ".git", "contrib"]
 
 parquetDoc :: Text
 parquetDoc =

@@ -2,21 +2,15 @@
 
 module BinanceApiDataRecorder where
 
-import PromptCommon
-import Relude
 import AppConfig
 import Core
-import Data.Aeson
-import Data.ByteString.Lazy qualified as BS
 import Data.Text qualified as T
-import FileSystem qualified as FS
 import GoLang (GoLang)
 import Logging qualified
 import PromptCommon
 import Relude
 import System.FilePath qualified as FP
 import System.Log.Logger qualified as Logger
-
 
 makeGoBinanceApiDataRecorder :: AppConfig -> IO ()
 makeGoBinanceApiDataRecorder aCfg = do
@@ -39,9 +33,7 @@ makeGoBinanceApiDataRecorder aCfg = do
                 ForbiddenFile "go.sum" cannotModifyDepReason
               ]
           }
-  existingFileNames <- FS.getFileNamesRecursive ["build", "contrib", ".git"] (T.unpack $ baseDir aCfg)
-  let existingFiles = map (`ExistingFile` "") existingFileNames
-  let initialState = AppState mempty [] existingFiles (CompileTestState Nothing Nothing)
+  let initialState = AppState mempty [] [] (CompileTestState Nothing Nothing)
   let logDir = T.unpack $ logFileDir aCfg
   let logPath = logDir FP.</> "promptyped_binapi_downloader.log"
   let debugLogPath = logDir FP.</> "promptyped_binapi_downloader.debug.log"

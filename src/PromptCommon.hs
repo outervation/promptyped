@@ -131,10 +131,14 @@ validateCreatedFiles :: CreatedFiles -> AppM (Either (MsgKind, Text) [CreatedFil
 validateCreatedFiles cf = do
   st <- get
   let files = createdFiles cf
-  let check x = case fileExists (createdFileName x) st of
-        True -> pure $ Right ()
-        False -> pure . Left $ "Claimed to have created file " <> show x <> " but it doesn't exist. Did you remember to call AppendFile/OpenFile?"
-  liftIO (foldWithErrors check files) >>= either (pure . Left . (OtherMsg,)) (const $ pure $ Right files)
+  compilationAndTestsOkay <- checkCompileTestResults
+  case compilationAndTestsOkay of
+    Left err -> pure $ Left err
+    Right () -> do
+      let check x = case fileExists (createdFileName x) st of
+            True -> pure $ Right ()
+            False -> pure . Left $ "Claimed to have created file " <> show x <> " but it doesn't exist. Did you remember to call AppendFile/OpenFile?"
+      liftIO (foldWithErrors check files) >>= either (pure . Left . (OtherMsg,)) (const $ pure $ Right files)
 
 data UnitTest = UnitTest
   { unitTestName :: Text,
@@ -171,16 +175,19 @@ instance ToJSON UnitTestDone
 
 instance FromJSON UnitTestDone
 
+checkCompileTestResults :: AppM (Either (MsgKind, Text) ())
+checkCompileTestResults = do
+  st <- get
+  let res = stateCompileTestRes st
+  pure $ case (compileRes res, testRes res) of
+    (Nothing, Nothing) -> Right ()
+    (Just compileErr, _) -> Left (CompileFailMsg, "Error, compilation failed, fix it before returning. Note that if you see a 'missing import path' compilation error, it may be because you forgot a closing ')' for the go import list. If you see 'is not a package path' when trying to import a local file you created, remember you should include 'project_name/filename', NOT '/home/username/project_name/filename' or 'username/project_name/filename' The last error was: " <> compileErr)
+    (Nothing, Just testErr) -> Left (TestFailMsg, "Error, unit tests didn't all pass, fix them first. I encourage you to add more logging/printf for debugging if necessary, and to record your current step and planned future steps in the journal.txt . The last error was: " <> testErr)
+
 validateUnitTest :: UnitTestDone -> AppM (Either (MsgKind, Text) ())
 validateUnitTest t = case unitTestPassedSuccessfully t of
   False -> pure $ Left (OtherMsg, "Your return value of false indicates it didn't pass successfully")
-  True -> do
-    st <- get
-    let res = stateCompileTestRes st
-    pure $ case (compileRes res, testRes res) of
-      (Nothing, Nothing) -> Right ()
-      (Just compileErr, _) -> Left (CompileFailMsg, "Error, compilation failed, fix it before returning. Note that if you see a 'missing import path' compilation error, it may be because you forgot a closing ')' for the go import list. If you see 'is not a package path' when trying to import a local file you created, remember you should include 'project_name/filename', NOT '/home/username/project_name/filename' or 'username/project_name/filename' The last error was: " <> compileErr)
-      (Nothing, Just testErr) -> Left (TestFailMsg, "Error, unit tests didn't all pass, fix them first. I encourage you to add more logging/printf for debugging if necessary, and to record your current step and planned future steps in the journal.txt . The last error was: " <> testErr)
+  True -> checkCompileTestResults
 
 clearJournal :: AppM ()
 clearJournal = do
@@ -254,6 +261,9 @@ makeProject = do
   liftIO $ DIR.createDirectoryIfMissing True cfg.configBaseDir
   setupRes <- BS.setupProject @bs cfg
   when (isJust setupRes) $ throwError $ "Error setting up base project dir: " <> show setupRes
+  ignoredDirs <- BS.getIgnoredDirs @bs
+  existingFileNames <- liftIO $ FS.getFileNamesRecursive ignoredDirs cfg.configBaseDir
+  modify' (updateExistingFiles existingFileNames)
   let tools = [Tools.ToolOpenFile, Tools.ToolCloseFile, Tools.ToolPanic, Tools.ToolReturn]
       background = projectSummary (T.pack cfg.configBaseDir)
       archPrompt = makeArchitectureDesignPrompt

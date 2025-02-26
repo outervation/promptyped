@@ -11,6 +11,7 @@ import Data.Text qualified as T
 import Data.Time.Clock.System (SystemTime, getSystemTime, systemToTAITime)
 import Data.Time.Clock.TAI (diffAbsoluteTime)
 import Data.Typeable ()
+import Data.Vector qualified as V
 import Relude
 
 newtype RemainingFailureTolerance = RemainingFailureTolerance Int
@@ -320,3 +321,32 @@ foldWithErrors f xs = do
 
 isDocFileExtension :: Text -> Bool
 isDocFileExtension fileName = ".txt" `T.isSuffixOf` fileName || ".doc" `T.isSuffixOf` fileName || ".md" `T.isSuffixOf` fileName
+
+lookupText :: Text -> [(Text, Text)] -> Maybe Text
+lookupText key dict = snd <$> L.find (\(k, _) -> k == key) dict
+
+-- | Truncate a text by keeping only the first and last N lines
+-- and adding a skipping message in between.
+truncateText :: Int -> Text -> Text
+truncateText n input
+  | n <= 0 = input -- Handle non-positive n values
+  | totalLines <= 2 * n = input -- No truncation needed
+  | otherwise = result
+  where
+    -- Split the input text into lines
+    linesVector = V.fromList $ T.lines input
+    totalLines = V.length linesVector
+
+    -- Get the first and last N lines
+    firstNLines = V.slice 0 n linesVector
+    lastNLines = V.slice (totalLines - n) n linesVector
+
+    -- Create the skipping message
+    skippingMsg = T.pack $ "... skipping " ++ show (totalLines - (2 * n)) ++ " lines ..."
+
+    -- Combine everything into a single Text
+    result =
+      T.intercalate "\n"
+        $ V.toList firstNLines
+        ++ [skippingMsg]
+        ++ V.toList lastNLines

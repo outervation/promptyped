@@ -225,10 +225,19 @@ getFileNamesRecursive foldersToIgnore baseDir = do
   files <- filterM DIR.doesFileExist fullPaths
   dirs <- filterM DIR.doesDirectoryExist fullPaths
   let allowedDirs = filter ((`notElem` foldersToIgnore) . toText . FP.takeFileName) dirs
-  subFiles <- concat <$> mapM (getFileNamesRecursive foldersToIgnore) allowedDirs
-  -- Convert to relative paths first, then to Text at the end
-  let relativeFiles = map (FP.makeRelative baseDir) (files <> (map T.unpack subFiles))
-  pure $ map toText relativeFiles
+
+  -- Get relative paths for current directory files
+  let relativeFiles = map (toText . FP.makeRelative baseDir) files
+
+  -- For each subdirectory, get files and prepend the subdirectory name to paths
+  subDirFiles <- forM allowedDirs $ \dir -> do
+    let dirName = toText $ FP.takeFileName dir
+    nestedFiles <- getFileNamesRecursive foldersToIgnore dir
+    -- Prepend directory name to each nested file
+    return $ map (\file -> dirName <> "/" <> file) nestedFiles
+
+  -- Combine current directory files with flattened subdirectory files
+  pure $ relativeFiles <> concat subDirFiles
 
 fileExistsOnDisk :: FilePath -> IO Bool
 fileExistsOnDisk = DIR.doesFileExist
@@ -292,9 +301,9 @@ handleExitCode opName res = do
             <> " with exit code "
             <> show code
             <> "\nstdout:\n"
-            <> stdoutRes
+            <> truncateText 20 stdoutRes
             <> "\nstderr:\n"
-            <> stderrRes
+            <> truncateText 20 stderrRes
 
 gitInit :: FilePath -> IO (Either Text ())
 gitInit path = DIR.withCurrentDirectory path $ do

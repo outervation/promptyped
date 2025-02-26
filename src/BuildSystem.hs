@@ -10,3 +10,4 @@ class BuildSystem (a :: Type) where
   testProject :: Config -> AppM (Maybe Text)
   setupProject :: Config -> AppM (Maybe Text)
   isBuildableFile :: Text -> AppM Bool
+  getIgnoredDirs :: AppM [Text]

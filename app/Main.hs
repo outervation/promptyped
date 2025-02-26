@@ -2,10 +2,9 @@
 
 module Main where
 
-import Relude
-
-import BinanceApiDataRecorder (makeGoBinanceApiDataRecorder)
 import AppConfig (loadConfig)
+import BinanceApiDataRecorder (makeGoBinanceApiDataRecorder)
+import Relude
 
 main :: IO ()
 main = do

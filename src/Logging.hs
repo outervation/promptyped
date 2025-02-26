@@ -2,6 +2,8 @@ module Logging (logInfo, logWarn, logDebug, initializeLogger) where
 
 import Data.Text as T
 import Relude
+import System.Directory qualified as DIR
+import System.FilePath qualified as FP
 import System.Log.Formatter
 import System.Log.Handler (setFormatter)
 import System.Log.Handler.Simple
@@ -10,6 +12,9 @@ import System.Log.Logger
 initializeLogger :: FilePath -> FilePath -> Priority -> IO ()
 initializeLogger mainLogFile debugLogFile priority = do
   removeAllHandlers
+
+  DIR.createDirectoryIfMissing True (FP.takeDirectory mainLogFile)
+  DIR.createDirectoryIfMissing True (FP.takeDirectory debugLogFile)
 
   -- Create main file handler for non-debug logs
   mainHandler <- fileHandler mainLogFile priority

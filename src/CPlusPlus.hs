@@ -167,6 +167,8 @@ instance BuildSystem CPlusPlusLang where
 
   isBuildableFile fileName = pure $ isCPlusPlusFileExtension fileName
 
+  getIgnoredDirs = pure $ ["build", ".git", "contrib"]
+
 sampleTestFile :: Text
 sampleTestFile =
   [r|

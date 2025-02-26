@@ -28,4 +28,3 @@ loadConfig :: FilePath -> IO (Either Text AppConfig)
 loadConfig path = do
   contents <- BS.readFile path
   return $ (bimap T.pack id) $ eitherDecode contents
-

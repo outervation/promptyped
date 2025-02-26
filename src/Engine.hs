@@ -59,7 +59,7 @@ contextToMessages :: (ToJSON a) => Context -> [Tools.Tool] -> AppState -> a -> [
 contextToMessages Context {..} tools theState exampleReturn = do
   let messages = map snd contextRest
       returnValueDesc = Tools.returnValueToDescription exampleReturn
-      allTexts = [contextBackground, toolDesc, filesDesc, openFilesDesc, returnValueDesc, "YOUR CURRENT TASK: " <> contextTask]
+      allTexts = [contextBackground, filesDesc, openFilesDesc, toolDesc, returnValueDesc, "YOUR CURRENT TASK: " <> contextTask]
    in Message {role = roleName RoleUser, content = T.unlines allTexts} : messages
   where
     toolDesc = Tools.toolsToDescription tools
@@ -135,19 +135,21 @@ runAiFunc origCtxt tools exampleReturn postProcessor remainingErrs = do
   liftIO $ Logging.logInfo "AiResponse" (show res)
   let aiMsg = content res
       mayToolsCalled = Tools.findToolsCalled (content res) tools
+      mayRawTextBlocks = Tools.extractRawStrings (content res)
       ctxtWithAiMsg = addToContextAi ctxt OtherMsg aiMsg
-  case mayToolsCalled of
-    Left err -> addErrorAndRecurse ("Error in function calls/return: " <> err) ctxtWithAiMsg SyntaxError OtherMsg
-    Right [] -> addErrorAndRecurse "Must call a tool or return. Remember the syntax is ToolName=<[{ someJson }]> , not ToolName=[{ someJson }] and not ToolName<[{ someJson }]> (replace ToolName here with the actual name of the tool; ToolName itself is not a tool!)." ctxtWithAiMsg SyntaxError OtherMsg
-    Right callsRaw -> handleToolCalls ctxtWithAiMsg callsRaw
+  case (mayToolsCalled, mayRawTextBlocks) of
+    (Left err, _) -> addErrorAndRecurse ("Error in function calls/return: " <> err) ctxtWithAiMsg SyntaxError OtherMsg
+    (Right [], _) -> addErrorAndRecurse "Must call a tool or return. Remember the syntax is ToolName=<[{ someJson }]> , not ToolName=[{ someJson }] and not ToolName<[{ someJson }]> (replace ToolName here with the actual name of the tool; ToolName itself is not a tool!)." ctxtWithAiMsg SyntaxError OtherMsg
+    (_, Left err) -> addErrorAndRecurse ("Error in raw text syntax: " <> err) ctxtWithAiMsg SyntaxError OtherMsg
+    (Right callsRaw, Right rawTextBlocks) -> handleToolCalls ctxtWithAiMsg callsRaw rawTextBlocks
   where
     recur recurCtxt remainingErrs' = runAiFunc @bs recurCtxt tools exampleReturn postProcessor remainingErrs'
 
-    handleToolCalls :: Context -> [(Tools.Tool, [AET.Object])] -> AppM b
-    handleToolCalls ctxtWithAiMsg callsRaw = case Tools.processToolsArgs callsRaw of
+    handleToolCalls :: Context -> [(Tools.Tool, [AET.Object])] -> Tools.RawTexts -> AppM b
+    handleToolCalls ctxtWithAiMsg callsRaw rawTextBlocks = case Tools.processToolsArgs callsRaw rawTextBlocks of
       Left err -> addErrorAndRecurse ("Error in function calls/return logic: " <> err) ctxtWithAiMsg SyntaxError OtherMsg
       Right calls -> do
-        let ctxtUpdates = flip map calls $ \x innerCtxt -> Tools.runTool @bs x innerCtxt
+        let ctxtUpdates = flip map calls $ \x innerCtxt -> Tools.runTool @bs rawTextBlocks x innerCtxt
         finalCtxt <- foldlM (\acc f -> f acc) ctxtWithAiMsg ctxtUpdates
         cfg <- ask
         case Tools.getReturn calls of
