@@ -10,10 +10,16 @@ makeUnitTestPrompt :: Text -> Text -> Text -> Text -> Text
 makeUnitTestPrompt fileName testFileName testName testSummary = "Please create a unit test for " <> fileName <> " in " <> testFileName <> " called " <> testName <> " that: " <> testSummary <> ". Note you're using doctest; tests will automatically run each time you modify the unit test file or the main source file. IF THE TEST FAILS BECAUSE OF A BUG IN THE SOURCE FILE BEING TESTED, YOU ARE RESPONSIBLE FOR FIXING THE SOURCE FILE; feel free to add more logging to the source files to assist in debugging test failures. For testing external APIs you may write tests that connect and wait e.g. 10 seconds to receive a response (and timeout if none is received), asserting that the response parses correctly and the result looks sane. Return true when you're satisfied with the test. Note that if any other tests (even in other files) are broken, you should fix those too before returning  (because you might have accidentally broken one somehow), opening whatever files are necessary. Remember to also open any helpful .txt/.md documentation from the list of available files. Remember the package is 'main', and local imports are project_name/file_name."
 
 makeUnitTestsPrompt :: Text -> Text
-makeUnitTestsPrompt fileName = "Please decide upon some key unit tests to write for " <> fileName <> ". Return a list of unit test names and descriptions in the format specified. If there are parts that will be hard to unit test fully (e.g. connecting to an external API), then you should design tests that just connect to the API and verify the downloaded/streamed data parses correctly and passes sanity assertions (with a timeout of e.g. 10 seconds that makes the test fail if no data is received). Remember to also open any helpful .txt/.md documentation from the list of available files."
+makeUnitTestsPrompt fileName = makeUnitTestsPromptInner $ "Please decide upon some key unit tests to write for " <> fileName <> "."
+
+makeUnitTestsForSpecificChangePrompt :: Text -> Text -> Text
+makeUnitTestsForSpecificChangePrompt change fileName = makeUnitTestsPromptInner $ "Please decide upon some key unit tests to write for the change you just made: " <> change <> " in fileName " <> fileName <> "."
+
+makeUnitTestsPromptInner :: Text -> Text
+makeUnitTestsPromptInner starter = starter <> "Return a list of unit test names and descriptions in the format specified. If there are parts that will be hard to unit test fully (e.g. connecting to an external API), then you should design tests that just connect to the API and verify the downloaded/streamed data parses correctly and passes sanity assertions (with a timeout of e.g. 10 seconds that makes the test fail if no data is received). Remember to also open any helpful .txt/.md documentation from the list of available files."
 
 makeSourcefilePrompt :: Text -> Text -> Text
-makeSourcefilePrompt fileName fileSummary = "Please create the file " <> fileName <> " with contents: " <> fileSummary <> ". Try to write it in a testable manner, so unit tests can be written. Prefer a 'functional core, imperative shell' approach, where IO is done at an outer level and passed into pure functions (pure in the sense they do no IO, but they may mutate inputs in a deterministic way, as this is C++). Remember to OpenFile other relevant files (which adds them to your context) when necessary. You can also EditFile existing project files where necessary. After creating the file with AppendFile (and editing with InsertInFile/EditFile as necessary until it compiles), which you'll see from the file being present and complete in OpenFiles, return the names and descriptions of the files created, in the format specified. Remember to also open any helpful .txt/.md documentation from the list of available files that may be useful as reference for the current task. Remember the package is 'main', and local imports are project_name/file_name. YOU MUST NOT RETURN UNTIL THE FULL FILE/IMPLEMENTATION IS COMPLETE, without any placeholders remaining!"
+makeSourcefilePrompt fileName fileSummary = "Please create the file " <> fileName <> " with contents: " <> fileSummary <> ". Try to write it in a testable manner, so unit tests can be written. Prefer a 'functional core, imperative shell' approach, where IO is done at an outer level and passed into pure functions (pure in the sense they do no IO, but they may mutate inputs in a deterministic way, as this is not Haskell). Remember to OpenFile other relevant files (which adds them to your context) when necessary. You can also EditFile existing project files where necessary. After creating the file with AppendFile (and editing with InsertInFile/EditFile as necessary until it compiles), which you'll see from the file being present and complete in OpenFiles, return the names and descriptions of the files created, in the format specified. Remember to also open any helpful .txt/.md documentation from the list of available files that may be useful as reference for the current task. Remember the package is 'main', and local imports are project_name/file_name. YOU MUST NOT RETURN UNTIL THE FULL FILE/IMPLEMENTATION IS COMPLETE, without any placeholders remaining!"
 
 makeFilenamesPrompt :: Text
 makeFilenamesPrompt =
@@ -23,19 +29,26 @@ Please first plan a list of source files that the project will consist of, based
 NOTE: Please put all files in the root directory of the project, not subdirectories, for simplicity. And all in package main.
 |]
 
+makeRefactorBackgroundPrompt :: Text -> Text
+makeRefactorBackgroundPrompt taskDescription =
+  [r|
+Your current project is refactoring. First you'll, for each source file, analyse it for any changes needed. Then you'll combine these lists of changes for all files, and go through implementing them file by file, adding unit tests for each change. You'll also create any other files you deem necessary.
+|]
+    <> taskDescription
+
 makeArchitectureDesignPrompt :: Text
 makeArchitectureDesignPrompt = "Please think carefully and design the architecture for the project given the requirements above, returning a detailed description of the planned architecture."
 
 binanceSummary :: Text
 binanceSummary =
   [r|
-Note the binance websocket API descriptions describe how to build a book from depth streams and snapshots based on their sequence ID. Building a book isn't required, but the saved data should be such that it can be used to build a book (i.e. don't record the events where u is <= lastUpdateId of snapshot). If a market data book-building message is missed, then a new snapshot should be requested from the rest API as described in the docs. The relevant docs for it are in binanceApiDetails.txt, you should OpenFile=<[{ "fileName": "binanceApiDetails.txt" }]> to view them when needed. You should also store regular snapshots from the rest API, e.g. once every minute.
+Note the binance websocket API descriptions describe how to build a book from depth streams and snapshots based on their sequence ID. Building a book isn't required, but the saved data should be such that it can be used to build a book. If a market data book-building message is missed, then a new snapshot should be requested from the rest API as described in the docs. The relevant docs for it are in binanceApiDetails.txt, you should OpenFile=<[{ "fileName": "binanceApiDetails.txt" }]> to view them when needed. You should also store regular snapshots from the rest API, e.g. once every minute.
 
 Binance websocket API docs are available in the folder for reference. The application should download trade and aggregate trade streams (the formats are different so store each as a separate table), and book data (everything necessary for building/tracking an orderbook; there are both diff and update streams, it should store both), and best price data, but doesn't need the historical summary messages. 
 
 For unit testing the binance API websocket connection/rest API components, unit tests should be written that just connect to a busy product (i.e. BTCUSDT), wait atmost e.g. 10 seconds to recieve data, then try parsing it and assert that it matches the expected format, failing and printing how it doesn't match (along with the whole text/json) if it doesn't to make it easy for you to see what's wrong and fix the code.
 
-Note the Binance makret data APIs are public and don't need an API key.
+Note the Binance market data APIs are public and don't need an API key.
 
 |]
 
@@ -46,7 +59,7 @@ It's designed to be an LLM-developed and managed application, so the design shou
 
 IMPORTANT NOTE: To keep context size minimal you won't see your full previous responses/history, so I recommend keeping a journal in "journal.txt", which you can append a short summary of what you're trying to do at each step, and what you plan to do next, in case you expect to have future steps in that task and don't want to lose your train of thought between responses.
 
-When you make changes to a source file, if compilation and unit tests pass then the file is added and committed to a git repo in the base directory. You may use the revert tool where necessary to get back to the last version of a file when compilation and all tests passed.
+When you make changes to a source file, if compilation and unit tests pass then the file is added and committed to a git repo in the base directory. You may use the Revert tool where necessary to get back to the last version of a file when compilation and all tests passed.
 |]
 
 projectSummary :: Text -> Text
@@ -103,8 +116,6 @@ For the unit tests, they should:
 binanceApiDoc :: Text
 binanceApiDoc =
   [r|
-I'll provide a clean translation of the Binance WebSocket documentation, focusing on the key technical information:
-
 # Web Socket Streams for Binance (2024-12-17)
 
 ## General WebSocket Information

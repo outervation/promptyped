@@ -44,9 +44,28 @@ instance ToJSON ThingsWithDependencies
 
 instance FromJSON ThingsWithDependencies
 
+data FileProposedChanges = FileProposedChanges
+  { fileName :: Text,
+    proposedChanges :: [ThingWithDependencies]
+  }
+  deriving (Generic, Eq, Ord, Show)
+
+instance ToJSON FileProposedChanges
+
+instance FromJSON FileProposedChanges
+
+data FilesProposedChanges = FilesProposedChanges
+  { filesProposedChanges :: [FileProposedChanges]
+  }
+  deriving (Generic, Eq, Ord, Show)
+
+instance ToJSON FilesProposedChanges
+
+instance FromJSON FilesProposedChanges
+
 topologicalSortThingsWithDependencies :: [ExistingFile] -> ThingsWithDependencies -> Either Text [ThingWithDependencies]
 topologicalSortThingsWithDependencies existingFiles (ThingsWithDependencies files) = do
-  let isDoc name = isDocFileExtension name && elem name (map existingFileName existingFiles)
+  let alreadyExists name = elem name (map existingFileName existingFiles)
   -- 1. Build a map from fileName -> ThingWithDependencies
   let fileMap :: Map Text ThingWithDependencies
       fileMap = Map.fromList [(f.name, f) | f <- files]
@@ -54,7 +73,7 @@ topologicalSortThingsWithDependencies existingFiles (ThingsWithDependencies file
   -- 2. Check every dependency to ensure it exists in fileMap
   forM_ files $ \pf -> do
     forM_ pf.dependencies $ \dep ->
-      unless (Map.member dep fileMap || isDoc dep)
+      unless (Map.member dep fileMap || alreadyExists dep)
         $ Left
         $ "Error: File "
         <> pf.name
@@ -127,6 +146,16 @@ instance ToJSON CreatedFiles
 
 instance FromJSON CreatedFiles
 
+data ModifiedFile = ModifiedFile
+  { modifiedFileName :: Text,
+    modificationSummary :: Text
+  }
+  deriving (Generic, Eq, Ord, Show)
+
+instance ToJSON ModifiedFile
+
+instance FromJSON ModifiedFile
+
 validateCreatedFiles :: CreatedFiles -> AppM (Either (MsgKind, Text) [CreatedFile])
 validateCreatedFiles cf = do
   st <- get
@@ -166,6 +195,9 @@ validateUnitTests cf = pure $ Right cf
 allTools :: [Tools.Tool]
 allTools = [Tools.ToolOpenFile, Tools.ToolCloseFile, Tools.ToolAppendFile, Tools.ToolInsertInFile, Tools.ToolEditFile, Tools.ToolRevertFile, Tools.ToolPanic, Tools.ToolReturn]
 
+readOnlyTools :: [Tools.Tool]
+readOnlyTools = [Tools.ToolOpenFile, Tools.ToolCloseFile, Tools.ToolPanic, Tools.ToolReturn]
+
 data UnitTestDone = UnitTestDone
   { unitTestPassedSuccessfully :: Bool
   }
@@ -194,15 +226,11 @@ clearJournal = do
   cfg <- ask
   liftIO $ FS.clearFileOnDisk (FS.toFilePath cfg journalFileName)
 
-makeUnitTests :: forall bs. (BS.BuildSystem bs) => Text -> ThingWithDependencies -> AppM ()
-makeUnitTests background plannedFile = do
-  let fileName = plannedFile.name
+makeUnitTestsInner :: forall bs. (BS.BuildSystem bs) => Text -> Text -> (Text -> Text) -> AppM ()
+makeUnitTestsInner background fileName makeTestPrompt = do
   cfg <- ask
-  clearJournal
-  resetCompileTestState
-  modify' clearOpenFiles
-  let dependencies = plannedFile.dependencies ++ [journalFileName, fileName]
-  forM_ dependencies $ \x -> Tools.openFile x cfg
+  let unitTestExampleFileName = T.replace fileName " .go" "_test.go"
+  Tools.openFile fileName cfg
   let makeCtxt task =
         Context
           { contextBackground = background,
@@ -211,26 +239,34 @@ makeUnitTests background plannedFile = do
           }
   let exampleUnitTests =
         UnitTests
-          { unitTestFileName = "the_file_test.go",
+          { unitTestFileName = unitTestExampleFileName,
             unitTests =
               [ UnitTest "testSomethingWorks" "Should test that ...",
                 UnitTest "testsSomethingelseWorks" "Should test that ..."
               ]
           }
-  let runner fileName' = Engine.runAiFunc @bs (makeCtxt (makeUnitTestsPrompt fileName')) allTools exampleUnitTests validateUnitTests (configTaskMaxFailures cfg)
+  let runner fileName' = Engine.runAiFunc @bs (makeCtxt $ makeTestPrompt fileName') allTools exampleUnitTests validateUnitTests (configTaskMaxFailures cfg)
   planRes <- memoise (configCacheDir cfg) "test_planner" fileName show runner
   let testFileName = unitTestFileName planRes
   Tools.openFile testFileName cfg
   let exampleUnitTestDone = UnitTestDone True
   let makeUnitTest UnitTest {..} = Engine.runAiFunc @bs (makeCtxt $ makeUnitTestPrompt fileName testFileName unitTestName unitTestSummary) allTools exampleUnitTestDone validateUnitTest (configTaskMaxFailures cfg)
   forM_ (unitTests planRes) $ \test ->
-    -- TODO: add _
     memoise (configCacheDir cfg) ("test_creator_" <> testFileName) test unitTestName makeUnitTest
+
+makeUnitTests :: forall bs. (BS.BuildSystem bs) => Text -> ThingWithDependencies -> AppM ()
+makeUnitTests background plannedFile = do
+  let fileName = plannedFile.name
+  cfg <- ask
+  clearJournal
+  modify' clearOpenFiles
+  let dependencies = plannedFile.dependencies ++ [journalFileName, fileName]
+  forM_ dependencies $ \x -> Tools.openFile x cfg
+  makeUnitTestsInner @bs background fileName makeUnitTestsPrompt
 
 makeFile :: forall bs. (BS.BuildSystem bs) => Text -> ThingWithDependencies -> AppM ()
 makeFile background pf = do
   cfg <- ask
-  clearJournal
   resetCompileTestState
   modify' clearOpenFiles
   let dependencies = pf.dependencies ++ [journalFileName]
@@ -255,6 +291,109 @@ makeFile background pf = do
     forM_ createdFiles $ \x -> modify' $ updateFileDesc (createdFileName x) (createdFileSummary x)
     makeUnitTests @bs background pf
 
+makeRefactorFileTask :: forall bs. (BS.BuildSystem bs) => Text -> [ExistingFile] -> Text -> [ThingWithDependencies] -> AppM ()
+makeRefactorFileTask background initialDeps fileName desiredChanges = do
+  cfg <- ask
+  modify' clearOpenFiles
+  let dependencies = (map (\x -> x.existingFileName) initialDeps) ++ [journalFileName, fileName]
+  forM_ dependencies $ \x -> Tools.openFile x cfg
+  let makeChange description = do
+        let ctxt =
+              Context
+                { contextBackground = background,
+                  contextTask = "Your task is to refactor the file " <> fileName <> " to make the change: " <> show description,
+                  contextRest = []
+                }
+            exampleChange = ModifiedFile "someFile.go" "Update the file to add ... so that it ..."
+        Engine.runAiFunc @bs ctxt allTools exampleChange validateAlwaysPass (configTaskMaxFailures cfg)
+  forM_ desiredChanges $ \x -> do
+    modification <- memoise (configCacheDir cfg) ("file_modifier_" <> fileName) x (\desc -> desc.name) makeChange
+    let modificationText = "Intended modification: " <> x.summary <> ", with model describing what it did as " <> show modification <> "."
+    makeUnitTestsInner @bs background fileName $ makeUnitTestsForSpecificChangePrompt modificationText
+
+makeRefactorFilesTask :: forall bs. (BS.BuildSystem bs) => AppM ()
+makeRefactorFilesTask = do
+  st <- get
+  cfg <- ask
+  sourceFileNames <- filterM (BS.isBuildableFile @bs) $ map existingFileName st.stateFiles
+  let task =
+        "YOUR OBJECTIVE is to refactor the project to add support for Binance CoinM futures market data (it currently only supports Binance spot), as described in binanceApiDetails_CoinMFutures.txt."
+          <> "Note that the datatypes may be slightly different than for Binance spot; when this is the case you should create different structs for each, and store them in different parquet tables to the existing types."
+          <> "The data should be saved to filenames containing the kind (spot or future), date and instrument, not just the date and instrument."
+          <> "The config should be kind,instrument pairs, not just instrument, and depending on kind the code will properly pick and connect to Binance Spot or Futures."
+      objectiveShortName = "Add support for Binance CoinM futures"
+      refactorBackground = makeRefactorBackgroundPrompt task
+      background = projectSummary (T.pack cfg.configBaseDir) <> "\n" <> refactorBackground
+      exampleThingsWithDependencies =
+        [ ThingWithDependencies "addNewClassX" "Class X, which does ..., must be added to support ..." [],
+          ThingWithDependencies "addNewFuncY" "Function Y, which does ..., must be added to support ..." ["addNewClassX"]
+        ]
+      exampleProposedChanges = ThingsWithDependencies exampleThingsWithDependencies
+      getChangesTask fileName = do
+        let ctxt =
+              Context
+                { contextBackground = background,
+                  contextTask =
+                    "Please return a list of tasks that must be done to refactor "
+                      <> fileName
+                      <> " to achieve the above objective ("
+                      <> objectiveShortName
+                      <> ")."
+                      <> "Each task should list other task dependencies if any, and there should be no circular dependencies."
+                      <> "If there's something relevant for later that you can't encode well in the return value, please append it to the journal.",
+                  contextRest = []
+                }
+        Engine.runAiFunc @bs ctxt (Tools.ToolAppendFile : readOnlyTools) exampleProposedChanges validateThingsWithDependencies (configTaskMaxFailures cfg)
+  plannedTasks <- forM_ sourceFileNames $ \fileName -> do
+    fileTasks <- memoise (configCacheDir cfg) "file_dependencies" fileName id getChangesTask
+    return $ FileProposedChanges fileName fileTasks
+  let combineCtxt =
+        Context
+          { contextBackground = background,
+            contextTask =
+              "You've previously just produced a list per file of tasks that must be done to refactor each file to achieve the above objective ("
+                <> objectiveShortName
+                <> ")."
+                <> "Now please edit/update these where necessary to account for you now having vision of all tasks (previously you created each file's tasks independently), to e.g. remove duplication and make the overall plan coherent, and return the updated list of tasks."
+                <> "If there's something relevant for later that you can't encode well in the return value, please append it to the journal."
+                <> "The previously created tasks are: \n"
+                <> Tools.toJ plannedTasks,
+            contextRest = []
+          }
+      combineExample =
+        FilesProposedChanges
+          [ FileProposedChanges "someFile.go" exampleThingsWithDependencies,
+            FileProposedChanges "someOtherFile.go" exampleThingsWithDependencies
+          ]
+      refineChangesTask = \() -> Engine.runAiFunc @bs combineCtxt (Tools.ToolAppendFile : readOnlyTools) combineExample validateAlwaysPass (configTaskMaxFailures cfg)
+  plannedTasksRefined <- memoise (configCacheDir cfg) "all_file_dependencies" () (const "") refineChangesTask
+
+  let extraFilesCtxt =
+        Context
+          { contextBackground = background,
+            contextTask =
+              "You've previously just produced a list per file of tasks that must be done to refactor each file to achieve the above objective ("
+                <> objectiveShortName
+                <> ")."
+                <> "Now please think carefully about if there's any new files that will need to be created, due to some changes not fitting well into existing files, and return a list of such files along with detailed descriptions of each, and their dependencies if any."
+                <> "The previously created tasks are: \n"
+                <> Tools.toJ plannedTasks,
+            contextRest = []
+          }
+      exampleExtraFiles =
+        ThingsWithDependencies
+          { items =
+              [ ThingWithDependencies "someFile.go" "This file contains functionality for..." [],
+                ThingWithDependencies "someOtherFile.go" "This file contains functionality for something different ..." ["someFile.go"]
+              ]
+          }
+      getExtraFilesTask = \() -> Engine.runAiFunc @bs extraFilesCtxt readOnlyTools exampleExtraFiles validateThingsWithDependencies (configTaskMaxFailures cfg)
+  extraFilesNeeded <- memoise (configCacheDir cfg) "all_extra_files" () (const "") getExtraFilesTask
+  let makeFileBackground = (background <> "\n You are currently working on adding some extra files that are necessary as part of the refactoring.")
+  forM_ extraFilesNeeded (makeFile @bs makeFileBackground)
+  forM_ plannedTasksRefined.filesProposedChanges $ \x -> makeRefactorFileTask @bs background [] x.fileName x.proposedChanges
+  return ()
+
 makeProject :: forall bs. (BS.BuildSystem bs) => AppM ()
 makeProject = do
   cfg <- ask
@@ -264,8 +403,7 @@ makeProject = do
   ignoredDirs <- BS.getIgnoredDirs @bs
   existingFileNames <- liftIO $ FS.getFileNamesRecursive ignoredDirs cfg.configBaseDir
   modify' (updateExistingFiles existingFileNames)
-  let tools = [Tools.ToolOpenFile, Tools.ToolCloseFile, Tools.ToolPanic, Tools.ToolReturn]
-      background = projectSummary (T.pack cfg.configBaseDir)
+  let background = projectSummary (T.pack cfg.configBaseDir)
       archPrompt = makeArchitectureDesignPrompt
       archCtxt =
         Context
@@ -274,7 +412,7 @@ makeProject = do
             contextRest = []
           }
       exampleArch = ThingWithDescription "The architecture of the project will be as follows: ..."
-      archRunner () = Engine.runAiFunc @bs archCtxt tools exampleArch validateAlwaysPass (configTaskMaxFailures cfg)
+      archRunner () = Engine.runAiFunc @bs archCtxt readOnlyTools exampleArch validateAlwaysPass (configTaskMaxFailures cfg)
   plannedArch <- memoise (configCacheDir cfg) "architecture" () (const "") archRunner
 
   let ctxt =
@@ -290,7 +428,7 @@ makeProject = do
                 ThingWithDependencies "someOtherFile.go" "This file contains functionality for something different ..." ["someFile.go"]
               ]
           }
-      runner () = Engine.runAiFunc @bs ctxt tools examplePlannedFiles validateThingsWithDependencies (configTaskMaxFailures cfg)
+      runner () = Engine.runAiFunc @bs ctxt readOnlyTools examplePlannedFiles validateThingsWithDependencies (configTaskMaxFailures cfg)
   plannedFiles <- memoise (configCacheDir cfg) "file_planner" () (const "") runner
   forM_ plannedFiles (makeFile @bs ctxt.contextBackground)
   finalState <- get
