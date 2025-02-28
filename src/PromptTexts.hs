@@ -371,3 +371,306 @@ Binance’s documentation outlines a specific sequence to properly maintain an o
     Book ticker stream (optional): If only the best bid/ask is needed, you can use the <symbol>@bookTicker stream which directly gives you the current best prices without maintaining the full book. But for full order depth, you must use the diff stream + snapshot as above.
 
 |]
+
+binanceFuturesApiDoc :: Text
+binanceFuturesApiDoc =
+  [r|
+The connection method for Websocket is：
+
+    Base Url: wss://fstream.binance.com
+    Streams can be access either in a single raw stream or a combined stream
+    Raw streams are accessed at /ws/<streamName>
+    Combined streams are accessed at /stream?streams=<streamName1>/<streamName2>/<streamName3>
+    Example:
+    wss://fstream.binance.com/ws/bnbusdt@aggTrade
+    wss://fstream.binance.com/stream?streams=bnbusdt@aggTrade/btcusdt@markPrice
+
+Combined stream events are wrapped as follows: {"stream":"<streamName>","data":<rawPayload>}
+
+All symbols for streams are lowercase
+
+A single connection is only valid for 24 hours; expect to be disconnected at the 24 hour mark
+
+The websocket server will send a ping frame every 3 minutes. If the websocket server does not receive a pong frame back from the connection within a 10 minute period, the connection will be disconnected. Unsolicited pong frames are allowed(the client can send pong frames at a frequency higher than every 15 minutes to maintain the connection).
+
+WebSocket connections have a limit of 10 incoming messages per second.
+
+A connection that goes beyond the limit will be disconnected; IPs that are repeatedly disconnected may be banned.
+
+A single connection can listen to a maximum of 200 streams.
+
+Considering the possible data latency from RESTful endpoints during an extremely volatile market, it is highly recommended to get the order status, position, etc from the Websocket user data stream.
+
+Live Subscribing/Unsubscribing to streams
+
+    The following data can be sent through the websocket instance in order to subscribe/unsubscribe from streams. Examples can be seen below.
+    The id used in the JSON payloads is an unsigned INT used as an identifier to uniquely identify the messages going back and forth.
+
+Subscribe to a stream
+
+    Response
+
+{
+  "result": null,
+  "id": 1
+}
+
+    Request
+
+    {
+    "method": "SUBSCRIBE",
+    "params":
+    [
+    "btcusdt@aggTrade",
+    "btcusdt@depth"
+    ],
+    "id": 1
+    }
+
+Unsubscribe to a stream
+
+    Response
+
+{
+  "result": null,
+  "id": 312
+}
+
+    Request
+
+    {
+    "method": "UNSUBSCRIBE",
+    "params":
+    [
+    "btcusdt@depth"
+    ],
+    "id": 312
+    }
+
+
+Aggregate Trade Streams
+Stream Description
+
+The Aggregate Trade Streams push market trade information that is aggregated for fills with same price and taking side every 100 milliseconds. Only market trades will be aggregated, which means the insurance fund trades and ADL trades won't be aggregated.
+Stream Name
+
+<symbol>@aggTrade
+Update Speed
+
+100ms
+Response Example
+
+{
+  "e": "aggTrade",  // Event type
+  "E": 123456789,   // Event time
+  "s": "BTCUSDT",    // Symbol
+  "a": 5933014,		// Aggregate trade ID
+  "p": "0.001",     // Price
+  "q": "100",       // Quantity
+  "f": 100,         // First trade ID
+  "l": 105,         // Last trade ID
+  "T": 123456785,   // Trade time
+  "m": true,        // Is the buyer the market maker?
+}
+
+Partial Book Depth Streams
+Stream Description
+
+Top <levels> bids and asks, Valid <levels> are 5, 10, or 20.
+Stream Name
+
+<symbol>@depth<levels> OR <symbol>@depth<levels>@500ms OR <symbol>@depth<levels>@100ms.
+Update Speed
+
+250ms, 500ms or 100ms
+Response Example
+
+{
+  "e": "depthUpdate", // Event type
+  "E": 1571889248277, // Event time
+  "T": 1571889248276, // Transaction time
+  "s": "BTCUSDT",
+  "U": 390497796,     // First update ID in event
+  "u": 390497878,     // Final update ID in event
+  "pu": 390497794,    // Final update Id in last stream(ie `u` in last stream)
+  "b": [              // Bids to be updated
+    [
+      "7403.89",      // Price Level to be updated
+      "0.002"         // Quantity
+    ],
+    [
+      "7403.90",
+      "3.906"
+    ],
+    [
+      "7404.00",
+      "1.428"
+    ],
+    [
+      "7404.85",
+      "5.239"
+    ],
+    [
+      "7405.43",
+      "2.562"
+    ]
+  ],
+  "a": [              // Asks to be updated
+    [
+      "7405.96",      // Price level to be
+      "3.340"         // Quantity
+    ],
+    [
+      "7406.63",
+      "4.525"
+    ],
+    [
+      "7407.08",
+      "2.475"
+    ],
+    [
+      "7407.15",
+      "4.800"
+    ],
+    [
+      "7407.20",
+      "0.175"
+    ]
+  ]
+}
+
+Diff. Book Depth Streams
+Stream Description
+
+Bids and asks, pushed every 250 milliseconds, 500 milliseconds, 100 milliseconds (if existing)
+Stream Name
+
+<symbol>@depth OR <symbol>@depth@500ms OR <symbol>@depth@100ms
+Update Speed
+
+250ms, 500ms, 100ms
+Response Example
+
+{
+  "e": "depthUpdate", // Event type
+  "E": 123456789,     // Event time
+  "T": 123456788,     // Transaction time 
+  "s": "BTCUSDT",     // Symbol
+  "U": 157,           // First update ID in event
+  "u": 160,           // Final update ID in event
+  "pu": 149,          // Final update Id in last stream(ie `u` in last stream)
+  "b": [              // Bids to be updated
+    [
+      "0.0024",       // Price level to be updated
+      "10"            // Quantity
+    ]
+  ],
+  "a": [              // Asks to be updated
+    [
+      "0.0026",       // Price level to be updated
+      "100"          // Quantity
+    ]
+  ]
+}
+
+How to manage a local order book correctly
+
+    Open a stream to wss://fstream.binance.com/stream?streams=btcusdt@depth.
+    Buffer the events you receive from the stream. For same price, latest received update covers the previous one.
+    Get a depth snapshot from https://fapi.binance.com/fapi/v1/depth?symbol=BTCUSDT&limit=1000 .
+    Drop any event where u is < lastUpdateId in the snapshot.
+    The first processed event should have U <= lastUpdateId**AND**u >= lastUpdateId
+    While listening to the stream, each new event's pu should be equal to the previous event's u, otherwise initialize the process from step 3.
+    The data in each event is the absolute quantity for a price level.
+    If the quantity is 0, remove the price level.
+    Receiving an event that removes a price level that is not in your local order book can happen and is normal.
+
+Individual Symbol Book Ticker Streams
+Stream Description
+
+Pushes any update to the best bid or ask's price or quantity in real-time for a specified symbol.
+Stream Name
+
+<symbol>@bookTicker
+Update Speed
+
+Real-time
+Response Example
+
+{
+  "e":"bookTicker",			// event type
+  "u":400900217,     		// order book updateId
+  "E": 1568014460893,  		// event time
+  "T": 1568014460891,  		// transaction time
+  "s":"BNBUSDT",     		// symbol
+  "b":"25.35190000", 		// best bid price
+  "B":"31.21000000", 		// best bid qty
+  "a":"25.36520000", 		// best ask price
+  "A":"40.66000000"  		// best ask qty
+}
+
+Mark Price Stream
+Stream Description
+
+Mark price and funding rate for a single symbol pushed every 3 seconds or every second.
+Stream Name
+
+<symbol>@markPrice or <symbol>@markPrice@1s
+Update Speed
+
+3000ms or 1000ms
+Response Example
+
+  {
+    "e": "markPriceUpdate",  	// Event type
+    "E": 1562305380000,      	// Event time
+    "s": "BTCUSDT",          	// Symbol
+    "p": "11794.15000000",   	// Mark price
+    "i": "11784.62659091",		// Index price
+    "P": "11784.25641265",		// Estimated Settle Price, only useful in the last hour before the settlement starts
+    "r": "0.00038167",       	// Funding rate
+    "T": 1562306400000       	// Next funding time
+  }
+
+
+
+Order Book (HTTP, not websocket)
+API Description
+
+Query symbol orderbook
+HTTP Request
+
+GET /fapi/v1/depth
+Request Weight
+
+Adjusted based on the limit:
+Limit	Weight
+5, 10, 20, 50	2
+100	5
+500	10
+1000	20
+Request Parameters
+Name	Type	Mandatory	Description
+symbol	STRING	YES	
+limit	INT	NO	Default 500; Valid limits:[5, 10, 20, 50, 100, 500, 1000]
+Response Example
+
+{
+  "lastUpdateId": 1027024,
+  "E": 1589436922972,   // Message output time
+  "T": 1589436922959,   // Transaction time
+  "bids": [
+    [
+      "4.00000000",     // PRICE
+      "431.00000000"    // QTY
+    ]
+  ],
+  "asks": [
+    [
+      "4.00000200",
+      "12.00000000"
+    ]
+  ]
+}
+
+|]

@@ -315,6 +315,12 @@ makeRefactorFilesProject = do
   st <- get
   cfg <- ask
   ignoredDirs <- BS.getIgnoredDirs @bs
+  let docFileName = "binanceApiDetails_CoinMFutures.txt"
+  createDocRes <- liftIO $ FS.appendToFile (FS.toFilePath cfg docFileName) binanceFuturesApiDoc
+  when (isLeft createDocRes) $ throwError $ "Error creating docs: " <> show createDocRes
+  let setupOpenFiles fileName = do
+        modify' clearOpenFiles
+        forM_ [docFileName, journalFileName, fileName] $ \x -> Tools.openFile x cfg
   existingFileNames <- liftIO $ FS.getFileNamesRecursive ignoredDirs cfg.configBaseDir
   modify' (updateExistingFiles existingFileNames)
   sourceFileNames <- filterM (BS.isBuildableFile @bs) $ map existingFileName st.stateFiles
@@ -323,6 +329,7 @@ makeRefactorFilesProject = do
           <> "Note that the datatypes may be slightly different than for Binance spot; when this is the case you should create different structs for each, and store them in different parquet tables to the existing types."
           <> "The data should be saved to filenames containing the kind (spot or future), date and instrument, not just the date and instrument."
           <> "The config should be kind,instrument pairs, not just instrument, and depending on kind the code will properly pick and connect to Binance Spot or Futures."
+          <> "You need to support aggregate trade streams, individual symbol book ticker streams, partial book depth streams, diff book depth streams, and mark price streams. Remember to implement logic so the data can be used for managing a local orderbook correctly, as already done for Binance Spot; how to do this is described in the doc."
       objectiveShortName = "Add support for Binance CoinM futures"
       refactorBackground = makeRefactorBackgroundPrompt task
       background = projectSummary (T.pack cfg.configBaseDir) <> "\n" <> refactorBackground
@@ -345,6 +352,7 @@ makeRefactorFilesProject = do
                       <> "If there's something relevant for later that you can't encode well in the return value, please append it to the journal.",
                   contextRest = []
                 }
+        setupOpenFiles fileName
         Engine.runAiFunc @bs ctxt (Tools.ToolAppendFile : readOnlyTools) exampleProposedChanges validateThingsWithDependencies (configTaskMaxFailures cfg)
   plannedTasks <- forM_ sourceFileNames $ \fileName -> do
     fileTasks <- memoise (configCacheDir cfg) "file_dependencies" fileName id getChangesTask
@@ -368,6 +376,7 @@ makeRefactorFilesProject = do
             FileProposedChanges "someOtherFile.go" exampleThingsWithDependencies
           ]
       refineChangesTask = \() -> Engine.runAiFunc @bs combineCtxt (Tools.ToolAppendFile : readOnlyTools) combineExample validateAlwaysPass (configTaskMaxFailures cfg)
+  modify' clearOpenFiles
   plannedTasksRefined <- memoise (configCacheDir cfg) "all_file_dependencies" () (const "") refineChangesTask
 
   let extraFilesCtxt =
@@ -393,7 +402,8 @@ makeRefactorFilesProject = do
   extraFilesNeeded <- memoise (configCacheDir cfg) "all_extra_files" () (const "") getExtraFilesTask
   let makeFileBackground = (background <> "\n You are currently working on adding some extra files that are necessary as part of the refactoring.")
   forM_ extraFilesNeeded (makeFile @bs makeFileBackground)
-  forM_ plannedTasksRefined.filesProposedChanges $ \x -> makeRefactorFileTask @bs background [] x.fileName x.proposedChanges
+  let docDeps = [ExistingFile docFileName ""]
+  forM_ plannedTasksRefined.filesProposedChanges $ \x -> makeRefactorFileTask @bs background docDeps x.fileName x.proposedChanges
 
 makeCreateFilesProject :: forall bs. (BS.BuildSystem bs) => AppM ()
 makeCreateFilesProject = do
