@@ -14,7 +14,6 @@ import Data.Map qualified as Map
 import Data.Text qualified as T
 import Engine qualified
 import FileSystem qualified as FS
-import Logging qualified
 import Memoise (memoise)
 import PromptTexts
 import Relude
@@ -311,10 +310,13 @@ makeRefactorFileTask background initialDeps fileName desiredChanges = do
     let modificationText = "Intended modification: " <> x.summary <> ", with model describing what it did as " <> show modification <> "."
     makeUnitTestsInner @bs background fileName $ makeUnitTestsForSpecificChangePrompt modificationText
 
-makeRefactorFilesTask :: forall bs. (BS.BuildSystem bs) => AppM ()
-makeRefactorFilesTask = do
+makeRefactorFilesProject :: forall bs. (BS.BuildSystem bs) => AppM ()
+makeRefactorFilesProject = do
   st <- get
   cfg <- ask
+  ignoredDirs <- BS.getIgnoredDirs @bs
+  existingFileNames <- liftIO $ FS.getFileNamesRecursive ignoredDirs cfg.configBaseDir
+  modify' (updateExistingFiles existingFileNames)
   sourceFileNames <- filterM (BS.isBuildableFile @bs) $ map existingFileName st.stateFiles
   let task =
         "YOUR OBJECTIVE is to refactor the project to add support for Binance CoinM futures market data (it currently only supports Binance spot), as described in binanceApiDetails_CoinMFutures.txt."
@@ -392,10 +394,9 @@ makeRefactorFilesTask = do
   let makeFileBackground = (background <> "\n You are currently working on adding some extra files that are necessary as part of the refactoring.")
   forM_ extraFilesNeeded (makeFile @bs makeFileBackground)
   forM_ plannedTasksRefined.filesProposedChanges $ \x -> makeRefactorFileTask @bs background [] x.fileName x.proposedChanges
-  return ()
 
-makeProject :: forall bs. (BS.BuildSystem bs) => AppM ()
-makeProject = do
+makeCreateFilesProject :: forall bs. (BS.BuildSystem bs) => AppM ()
+makeCreateFilesProject = do
   cfg <- ask
   liftIO $ DIR.createDirectoryIfMissing True cfg.configBaseDir
   setupRes <- BS.setupProject @bs cfg
@@ -431,8 +432,4 @@ makeProject = do
       runner () = Engine.runAiFunc @bs ctxt readOnlyTools examplePlannedFiles validateThingsWithDependencies (configTaskMaxFailures cfg)
   plannedFiles <- memoise (configCacheDir cfg) "file_planner" () (const "") runner
   forM_ plannedFiles (makeFile @bs ctxt.contextBackground)
-  finalState <- get
-  liftIO $ Logging.logInfo "Final config" (show cfg)
-  liftIO $ Logging.logInfo "Final state" (show $ stateMetrics finalState)
-  liftIO . putTextLn . show $ cfg
-  liftIO . putTextLn . show $ stateMetrics finalState
+  return ()

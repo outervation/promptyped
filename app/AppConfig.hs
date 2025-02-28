@@ -5,6 +5,13 @@ import Data.ByteString.Lazy qualified as BS
 import Data.Text qualified as T
 import Relude
 
+data ProjectKind = CreateProject | RefactorProject
+  deriving (Generic, Eq, Ord, Show)
+
+instance FromJSON ProjectKind
+
+instance ToJSON ProjectKind
+
 data AppConfig = AppConfig
   { apiKey :: Text,
     apiSite :: Text,
@@ -16,7 +23,8 @@ data AppConfig = AppConfig
     buildNumJobs :: Int,
     gitUserName :: Text,
     gitUserEmail :: Text,
-    taskMaxFailures :: Int
+    taskMaxFailures :: Int,
+    projectKind :: ProjectKind
   }
   deriving (Generic, Eq, Ord, Show)
 

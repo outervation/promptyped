@@ -34,11 +34,20 @@ makeGoBinanceApiDataRecorder aCfg = do
               ]
           }
   let initialState = AppState mempty [] [] (CompileTestState Nothing Nothing)
-  let logDir = T.unpack $ logFileDir aCfg
-  let logPath = logDir FP.</> "promptyped_binapi_downloader.log"
-  let debugLogPath = logDir FP.</> "promptyped_binapi_downloader.debug.log"
+      logDir = T.unpack $ logFileDir aCfg
+      logPath = logDir FP.</> "promptyped_binapi_downloader.log"
+      debugLogPath = logDir FP.</> "promptyped_binapi_downloader.debug.log"
   Logging.initializeLogger logPath debugLogPath Logger.INFO
   liftIO $ Logging.logInfo "Initial config" (show cfg)
   liftIO $ Logging.logInfo "Initial state" (show initialState)
-  res <- runApp cfg initialState (makeProject @GoLang)
-  putTextLn $ "Result: " <> show res
+  let projectFn = case (projectKind aCfg) of
+        CreateProject -> makeCreateFilesProject @GoLang
+        RefactorProject -> makeRefactorFilesProject @GoLang
+  res <- runApp cfg initialState projectFn
+  case res of
+    Left err -> putTextLn $ "Process ended with error: " <> show err
+    Right ((), finalState) -> do
+      liftIO $ Logging.logInfo "Final config" (show cfg)
+      liftIO $ Logging.logInfo "Final state" (show $ stateMetrics finalState)
+      liftIO . putTextLn . show $ cfg
+      liftIO . putTextLn . show $ stateMetrics finalState

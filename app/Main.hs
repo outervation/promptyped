@@ -19,5 +19,5 @@ main = do
           putTextLn $ "Error loading config: " <> err
           exitFailure
     _ -> do
-      putTextLn "Usage: program <config-path>"
+      putTextLn "Usage: program <config-path> <MakeProject|RefactorProject>"
       exitFailure
