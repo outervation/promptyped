@@ -316,8 +316,11 @@ makeRefactorFilesProject = do
   cfg <- ask
   ignoredDirs <- BS.getIgnoredDirs @bs
   let docFileName = "binanceApiDetails_CoinMFutures.txt"
-  createDocRes <- liftIO $ FS.appendToFile (FS.toFilePath cfg docFileName) binanceFuturesApiDoc
-  when (isLeft createDocRes) $ throwError $ "Error creating docs: " <> show createDocRes
+      docFilePath = FS.toFilePath cfg docFileName
+  docAlreadyExists <- liftIO $ FS.fileExistsOnDisk docFilePath
+  when (not docAlreadyExists) $ do
+    createDocRes <- liftIO $ FS.appendToFile docFilePath binanceFuturesApiDoc
+    when (isLeft createDocRes) $ throwError $ "Error creating docs: " <> show createDocRes
   let setupOpenFiles fileName = do
         modify' clearOpenFiles
         forM_ [docFileName, journalFileName, fileName] $ \x -> Tools.openFile x cfg
