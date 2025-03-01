@@ -15,6 +15,7 @@ import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BL
 import Data.Default.Class (def)
 import Data.Sequence qualified as Seq
+import Data.List as L
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import GHC.Conc (threadDelay)
@@ -244,6 +245,106 @@ parseAllSSEChunks ::
   BodyReader ->
   IO (Either ClientError ChatResponse)
 parseAllSSEChunks bodyReader = do
+  -- We'll keep track of:
+  --   • leftover bytes that might span line boundaries
+  --   • accumulated partial content (accContent)
+  --   • possibly an id
+  --   • possibly usage data
+  --
+  -- Once we see a "[DONE]" line or run out of chunks, we return.
+
+  let loop
+        :: ByteString              -- ^ leftover partial line from previous chunk
+        -> Text                    -- ^ accumulated text from all deltas
+        -> Maybe QueryId           -- ^ first 'id' we discover
+        -> Maybe UsageData         -- ^ last usage data we discover
+        -> IO (Either ClientError ChatResponse)
+      loop leftover accContent mId mUsage = do
+        chunk <- brRead bodyReader
+        if BS.null chunk
+          -- No more data from server: finalize leftover as one “line” if not empty
+          then
+            if BS.null leftover
+               then
+                 -- No leftover, no chunk => we’re done
+                 pure (Right $ mkChatResponse accContent mUsage mId)
+               else do
+                 -- Treat the leftover as one final line
+                 (finalContent, finalId, finalUsage, _isDone) <-
+                     handleLine (accContent, mId, mUsage, False) leftover
+                 pure (Right $ mkChatResponse finalContent finalUsage finalId)
+          else do
+            let combined = leftover <> chunk
+            -- Split on newline (10); each piece is a “line” except possibly the last
+            let allPieces = BS.split 10 combined  -- '\n' = 10
+            let piecesCount = length allPieces
+
+            -- Does this chunk end with newline? 
+            --   If so, the last piece after split is actually an empty line (all lines are “complete”).
+            --   If not, the final piece is incomplete and becomes the new leftover.
+            let chunkEndsWithNewline = (not (BS.null chunk)) && (BS.last chunk == 10)
+
+            let (completeLines, newLeftover) =
+                  if chunkEndsWithNewline
+                    then
+                      -- All pieces are complete lines;
+                      -- often the last one is "" if chunk ended with a newline.
+                      ( allPieces
+                      , BS.empty
+                      )
+                    else case piecesCount of
+                           0 -> ([], BS.empty)  -- (shouldn't happen, but safe)
+                           1 -> ([], L.head allPieces)   -- everything is leftover
+                           _ -> (L.init allPieces, L.last allPieces)
+
+            -- Process each complete line in turn
+            (updatedContent, updatedId, updatedUsage, done) <-
+              foldM handleLine (accContent, mId, mUsage, False) completeLines
+
+            if done
+              then
+                -- We saw [DONE], so we can return right away
+                pure (Right $ mkChatResponse updatedContent updatedUsage updatedId)
+              else
+                -- Continue reading next chunk, with possible leftover
+                loop newLeftover updatedContent updatedId updatedUsage
+
+  -- Finally we start reading from the body with an empty leftover buffer
+  result <- loop BS.empty "" Nothing Nothing
+  pure result
+
+  -- Same `handleLine` logic as before, just moved out
+  where handleLine
+          :: (Text, Maybe QueryId, Maybe UsageData, Bool)
+          -> ByteString
+          -> IO (Text, Maybe QueryId, Maybe UsageData, Bool)
+        handleLine (contentSoFar, idSoFar, usageSoFar, done) lineBS
+          | done = pure (contentSoFar, idSoFar, usageSoFar, True)  -- already found [DONE]
+          | otherwise =
+            case parseDataLine lineBS of
+              Nothing ->
+                -- e.g., an SSE keep-alive or just empty “data:” lines that aren’t JSON
+                pure (contentSoFar, idSoFar, usageSoFar, False)
+              Just "[DONE]" ->
+                -- Done signal
+                pure (contentSoFar, idSoFar, usageSoFar, True)
+              Just jsonLine -> do
+                -- Try to decode JSON
+                case eitherDecodeStrict' (TE.encodeUtf8 (T.strip jsonLine)) of
+                  Left _err -> do
+                    -- Not valid JSON => skip
+                    pure (contentSoFar, idSoFar, usageSoFar, False)
+                  Right val -> do
+                    let (deltaText, queryId, newUsage) = extractStreamingData val
+                        combinedContent = contentSoFar <> deltaText
+                        usage' = usageSoFar <|> newUsage
+                        queryId' = idSoFar <|> queryId
+                    pure (combinedContent, queryId', usage', False)
+
+parseAllSSEChunksOld ::
+  BodyReader ->
+  IO (Either ClientError ChatResponse)
+parseAllSSEChunksOld bodyReader = do
   -- We'll accumulate partial content from "delta.content".
   -- We'll also store usage data if it appears in the final chunk.
   let loop :: Text -> Maybe QueryId -> Maybe UsageData -> IO (Text, Maybe QueryId, Maybe UsageData, Bool)
@@ -260,7 +361,6 @@ parseAllSSEChunks bodyReader = do
             let lines_ = BS.split 10 chunk -- newline = 10
             -- putTextLn " Chunk lines: "
             -- mapM (putTextLn . show) lines_
-            foldM_ handleLine (accContent, mId, mUsage, False) lines_
             (newContent, newId, newUsage, isDone) <- foldM handleLine (accContent, mId, mUsage, False) lines_
             if isDone
               then pure (newContent, newId, newUsage, True)
