@@ -349,7 +349,7 @@ makeRefactorFilesProject = do
                       <> objectiveShortName
                       <> ")."
                       <> "Each task should list other task dependencies if any, and there should be no circular dependencies."
-                      <> "If there's something relevant for later that you can't encode well in the return value, please append it to the journal.",
+                      <> "If there's something relevant for later that you can't encode well in the return value, please AppendFile=<[{\"fileName\": \"journal.txt\", \"rawTextName\": \"journalUpdateTextBoxName\"}]> it to the journal.",
                   contextRest = []
                 }
         setupOpenFiles fileName
@@ -365,7 +365,7 @@ makeRefactorFilesProject = do
                 <> objectiveShortName
                 <> ")."
                 <> "Now please edit/update these where necessary to account for you now having vision of all tasks (previously you created each file's tasks independently), to e.g. remove duplication and make the overall plan coherent, and return the updated list of tasks."
-                <> "If there's something relevant for later that you can't encode well in the return value, please append it to the journal."
+                <> "If there's something relevant for later that you can't encode well in the return value, please AppendFile=<[{\"fileName\": \"journal.txt\", \"rawTextName\": \"journalUpdateTextBoxName\"}]> it to the journal."
                 <> "The previously created tasks are: \n"
                 <> Tools.toJ plannedTasks,
             contextRest = []

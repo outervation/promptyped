@@ -38,6 +38,7 @@ updateStats generation usage timeTaken = do
             metricsCost = total_cost generation,
             metricsApiTime = timeTaken
           }
+  liftIO $ Logging.logInfo "QueryMetrics" (show metrics)
   modify' $ updateStateMetrics metrics
 
 runPrompt :: [Message] -> AppM Message
@@ -55,12 +56,22 @@ runPrompt messages = do
     Left err -> throwError $ "Error running prompt, with messages " <> show messages <> ": " <> err
     Right queryResult -> updateStats (stats queryResult) (usage queryResult) nanosTaken >> pure (message queryResult)
 
+mergeAdjacentRoleMessages :: [Message] -> [Message]
+mergeAdjacentRoleMessages [] = []
+mergeAdjacentRoleMessages [msg] = [msg]
+mergeAdjacentRoleMessages (msg1:msg2:rest)
+  | role msg1 == role msg2 =
+      let mergedContent = content msg1 <> "\n (...consecutive messages from same role merged...) \n" <> content msg2
+          mergedMsg = msg1 { content = mergedContent }
+      in mergeAdjacentRoleMessages (mergedMsg:rest)
+  | otherwise = msg1 : mergeAdjacentRoleMessages (msg2:rest)
+
 contextToMessages :: (ToJSON a) => Context -> [Tools.Tool] -> AppState -> a -> [Message]
 contextToMessages Context {..} tools theState exampleReturn = do
   let messages = map snd contextRest
       returnValueDesc = Tools.returnValueToDescription exampleReturn
       allTexts = [contextBackground, filesDesc, openFilesDesc, toolDesc, returnValueDesc, "YOUR CURRENT TASK: " <> contextTask]
-   in Message {role = roleName RoleUser, content = T.unlines allTexts} : messages
+   in mergeAdjacentRoleMessages $ Message {role = roleName RoleUser, content = T.unlines allTexts} : messages
   where
     toolDesc = Tools.toolsToDescription tools
     openFilesDesc = "All currently open files: \n " <> unlines (map renderOpenFile $ stateOpenFiles theState)

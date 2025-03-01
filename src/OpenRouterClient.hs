@@ -49,7 +49,8 @@ data StreamIt = StreamIt | DontStreamIt deriving (Eq, Ord, Show)
 data ChatRequest = ChatRequest
   { model :: Text,
     messages :: [Message],
-    stream :: Maybe Bool
+    stream :: Maybe Bool,
+    temperature :: Maybe Float
   }
   deriving (Generic, Show)
 
@@ -160,13 +161,16 @@ tlsManagerSettings =
   let settings = mkManagerSettings def def
    in settings {managerResponseTimeout = responseTimeoutMicro (360 * 1000000)}
 
+defaultTemperature :: Float
+defaultTemperature = 0.0
+
 sendQueryRaw :: Text -> Text -> Text -> Text -> Text -> [Message] -> IO (Either ClientError ChatResponse)
 sendQueryRaw apiSite apiKey siteUrl siteName model msgs = do
   manager <- newTlsManagerWith tlsManagerSettings
   let baseUrl = BaseUrl Https (T.unpack apiSite) 443 ""
   let clientEnv = mkClientEnv manager baseUrl
   let auth = "Bearer " <> apiKey
-  let request = ChatRequest model msgs Nothing
+  let request = ChatRequest model msgs Nothing (Just defaultTemperature)
   let (chatClient, _) = getClients apiSite
   runClientM (chatClient (Just auth) (Just siteUrl) (Just siteName) request) clientEnv
 
@@ -175,7 +179,7 @@ sendQueryStreaming apiSite apiKey siteUrl siteName model msgs = do
   manager <- newTlsManagerWith tlsManagerSettings
 
   -- Build the raw URL, for example: https://<apiSite>/v1/chat/completions
-  let url = "https://" <> T.unpack apiSite <> "/api/v1/chat/completions"
+  let url = "https://" <> T.unpack apiSite <> (if apiSite == "openrouter.ai" then "/api/v1/chat/completions" else "/v1/chat/completions")
   let baseUrl = BaseUrl Https (T.unpack apiSite) 443 ""
   initReq <- parseRequest url
 
@@ -184,7 +188,8 @@ sendQueryStreaming apiSite apiKey siteUrl siteName model msgs = do
         object
           [ "model" .= model,
             "messages" .= msgs,
-            "stream" .= True
+            "stream" .= True,
+            "temperature" .= (0.0 :: Float)
           ]
   let requestBod = RequestBodyLBS (encode payload)
   let req =
@@ -384,7 +389,7 @@ retryWithDelay maxAttempts delayMicros shouldLog action = go maxAttempts
 -- Main query function with generation stats
 sendQuery :: Text -> Text -> Text -> Text -> Text -> [Message] -> IO (Either Text QueryResult)
 sendQuery apiSite apiKey siteUrl siteName model msgs = do
-  let query = if apiSite /= "openrouter.ai" then sendQueryRaw else sendQueryStreaming
+  let query = if apiSite /= "openrouter.ai" && apiSite /= "api.deepseek.com" then sendQueryRaw else sendQueryStreaming
   Logging.logDebug "sendQuery" (show msgs)
   queryResult <- retryWithDelay 5 3000000 ShouldLog $ query apiSite apiKey siteUrl siteName model msgs
   case queryResult of

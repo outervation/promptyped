@@ -172,10 +172,11 @@ addLineNumbers = V.imap addComment
 
 addComment :: Int -> Text -> Text
 addComment idx originalLine =
-  let comment = "/* " <> T.pack (show idx) <> " */"
+  let comment = "/* Line " <> T.pack (show idx) <> " start */"
+      endComment = "/* Line " <> T.pack (show idx) <> " end */"
    in if T.null originalLine
         then comment
-        else comment <> " " <> originalLine
+        else comment <> " " <> originalLine <> " " <> endComment
 
 ensureNoLineNumbers :: FilePath -> IO (Either Text Text)
 ensureNoLineNumbers filepath = do

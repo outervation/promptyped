@@ -105,7 +105,7 @@ runTestsGo ::
   IO (Maybe Text)
 runTestsGo timeout dir newEnv = Dir.withCurrentDirectory dir $ do
   putTextLn $ "Testing Go project in dir " <> toText dir
-  testResult <- runProcessWithTimeout timeout "." newEnv "go" ["test", "-timeout", "20s", "./..."]
+  testResult <- runProcessWithTimeout timeout "." newEnv "go" ["test", "-timeout", "30s", "./..."]
   eitherToMaybe <$> handleExitCode "'go test'" testResult
 
 isCPlusPlusFileExtension :: Text -> Bool
