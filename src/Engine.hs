@@ -23,7 +23,7 @@ shortenedMessageLength :: Int
 shortenedMessageLength = 200
 
 numRecentAiMessagesNotToTruncate :: Int
-numRecentAiMessagesNotToTruncate = 1
+numRecentAiMessagesNotToTruncate = 2
 
 numOldMessagesToKeepInContext :: Int
 numOldMessagesToKeepInContext = 10
@@ -55,6 +55,28 @@ runPrompt messages = do
   case mayRes of
     Left err -> throwError $ "Error running prompt, with messages " <> show messages <> ": " <> err
     Right queryResult -> updateStats (stats queryResult) (usage queryResult) nanosTaken >> pure (message queryResult)
+
+makeSyntaxErrorCorrectionPrompt :: (ToJSON a) => [Tools.Tool] -> a -> Message -> Text -> [Message]
+makeSyntaxErrorCorrectionPrompt tools exampleReturn llmMsg err = do
+  let returnValueDesc = Tools.returnValueToDescription exampleReturn
+      toolDesc = Tools.toolsToDescription tools
+      msgBeginning = "You are an agent responsible for error correction of LLM output. There is a specific syntax for tools that the LLM could use, described as follows: " <> toolDesc <> "\nThere is also a syntax for values the LLM may return, as follows: " <> returnValueDesc
+      msgRes = "The LLM returned syntactically incorrect output:\n" <> (content llmMsg) <> "\nThe exact error was: " <> err <> "\nPlease output the same output as above but with the syntax error corrected, thanks!"
+  return $ Message (roleName RoleUser) (msgBeginning <> msgRes)
+  
+runPromptWithSyntaxErrorCorrection :: (ToJSON a) => [Tools.Tool] -> a -> [Message] -> AppM Message
+runPromptWithSyntaxErrorCorrection tools example messages = do
+  res <- runPrompt messages
+  let mayToolsCalled = Tools.findToolsCalled (content res) tools
+  case mayToolsCalled of
+    Right _ -> pure res
+    Left err -> do
+      let errorCorrectionMsg = makeSyntaxErrorCorrectionPrompt tools example res err
+      res' <- runPrompt errorCorrectionMsg
+      let mayToolsCalled' = Tools.findToolsCalled (content res') tools
+      case mayToolsCalled' of
+        Right _ -> pure res'
+        Left _ -> pure res
 
 mergeAdjacentRoleMessages :: [Message] -> [Message]
 mergeAdjacentRoleMessages [] = []

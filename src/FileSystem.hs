@@ -170,13 +170,20 @@ removeLineNumberComment line =
 addLineNumbers :: V.Vector Text -> V.Vector Text
 addLineNumbers = V.imap addComment
 
-addComment :: Int -> Text -> Text
-addComment idx originalLine =
+addCommentNew :: Int -> Text -> Text
+addCommentNew idx originalLine =
   let comment = "/* Line " <> T.pack (show idx) <> " start */"
       endComment = "/* Line " <> T.pack (show idx) <> " end */"
    in if T.null originalLine
         then comment
         else comment <> " " <> originalLine <> " " <> endComment
+
+addComment :: Int -> Text -> Text
+addComment idx originalLine =
+  let comment = "/* " <> T.pack (show idx) <> " */"
+   in if T.null originalLine
+        then comment
+        else comment <> " " <> originalLine 
 
 ensureNoLineNumbers :: FilePath -> IO (Either Text Text)
 ensureNoLineNumbers filepath = do

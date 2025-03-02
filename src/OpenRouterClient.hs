@@ -12,6 +12,7 @@ import Core
 import Data.Aeson
 import Data.Aeson.KeyMap qualified as HM
 import Data.ByteString qualified as BS
+import Network.Socket (Socket, setSocketOption, SocketOption(..))
 import Data.ByteString.Lazy qualified as BL
 import Data.Default.Class (def)
 import Data.Sequence qualified as Seq
@@ -32,6 +33,7 @@ import Network.HTTP.Client
     parseRequest,
     requestBody,
     requestHeaders,
+    rawConnectionModifySocket,
     responseStatus,
     responseTimeout,
     responseTimeoutMicro,
@@ -157,10 +159,37 @@ getClients provider =
       let (chat :<|> gen) = client directAPI
        in (chat, gen)
 
+tlsManagerSettingsOld :: ManagerSettings
+tlsManagerSettingsOld =
+  let settings = mkManagerSettings def def
+   in settings {managerResponseTimeout = responseTimeoutMicro (600 * 1000000)}
+
 tlsManagerSettings :: ManagerSettings
 tlsManagerSettings =
-  let settings = mkManagerSettings def def
-   in settings {managerResponseTimeout = responseTimeoutMicro (360 * 1000000)}
+    let settings = mkManagerSettings def def
+        socketModifier socket = do
+          -- Enable TCP keepalive at socket level
+          setSocketOption socket KeepAlive 1
+
+          -- On some platforms, you can set more specific keepalive parameters
+          -- Uncomment if available on your platform:
+          -- setSocketOption socket SocketOpts.TcpKeepIdle 60      -- Start after 60s idle
+          -- setSocketOption socket SocketOpts.TcpKeepInterval 30   -- Send every 30s
+          -- setSocketOption socket SocketOpts.TcpKeepCount 5       -- 5 retries
+
+          -- Increase socket buffer sizes
+          setSocketOption socket RecvBuffer 262144
+          setSocketOption socket SendBuffer 262144
+
+          -- Disable Nagle's algorithm for faster sending of small packets
+          -- setSocketOption socket SocketOpts.NoDelay 1
+    in settings {
+      managerResponseTimeout = responseTimeoutMicro (600 * 1000000), -- 10 min timeout
+        managerRawConnection = rawConnectionModifySocket socketModifier,
+        -- Disable connection pooling for large requests
+        managerConnCount = 1,
+        managerIdleConnectionCount = 0
+      }
 
 defaultTemperature :: Float
 defaultTemperature = 0.0
@@ -190,7 +219,7 @@ sendQueryStreaming apiSite apiKey siteUrl siteName model msgs = do
           [ "model" .= model,
             "messages" .= msgs,
             "stream" .= True,
-            "temperature" .= (0.0 :: Float)
+            "temperature" .= (defaultTemperature :: Float)
           ]
   let requestBod = RequestBodyLBS (encode payload)
   let req =
@@ -265,11 +294,13 @@ parseAllSSEChunks bodyReader = do
           -- No more data from server: finalize leftover as one “line” if not empty
           then
             if BS.null leftover
-               then
+               then do
                  -- No leftover, no chunk => we’re done
+                 putTextLn "Done as got null chunk and nothing leftover"
                  pure (Right $ mkChatResponse accContent mUsage mId)
                else do
                  -- Treat the leftover as one final line
+                 putTextLn $ "Done; handling ifnal leftover chunk " <> show leftover
                  (finalContent, finalId, finalUsage, _isDone) <-
                      handleLine (accContent, mId, mUsage, False) leftover
                  pure (Right $ mkChatResponse finalContent finalUsage finalId)
@@ -322,82 +353,28 @@ parseAllSSEChunks bodyReader = do
           | done = pure (contentSoFar, idSoFar, usageSoFar, True)  -- already found [DONE]
           | otherwise =
             case parseDataLine lineBS of
-              Nothing ->
+              Nothing -> do
                 -- e.g., an SSE keep-alive or just empty “data:” lines that aren’t JSON
+                when (BS.length lineBS > 0) $ putTextLn $ "Got unused line " <> show lineBS
                 pure (contentSoFar, idSoFar, usageSoFar, False)
-              Just "[DONE]" ->
+              Just "[DONE]" -> do
                 -- Done signal
+                putTextLn $ "STREAM_DONE. Content accumulated: " <> show (T.length contentSoFar)
                 pure (contentSoFar, idSoFar, usageSoFar, True)
               Just jsonLine -> do
                 -- Try to decode JSON
                 case eitherDecodeStrict' (TE.encodeUtf8 (T.strip jsonLine)) of
                   Left _err -> do
                     -- Not valid JSON => skip
+                    putTextLn $ "Saw invalid json: " <> show _err
                     pure (contentSoFar, idSoFar, usageSoFar, False)
                   Right val -> do
-                    let (deltaText, queryId, newUsage) = extractStreamingData val
+                    let (deltaText, queryId, newUsage) = extractStreamingData val                    
                         combinedContent = contentSoFar <> deltaText
                         usage' = usageSoFar <|> newUsage
                         queryId' = idSoFar <|> queryId
+                    --putTextLn $ "Got new val " <> show val <> " with new content " <> deltaText
                     pure (combinedContent, queryId', usage', False)
-
-parseAllSSEChunksOld ::
-  BodyReader ->
-  IO (Either ClientError ChatResponse)
-parseAllSSEChunksOld bodyReader = do
-  -- We'll accumulate partial content from "delta.content".
-  -- We'll also store usage data if it appears in the final chunk.
-  let loop :: Text -> Maybe QueryId -> Maybe UsageData -> IO (Text, Maybe QueryId, Maybe UsageData, Bool)
-      loop accContent mId mUsage = do
-        chunk <- brRead bodyReader
-        if BS.null chunk
-          then do
-            -- No more data from server
-            -- putTextLn $ "No more chunks, returning"
-            pure (accContent, mId, mUsage, True)
-          else do
-            -- Break chunk by lines
-            -- putTextLn $ "Got chunk: " <> show chunk
-            let lines_ = BS.split 10 chunk -- newline = 10
-            -- putTextLn " Chunk lines: "
-            -- mapM (putTextLn . show) lines_
-            (newContent, newId, newUsage, isDone) <- foldM handleLine (accContent, mId, mUsage, False) lines_
-            if isDone
-              then pure (newContent, newId, newUsage, True)
-              else loop newContent newId newUsage
-
-      handleLine ::
-        (Text, Maybe QueryId, Maybe UsageData, Bool) ->
-        ByteString ->
-        IO (Text, Maybe QueryId, Maybe UsageData, Bool)
-      handleLine (contentSoFar, idSoFar, usageSoFar, done) lineBS
-        | done = pure (contentSoFar, idSoFar, usageSoFar, True) -- already found [DONE]; ignore
-        | otherwise =
-            case parseDataLine lineBS of
-              Nothing -> pure (contentSoFar, idSoFar, usageSoFar, False)
-              Just "[DONE]" -> do
-                -- putTextLn "Saw done"
-                -- Once we see [DONE], we'll mark done=True
-                pure (contentSoFar, idSoFar, usageSoFar, True)
-              Just jsonLine -> do
-                case eitherDecodeStrict' (TE.encodeUtf8 (T.strip jsonLine)) of
-                  Left _err -> do
-                    -- SSE line but not valid JSON?
-                    -- putTextLn $ "Saw invalid json: " <> show _err
-                    pure (contentSoFar, idSoFar, usageSoFar, False)
-                  Right val -> do
-                    -- putTextLn $ "Got JSON val: " <> show val
-                    let (deltaText, queryId, newUsage) = extractStreamingData val
-                        combinedContent = contentSoFar <> deltaText
-                        usage' = usageSoFar <|> newUsage
-                        queryId' = idSoFar <|> queryId
-                     in pure (combinedContent, queryId', usage', False)
-
-  (finalContent, queryId, mbUsage, _done) <- loop "" Nothing Nothing
-  -- putTextLn "Done parsing"
-  -- Construct a final ChatResponse
-  let response = mkChatResponse finalContent mbUsage queryId
-  pure (Right response)
 
 -- | SSE lines often look like "data: {...}" or "data: [DONE]".
 parseDataLine :: ByteString -> Maybe Text
@@ -489,9 +466,24 @@ retryWithDelay maxAttempts delayMicros shouldLog action = go maxAttempts
 -- Main query function with generation stats
 sendQuery :: Text -> Text -> Text -> Text -> Text -> [Message] -> IO (Either Text QueryResult)
 sendQuery apiSite apiKey siteUrl siteName model msgs = do
-  let query = if apiSite /= "openrouter.ai" && apiSite /= "api.deepseek.com" then sendQueryRaw else sendQueryStreaming
+  let initialQuery = if apiSite /= "openrouter.ai" && apiSite /= "api.deepseek.com" then sendQueryRaw else sendQueryStreaming
+      numAttempts = 5
   Logging.logDebug "sendQuery" (show msgs)
-  queryResult <- retryWithDelay 5 3000000 ShouldLog $ query apiSite apiKey siteUrl siteName model msgs
+  let queryWithEmptyCheck remainingAttempts = do
+        Logging.logInfo "sendQueryAttempt" ("Attempt " <> show (numAttempts + 1 - remainingAttempts) <> " with " <> show (length msgs) <> " messages")
+        result <- initialQuery apiSite apiKey siteUrl siteName model msgs
+        case result of
+          Right resp ->
+            -- Check if content is empty
+            if T.null (content ((L.head (choices resp)).message))
+            then do
+              Logging.logWarn "sendQuery" "Received empty response, retrying..."
+              if remainingAttempts > 1
+                then threadDelay 5000000 >> queryWithEmptyCheck (remainingAttempts - 1)
+                else pure $ Right resp  -- Give up and return empty response
+            else pure $ Right resp
+          Left err -> pure $ Left err
+  queryResult <- retryWithDelay numAttempts 3000000 ShouldLog $ queryWithEmptyCheck numAttempts
   case queryResult of
     Left err -> pure $ Left $ "Error sending query to openrouter: " <> show err
     Right resp -> case apiSite == "openrouter.ai" of
