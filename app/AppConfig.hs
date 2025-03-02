@@ -24,7 +24,9 @@ data AppConfig = AppConfig
     gitUserName :: Text,
     gitUserEmail :: Text,
     taskMaxFailures :: Int,
-    projectKind :: ProjectKind
+    projectKind :: ProjectKind,
+    modelTemperature :: Maybe Float,
+    modelMaxInputTokens :: Int
   }
   deriving (Generic, Eq, Ord, Show)
 

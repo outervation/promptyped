@@ -191,21 +191,18 @@ tlsManagerSettings =
         managerIdleConnectionCount = 0
       }
 
-defaultTemperature :: Float
-defaultTemperature = 0.0
-
-sendQueryRaw :: Text -> Text -> Text -> Text -> Text -> [Message] -> IO (Either ClientError ChatResponse)
-sendQueryRaw apiSite apiKey siteUrl siteName model msgs = do
+sendQueryRaw :: Text -> Text -> Text -> Text -> Text -> Maybe Float -> [Message] -> IO (Either ClientError ChatResponse)
+sendQueryRaw apiSite apiKey siteUrl siteName model temperature msgs = do
   manager <- newTlsManagerWith tlsManagerSettings
   let baseUrl = BaseUrl Https (T.unpack apiSite) 443 ""
   let clientEnv = mkClientEnv manager baseUrl
   let auth = "Bearer " <> apiKey
-  let request = ChatRequest model msgs Nothing (Just defaultTemperature)
+  let request = ChatRequest model msgs Nothing temperature
   let (chatClient, _) = getClients apiSite
   runClientM (chatClient (Just auth) (Just siteUrl) (Just siteName) request) clientEnv
 
-sendQueryStreaming :: Text -> Text -> Text -> Text -> Text -> [Message] -> IO (Either ClientError ChatResponse)
-sendQueryStreaming apiSite apiKey siteUrl siteName model msgs = do
+sendQueryStreaming :: Text -> Text -> Text -> Text -> Text -> Maybe Float -> [Message] -> IO (Either ClientError ChatResponse)
+sendQueryStreaming apiSite apiKey siteUrl siteName model temperature msgs = do
   manager <- newTlsManagerWith tlsManagerSettings
 
   -- Build the raw URL, for example: https://<apiSite>/v1/chat/completions
@@ -219,7 +216,7 @@ sendQueryStreaming apiSite apiKey siteUrl siteName model msgs = do
           [ "model" .= model,
             "messages" .= msgs,
             "stream" .= True,
-            "temperature" .= (defaultTemperature :: Float)
+            "temperature" .= temperature
           ]
   let requestBod = RequestBodyLBS (encode payload)
   let req =
@@ -464,14 +461,14 @@ retryWithDelay maxAttempts delayMicros shouldLog action = go maxAttempts
           go (n - 1)
 
 -- Main query function with generation stats
-sendQuery :: Text -> Text -> Text -> Text -> Text -> [Message] -> IO (Either Text QueryResult)
-sendQuery apiSite apiKey siteUrl siteName model msgs = do
+sendQuery :: Text -> Text -> Text -> Text -> Text -> Maybe Float -> [Message] -> IO (Either Text QueryResult)
+sendQuery apiSite apiKey siteUrl siteName model temperature msgs = do
   let initialQuery = if apiSite /= "openrouter.ai" && apiSite /= "api.deepseek.com" then sendQueryRaw else sendQueryStreaming
       numAttempts = 5
   Logging.logDebug "sendQuery" (show msgs)
   let queryWithEmptyCheck remainingAttempts = do
         Logging.logInfo "sendQueryAttempt" ("Attempt " <> show (numAttempts + 1 - remainingAttempts) <> " with " <> show (length msgs) <> " messages")
-        result <- initialQuery apiSite apiKey siteUrl siteName model msgs
+        result <- initialQuery apiSite apiKey siteUrl siteName model temperature msgs
         case result of
           Right resp ->
             -- Check if content is empty
@@ -513,6 +510,7 @@ example site apiKey = do
       "openai/gpt-3.5-turbo"
       -- "deepseek-ai/DeepSeek-R1"
       -- "meta-llama/Llama-3.3-70B-Instruct"
+      Nothing
       [msg]
   case result of
     Left err -> putStrLn $ "Error: " <> show err

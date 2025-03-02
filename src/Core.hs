@@ -112,7 +112,9 @@ data Config = Config
     configGitUserName :: Text,
     configGitUserEmail :: Text,
     configTaskMaxFailures :: RemainingFailureTolerance,
-    configForbiddenFiles :: [ForbiddenFile]
+    configForbiddenFiles :: [ForbiddenFile],
+    configModelTemperature :: Maybe Float,
+    configModelMaxInputTokens :: Int
   }
   deriving (Eq, Ord, Show)
 

@@ -46,11 +46,11 @@ runPrompt messages = do
   st <- get
   liftIO $ Logging.logInfo "SendMessages" (show . reverse . take 5 $ reverse messages)
   let openFileNames = T.intercalate "," $ map openFileName (stateOpenFiles st)
+      existingFileNames = T.intercalate "," $ map existingFileName (stateFiles st)
   liftIO $ Logging.logInfo "SendMessages" $ "OpenFiles: " <> openFileNames
-  let existingFileNames = T.intercalate "," $ map existingFileName (stateFiles st)
   liftIO $ Logging.logInfo "SendMessages" $ "ExistingFiles: " <> existingFileNames
   cfg <- ask
-  let timedQuery = timeIONano64 $ Client.sendQuery (configApiSite cfg) (configApiKey cfg) "prompTyped" "prompTyped" (configModel cfg) messages
+  let timedQuery = timeIONano64 $ Client.sendQuery (configApiSite cfg) (configApiKey cfg) "prompTyped" "prompTyped" (configModel cfg) (configModelTemperature cfg) messages
   (mayRes, nanosTaken) <- liftIO timedQuery
   case mayRes of
     Left err -> throwError $ "Error running prompt, with messages " <> show messages <> ": " <> err

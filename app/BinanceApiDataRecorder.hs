@@ -31,7 +31,9 @@ makeGoBinanceApiDataRecorder aCfg = do
             configForbiddenFiles =
               [ ForbiddenFile "go.mod" cannotModifyDepReason,
                 ForbiddenFile "go.sum" cannotModifyDepReason
-              ]
+              ],
+            configModelTemperature = modelTemperature aCfg,
+            configModelMaxInputTokens = modelMaxInputTokens aCfg
           }
   let initialState = AppState mempty [] [] (CompileTestState Nothing Nothing)
       logDir = T.unpack $ logFileDir aCfg
