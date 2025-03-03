@@ -35,8 +35,8 @@ loadFromCache fileName = do
       modify' $ \s ->
         s
           { stateMetrics = stateMetrics s <> metricsDelta,
-            stateOpenFiles = mergeOpenFiles (stateOpenFiles s) openFiles,
-            stateFiles = mergeExistingFiles (stateFiles s) files,
+--            stateOpenFiles = mergeOpenFiles (stateOpenFiles s) openFiles,
+--            stateFiles = mergeExistingFiles (stateFiles s) files,
             stateCompileTestRes = compileTestRes
           }
       return b
