@@ -167,6 +167,9 @@ validateFileClosed (FileClosed fileName) = do
     True -> pure $ Left (OtherMsg, "Error: claimed to have closed file " <> fileName <> " but it's still open.")
     False -> pure $ Right ()
 
+data CheckContextSize = DoCheckContextSize | DontCheckContextSize
+ deriving (Eq, Ord, Show)
+
 runAiFunc ::
   forall bs a b.
   (FromJSON a, ToJSON a, Show a, BS.BuildSystem bs) =>
@@ -176,7 +179,19 @@ runAiFunc ::
   (a -> AppM (Either (MsgKind, Text) b)) ->
   RemainingFailureTolerance ->
   AppM b
-runAiFunc origCtxt tools exampleReturn postProcessor remainingErrs = do
+runAiFunc = runAiFuncInner @bs DoCheckContextSize
+
+runAiFuncInner ::
+  forall bs a b.
+  (FromJSON a, ToJSON a, Show a, BS.BuildSystem bs) =>
+  CheckContextSize ->
+  Context ->
+  [Tools.Tool] ->
+  a ->
+  (a -> AppM (Either (MsgKind, Text) b)) ->
+  RemainingFailureTolerance ->
+  AppM b
+runAiFuncInner checkContextSize origCtxt tools exampleReturn postProcessor remainingErrs = do
   when (remainingErrs <= 0) $ throwError "Aborting as reached max number of errors"
   cfg <- ask
   theState <- get
@@ -186,12 +201,12 @@ runAiFunc origCtxt tools exampleReturn postProcessor remainingErrs = do
       ctxt = updateContextMessages shortenedOldErrCtxt (takeEnd (numOldMessagesToKeepInContext + 1))
       messages = contextToMessages ctxt tools theState exampleReturn
   (res, queryStats) <- runPromptWithSyntaxErrorCorrection tools exampleReturn messages
-  when (prompt_tokens queryStats > configModelMaxInputTokens cfg) $ do
+  when (prompt_tokens queryStats > configModelMaxInputTokens cfg && checkContextSize == DoCheckContextSize) $ do
     let msg = "Input context length is now " <> show (prompt_tokens queryStats) <> ", more than the configured max of " <> show (configModelMaxInputTokens cfg) <> ". Please CloseFile the least important open file."
         ctxt' = addErrorToContext ctxt msg OtherMsg
         maxErrs = configTaskMaxFailures cfg
         fileClosedRes = FileClosed "leastImportantFileName.go"
-    runAiFunc @bs ctxt' [Tools.ToolCloseFile] fileClosedRes validateFileClosed maxErrs
+    runAiFuncInner @bs DontCheckContextSize ctxt' [Tools.ToolCloseFile] fileClosedRes validateFileClosed maxErrs
     return ()
   liftIO $ Logging.logInfo "AiResponse" (show res)
   let aiMsg = content res
@@ -204,7 +219,7 @@ runAiFunc origCtxt tools exampleReturn postProcessor remainingErrs = do
     (_, Left err) -> addErrorAndRecurse ("Error in raw text syntax: " <> err) ctxtWithAiMsg SyntaxError OtherMsg
     (Right callsRaw, Right rawTextBlocks) -> handleToolCalls ctxtWithAiMsg callsRaw rawTextBlocks
   where
-    recur recurCtxt remainingErrs' = runAiFunc @bs recurCtxt tools exampleReturn postProcessor remainingErrs'
+    recur recurCtxt remainingErrs' = runAiFuncInner @bs checkContextSize recurCtxt tools exampleReturn postProcessor remainingErrs' 
 
     handleToolCalls :: Context -> [(Tools.Tool, [AET.Object])] -> Tools.RawTexts -> AppM b
     handleToolCalls ctxtWithAiMsg callsRaw rawTextBlocks = case Tools.processToolsArgs callsRaw rawTextBlocks of

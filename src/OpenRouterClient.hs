@@ -343,7 +343,6 @@ parseAllSSEChunks bodyReader = do
   -- Finally we start reading from the body with an empty leftover buffer
   loop BS.empty "" Nothing Nothing
   where
-    -- Same `handleLine` logic as before, just moved out
     handleLine ::
       (Text, Maybe QueryId, Maybe UsageData, Bool) ->
       ByteString ->
