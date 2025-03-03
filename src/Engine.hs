@@ -101,7 +101,7 @@ contextToMessages Context {..} tools theState exampleReturn = do
   where
     toolDesc = Tools.toolsToDescription tools
     openFilesDesc = "All currently open files: \n " <> unlines (map renderOpenFile $ stateOpenFiles theState)
-    filesDesc = "All available files: \n " <> unlines (map show $ stateFiles theState)
+    filesDesc = "All available files: \n " <> unlines (map renderExistingFile $ stateFiles theState)
 
 shortenOldErrorMessages :: [(MsgKind, Message)] -> [(MsgKind, Message)]
 shortenOldErrorMessages msgs =

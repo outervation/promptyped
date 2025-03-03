@@ -40,6 +40,9 @@ instance ToJSON ExistingFile
 
 instance FromJSON ExistingFile
 
+renderExistingFile :: ExistingFile -> Text
+renderExistingFile (ExistingFile name description) = "{ existingFileName: " <> name <> ", Description: " <> description <> "}"
+
 fileExists :: Text -> AppState -> Bool
 fileExists name theState =
   any (\file -> existingFileName file == name) (stateFiles theState)
