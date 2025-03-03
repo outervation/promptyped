@@ -259,7 +259,7 @@ makeUnitTests background plannedFile = do
   cfg <- ask
   clearJournal
   modify' clearOpenFiles
-  let dependencies = plannedFile.dependencies ++ [journalFileName, fileName]
+  let dependencies =  [fileName, journalFileName] ++ plannedFile.dependencies
   forM_ dependencies $ \x -> Tools.openFile x cfg
   makeUnitTestsInner @bs background fileName makeUnitTestsPrompt
 
@@ -268,7 +268,7 @@ makeFile background pf = do
   cfg <- ask
   resetCompileTestState
   modify' clearOpenFiles
-  let dependencies = pf.dependencies ++ [journalFileName]
+  let dependencies =  [pf.name, journalFileName] ++ pf.dependencies
   forM_ dependencies $ \x -> Tools.openFile x cfg
   let makeCtxt fileName =
         Context
@@ -294,7 +294,8 @@ makeRefactorFileTask :: forall bs. (BS.BuildSystem bs) => Text -> [ExistingFile]
 makeRefactorFileTask background initialDeps fileName desiredChanges = do
   cfg <- ask
   modify' clearOpenFiles
-  let dependencies = (map (\x -> x.existingFileName) initialDeps) ++ [journalFileName, fileName]
+  -- Note: file opened first will appear last (most recent)
+  let dependencies = [fileName, journalFileName] ++ (map (\x -> x.existingFileName) initialDeps)
   forM_ dependencies $ \x -> Tools.openFile x cfg
   let makeChange description = do
         let ctxt =
@@ -323,7 +324,7 @@ makeRefactorFilesProject = do
     when (isLeft createDocRes) $ throwError $ "Error creating docs: " <> show createDocRes
   let setupOpenFiles fileName = do
         modify' clearOpenFiles
-        forM_ [docFileName, journalFileName, fileName] $ \x -> Tools.openFile x cfg
+        forM_ [fileName, journalFileName, docFileName] $ \x -> Tools.openFile x cfg
   existingFileNames <- liftIO $ FS.getFileNamesRecursive ignoredDirs cfg.configBaseDir
   modify' (updateExistingFiles existingFileNames)
   sourceFileNames <- filterM (BS.isBuildableFile @bs) $ map existingFileName st.stateFiles
@@ -380,6 +381,8 @@ makeRefactorFilesProject = do
           ]
       refineChangesTask = \() -> Engine.runAiFunc @bs combineCtxt (Tools.ToolAppendFile : readOnlyTools) combineExample validateAlwaysPass (configTaskMaxFailures cfg)
   modify' clearOpenFiles
+  Tools.openFile docFileName cfg
+  Tools.openFile journalFileName cfg
   plannedTasksRefined <- memoise (configCacheDir cfg) "all_file_dependencies" () (const "") refineChangesTask
 
   let extraFilesCtxt =

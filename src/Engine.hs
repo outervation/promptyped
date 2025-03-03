@@ -41,7 +41,7 @@ updateStats generation usage timeTaken = do
   liftIO $ Logging.logInfo "QueryMetrics" (show metrics)
   modify' $ updateStateMetrics metrics
 
-runPrompt :: [Message] -> AppM Message
+runPrompt :: [Message] -> AppM (Message, UsageData)
 runPrompt messages = do
   st <- get
   liftIO $ Logging.logInfo "SendMessages" (show . reverse . take 5 $ reverse messages)
@@ -54,7 +54,7 @@ runPrompt messages = do
   (mayRes, nanosTaken) <- liftIO timedQuery
   case mayRes of
     Left err -> throwError $ "Error running prompt, with messages " <> show messages <> ": " <> err
-    Right queryResult -> updateStats (stats queryResult) (usage queryResult) nanosTaken >> pure (message queryResult)
+    Right queryResult -> updateStats (stats queryResult) (usage queryResult) nanosTaken >> pure (message queryResult, usage queryResult)
 
 makeSyntaxErrorCorrectionPrompt :: (ToJSON a) => [Tools.Tool] -> a -> Message -> Text -> [Message]
 makeSyntaxErrorCorrectionPrompt tools exampleReturn llmMsg err = do
@@ -64,19 +64,19 @@ makeSyntaxErrorCorrectionPrompt tools exampleReturn llmMsg err = do
       msgRes = "The LLM returned syntactically incorrect output:\n" <> (content llmMsg) <> "\nThe exact error was: " <> err <> "\nPlease output the same output as above but with the syntax error corrected, thanks!"
   return $ Message (roleName RoleUser) (msgBeginning <> msgRes)
   
-runPromptWithSyntaxErrorCorrection :: (ToJSON a) => [Tools.Tool] -> a -> [Message] -> AppM Message
+runPromptWithSyntaxErrorCorrection :: (ToJSON a) => [Tools.Tool] -> a -> [Message] -> AppM (Message, UsageData)
 runPromptWithSyntaxErrorCorrection tools example messages = do
-  res <- runPrompt messages
+  (res, queryStats) <- runPrompt messages
   let mayToolsCalled = Tools.findToolsCalled (content res) tools
   case mayToolsCalled of
-    Right _ -> pure res
+    Right _ -> pure (res, queryStats)
     Left err -> do
       let errorCorrectionMsg = makeSyntaxErrorCorrectionPrompt tools example res err
-      res' <- runPrompt errorCorrectionMsg
+      (res', _) <- runPrompt errorCorrectionMsg
       let mayToolsCalled' = Tools.findToolsCalled (content res') tools
       case mayToolsCalled' of
-        Right _ -> pure res'
-        Left _ -> pure res
+        Right _ -> pure (res', queryStats)
+        Left _ -> pure (res, queryStats)
 
 mergeAdjacentRoleMessages :: [Message] -> [Message]
 mergeAdjacentRoleMessages [] = []
@@ -147,6 +147,21 @@ truncateOldMessages role numRecentMessagesToKeep numCharsToKeep msgs =
 data ErrorKind = SyntaxError | SemanticError
   deriving (Eq, Ord, Show)
 
+data FileClosed = FileClosed{
+  closedFileName :: Text
+  }
+  deriving (Generic, Eq, Ord, Show)
+
+instance ToJSON FileClosed
+instance FromJSON FileClosed
+
+validateFileClosed :: FileClosed -> AppM (Either (MsgKind, Text) ())
+validateFileClosed (FileClosed fileName) = do
+  st <- get
+  case fileAlreadyOpen fileName st of
+    True -> pure $ Left (OtherMsg, "Error: claimed to have closed file " <> fileName <> " but it's still open.")
+    False -> pure $ Right ()
+
 runAiFunc ::
   forall bs a b.
   (FromJSON a, ToJSON a, Show a, BS.BuildSystem bs) =>
@@ -158,13 +173,21 @@ runAiFunc ::
   AppM b
 runAiFunc origCtxt tools exampleReturn postProcessor remainingErrs = do
   when (remainingErrs <= 0) $ throwError "Aborting as reached max number of errors"
+  cfg <- ask
   theState <- get
   let truncateOldAiMessages = truncateOldMessages "assistant" numRecentAiMessagesNotToTruncate shortenedMessageLength
       aiTruncatedCtxt = updateContextMessages origCtxt truncateOldAiMessages
       shortenedOldErrCtxt = updateContextMessages aiTruncatedCtxt shortenOldErrorMessages
       ctxt = updateContextMessages shortenedOldErrCtxt (takeEnd (numOldMessagesToKeepInContext + 1))
       messages = contextToMessages ctxt tools theState exampleReturn
-  res <- runPrompt messages
+  (res, queryStats) <- runPromptWithSyntaxErrorCorrection tools exampleReturn messages
+  when (prompt_tokens queryStats > configModelMaxInputTokens cfg) $ do
+    let msg = "Input context length is now " <> show (prompt_tokens queryStats) <> ", more than the configured max of " <> show (configModelMaxInputTokens cfg) <> ". Please CloseFile the least important open file."
+        ctxt' = addErrorToContext ctxt msg OtherMsg
+        maxErrs = configTaskMaxFailures cfg
+        fileClosedRes = FileClosed "leastImportantFileName.go"
+    runAiFunc @bs ctxt' [Tools.ToolCloseFile] fileClosedRes validateFileClosed maxErrs
+    return ()
   liftIO $ Logging.logInfo "AiResponse" (show res)
   let aiMsg = content res
       mayToolsCalled = Tools.findToolsCalled (content res) tools
