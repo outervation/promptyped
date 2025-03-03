@@ -2,12 +2,14 @@
 
 module FileSystemSpec where
 
+import Data.List as L
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
 import FileSystem as FS
 import Relude
+import System.Directory qualified as DIR
 import System.FilePath ((</>))
-import System.IO (hClose)
+import System.IO (hClose, hPutStr)
 import System.IO.Temp (withSystemTempDirectory, withSystemTempFile)
 import Test.Hspec
 
@@ -144,3 +146,110 @@ spec2 = describe "ensureLineNumbers" $ do
       -- Final file content should still match
       finalContents <- TIO.readFile testFile
       Right finalContents `shouldBe` result1
+
+-- Helper function to create a temporary file with content
+withTempFile :: String -> (FilePath -> IO a) -> IO a
+withTempFile content action = do
+  withSystemTempFile "test.txt" $ \path handle -> do
+    hPutStr handle content
+    hClose handle
+    action path
+
+-- Tests for tryFileOp
+spec3 :: Spec
+spec3 = describe "tryFileOp" $ do
+  context "when operation succeeds and validation passes" $ do
+    it "completes successfully and keeps the changes" $ do
+      withTempFile "original content" $ \path -> do
+        let op _ = do
+              writeFile path "new content"
+              return $ Right ()
+
+        let checker = return Nothing -- Validation passes
+        result <- FS.tryFileOp path op checker
+
+        result `shouldBe` Right ()
+        content <- TIO.readFile path
+        content `shouldBe` T.pack "new content"
+
+        -- Backup should be cleaned up
+        DIR.doesFileExist (path ++ ".bak") `shouldReturn` False
+
+  context "when operation fails" $ do
+    it "returns the operation error and doesn't change the file" $ do
+      withTempFile "original content" $ \path -> do
+        let op _ = return $ Left $ T.pack "Operation failed"
+        let checker = return Nothing
+
+        result <- FS.tryFileOp path op checker
+
+        case result of
+          Left err -> err `shouldBe` T.pack "Operation failed"
+          Right _ -> expectationFailure "Expected operation to fail"
+
+        content <- TIO.readFile path
+        content `shouldBe` T.pack "original content"
+
+        -- Backup should be cleaned up
+        DIR.doesFileExist (path ++ ".bak") `shouldReturn` False
+
+  context "when operation succeeds but validation fails" $ do
+    it "restores the original file and returns the validation error" $ do
+      withTempFile "original content" $ \path -> do
+        let op _ = do
+              writeFile path "new content"
+              return $ Right ()
+
+        let checker = return $ Just $ T.pack "Validation failed"
+
+        result <- FS.tryFileOp path op checker
+
+        case result of
+          Left err -> err `shouldBe` T.pack "Validation failed"
+          Right _ -> expectationFailure "Expected validation to fail"
+
+        -- File should be restored to original
+        content <- TIO.readFile path
+        content `shouldBe` T.pack "original content"
+
+        -- Backup should be cleaned up
+        DIR.doesFileExist (path ++ ".bak") `shouldReturn` False
+
+  context "with read-only file" $ do
+    it "fails to create backup and returns an error" $ do
+      withTempFile "original content" $ \path -> do
+        -- Make file read-only
+        permissions <- DIR.getPermissions path
+        DIR.setPermissions path (DIR.setOwnerWritable False permissions)
+
+        let op _ = return $ Right ()
+        let checker = return Nothing
+
+        result <- FS.tryFileOp (path ++ ".copy") op checker
+
+        case result of
+          Left err -> T.isInfixOf "does not exist" err `shouldBe` True
+          Right _ -> expectationFailure "Expected an error for backup creation"
+
+        -- Reset permissions for cleanup
+        DIR.setPermissions path (DIR.setOwnerWritable True permissions)
+
+  context "with complex scenario" $ do
+    it "handles a multi-step operation correctly" $ do
+      withTempFile "line1\nline2\nline3" $ \path -> do
+        let op _ = do
+              content <- T.lines <$> TIO.readFile path
+              TIO.writeFile path $ T.unlines $ L.reverse content
+              return $ Right ()
+
+        let checker = do
+              content <- TIO.readFile path
+              if T.isInfixOf (T.pack "line1") content
+                then return $ Just $ T.pack "Expected line1 to be moved"
+                else return Nothing
+
+        result <- FS.tryFileOp path op checker
+
+        result `shouldBe` Right ()
+        content <- TIO.readFile path
+        content `shouldBe` T.pack "line3\nline2\nline1\n"

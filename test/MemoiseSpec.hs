@@ -130,7 +130,8 @@ testWithCache useExistingCache = do
   -- Verify file lists
   let expectedFile = ExistingFile (T.pack testFileName) (T.pack testDesc)
       expectedFiles
-        | useExistingCache = [expectedFile]
+        | useExistingCache = []
+        -- \| useExistingCache = [expectedFile] Now we don't load files from cache
         | otherwise = [expectedFile, expectedFile]
 
   stateFiles finalState2 `shouldBe` nub expectedFiles
@@ -138,7 +139,8 @@ testWithCache useExistingCache = do
   -- Verify open files
   let expectedOpenFile = OpenFile (T.pack testFileName) (T.pack testContent)
       expectedOpenFiles
-        | useExistingCache = [expectedOpenFile]
+        | useExistingCache = []
+        -- \| useExistingCache = [expectedOpenFile] Now we don't load files from cache
         | otherwise = [expectedOpenFile, expectedOpenFile]
 
   stateOpenFiles finalState2 `shouldBe` nub expectedOpenFiles

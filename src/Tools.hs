@@ -2,7 +2,6 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Tools where
@@ -327,7 +326,7 @@ type RawTexts = [(Text, Text)]
 --   RAWTEXT[someName]=[R| ...contents... |R] or RAWTEXT[someName]=R"r( ...contents... )r"
 -- Returns a list of (someName, contents) pairs.
 extractRawStrings :: Text -> Either Text [(Text, Text)]
-extractRawStrings input = parseRawTexts input
+extractRawStrings = parseRawTexts
 
 -- | Parse raw text entries from a Text
 parseRawTexts2 :: Text -> [(Text, Text)]
@@ -401,7 +400,7 @@ parseRawTexts input = go input []
     findRawTextStart :: Text -> Either Text (Text, Text, Text)
     findRawTextStart txt = do
       -- We first look for "RAWTEXT["
-      (afterKeyword) <- dropUpToSubstring "RAWTEXT[" "No RAWTEXT found" txt
+      afterKeyword <- dropUpToSubstring "RAWTEXT[" "No RAWTEXT found" txt
       -- Next we parse the name up to the closing bracket ']'
       (name, afterName) <- extractBetween ']' "Missing ']' after RAWTEXT name" afterKeyword
       -- Now we expect either "=[R|" or "=[R>" right after the name
@@ -735,13 +734,16 @@ handleFileOperation ::
 handleFileOperation fileName ioAction requiresOpenFile errorPrefix successMsg ctxt = do
   theState <- get
   cfg <- ask
+  let filePath = FS.toFilePath cfg fileName
   case isFileForbidden cfg fileName of
     Just err -> pure $ mkError ctxt OtherMsg $ "Error: cannot modify forbidden file. " <> err
     Nothing -> do
       let alreadyOpen = fileAlreadyOpen fileName theState
       if alreadyOpen || requiresOpenFile == RequiresOpenFileFalse
         then do
-          res <- liftIO $ ioAction (FS.toFilePath cfg fileName)
+          checker <- BS.getFormatChecker @a cfg
+          let op = FS.tryFileOp filePath ioAction checker
+          res <- liftIO op
           either (pure . mkError ctxt OtherMsg) (const $ onSuccess cfg ctxt) res
         else pure $ mkError ctxt OtherMsg (errorPrefix <> fileName)
   where

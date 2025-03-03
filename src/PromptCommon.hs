@@ -64,7 +64,7 @@ instance FromJSON FilesProposedChanges
 
 topologicalSortThingsWithDependencies :: [ExistingFile] -> ThingsWithDependencies -> Either Text [ThingWithDependencies]
 topologicalSortThingsWithDependencies existingFiles (ThingsWithDependencies files) = do
-  let alreadyExists name = elem name (map existingFileName existingFiles)
+  let alreadyExists name = name `elem` map existingFileName existingFiles
   -- 1. Build a map from fileName -> ThingWithDependencies
   let fileMap :: Map Text ThingWithDependencies
       fileMap = Map.fromList [(f.name, f) | f <- files]
@@ -259,7 +259,7 @@ makeUnitTests background plannedFile = do
   cfg <- ask
   clearJournal
   modify' clearOpenFiles
-  let dependencies =  [fileName, journalFileName] ++ plannedFile.dependencies
+  let dependencies = [fileName, journalFileName] ++ plannedFile.dependencies
   forM_ dependencies $ \x -> Tools.openFile x cfg
   makeUnitTestsInner @bs background fileName makeUnitTestsPrompt
 
@@ -268,7 +268,7 @@ makeFile background pf = do
   cfg <- ask
   resetCompileTestState
   modify' clearOpenFiles
-  let dependencies =  [pf.name, journalFileName] ++ pf.dependencies
+  let dependencies = [pf.name, journalFileName] ++ pf.dependencies
   forM_ dependencies $ \x -> Tools.openFile x cfg
   let makeCtxt fileName =
         Context
@@ -295,7 +295,7 @@ makeRefactorFileTask background initialDeps fileName desiredChanges = do
   cfg <- ask
   modify' clearOpenFiles
   -- Note: file opened first will appear last (most recent)
-  let dependencies = [fileName, journalFileName] ++ (map (\x -> x.existingFileName) initialDeps)
+  let dependencies = [fileName, journalFileName] ++ map (\x -> x.existingFileName) initialDeps
   forM_ dependencies $ \x -> Tools.openFile x cfg
   let makeChange description = do
         let ctxt =
@@ -319,7 +319,7 @@ makeRefactorFilesProject = do
   let docFileName = "binanceApiDetails_CoinMFutures.txt"
       docFilePath = FS.toFilePath cfg docFileName
   docAlreadyExists <- liftIO $ FS.fileExistsOnDisk docFilePath
-  when (not docAlreadyExists) $ do
+  unless docAlreadyExists $ do
     createDocRes <- liftIO $ FS.appendToFile docFilePath binanceFuturesApiDoc
     when (isLeft createDocRes) $ throwError $ "Error creating docs: " <> show createDocRes
   let setupOpenFiles fileName = do
@@ -379,7 +379,7 @@ makeRefactorFilesProject = do
           [ FileProposedChanges "someFile.go" exampleThingsWithDependencies,
             FileProposedChanges "someOtherFile.go" exampleThingsWithDependencies
           ]
-      refineChangesTask = \() -> Engine.runAiFunc @bs combineCtxt (Tools.ToolAppendFile : readOnlyTools) combineExample validateAlwaysPass (configTaskMaxFailures cfg)
+      refineChangesTask () = Engine.runAiFunc @bs combineCtxt (Tools.ToolAppendFile : readOnlyTools) combineExample validateAlwaysPass (configTaskMaxFailures cfg)
   modify' clearOpenFiles
   Tools.openFile docFileName cfg
   Tools.openFile journalFileName cfg
@@ -404,9 +404,9 @@ makeRefactorFilesProject = do
                 ThingWithDependencies "someOtherFile.go" "This file contains functionality for something different ..." ["someFile.go"]
               ]
           }
-      getExtraFilesTask = \() -> Engine.runAiFunc @bs extraFilesCtxt readOnlyTools exampleExtraFiles validateThingsWithDependencies (configTaskMaxFailures cfg)
+      getExtraFilesTask () = Engine.runAiFunc @bs extraFilesCtxt readOnlyTools exampleExtraFiles validateThingsWithDependencies (configTaskMaxFailures cfg)
   extraFilesNeeded <- memoise (configCacheDir cfg) "all_extra_files" () (const "") getExtraFilesTask
-  let makeFileBackground = (background <> "\n You are currently working on adding some extra files that are necessary as part of the refactoring.")
+  let makeFileBackground = background <> "\n You are currently working on adding some extra files that are necessary as part of the refactoring."
   forM_ extraFilesNeeded (makeFile @bs makeFileBackground)
   let docDeps = [ExistingFile docFileName ""]
   forM_ plannedTasksRefined.filesProposedChanges $ \x -> makeRefactorFileTask @bs background docDeps x.fileName x.proposedChanges
@@ -448,4 +448,3 @@ makeCreateFilesProject = do
       runner () = Engine.runAiFunc @bs ctxt readOnlyTools examplePlannedFiles validateThingsWithDependencies (configTaskMaxFailures cfg)
   plannedFiles <- memoise (configCacheDir cfg) "file_planner" () (const "") runner
   forM_ plannedFiles (makeFile @bs ctxt.contextBackground)
-  return ()

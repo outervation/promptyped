@@ -167,7 +167,11 @@ instance BuildSystem CPlusPlusLang where
 
   isBuildableFile fileName = pure $ isCPlusPlusFileExtension fileName
 
-  getIgnoredDirs = pure $ ["build", ".git", "contrib"]
+  getIgnoredDirs = pure ["build", ".git", "contrib"]
+
+  getFormatChecker _ = do
+    let alwaysPass = pure Nothing :: IO (Maybe Text)
+    pure alwaysPass
 
 sampleTestFile :: Text
 sampleTestFile =

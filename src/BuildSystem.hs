@@ -11,3 +11,4 @@ class BuildSystem (a :: Type) where
   setupProject :: Config -> AppM (Maybe Text)
   isBuildableFile :: Text -> AppM Bool
   getIgnoredDirs :: AppM [Text]
+  getFormatChecker :: Config -> AppM (IO (Maybe Text))

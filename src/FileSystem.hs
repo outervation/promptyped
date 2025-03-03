@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module FileSystem (replaceInFile, readFileToText, readFileToTextAndOpen, appendToFile, ensureLineNumbers, toFilePath, getFileNames, fileExistsOnDisk, clearFileOnDisk, runProcessWithTimeout, getFileNamesRecursive, handleExitCode, runAll, gitInit, gitAddAndCommit, ensureNoLineNumbers, addLineNumbersToText, updateOpenedFile, reloadOpenFiles, gitSetupUser, gitRevertFile) where
+module FileSystem (replaceInFile, readFileToText, readFileToTextAndOpen, appendToFile, ensureLineNumbers, toFilePath, getFileNames, fileExistsOnDisk, clearFileOnDisk, runProcessWithTimeout, getFileNamesRecursive, handleExitCode, runAll, gitInit, gitAddAndCommit, ensureNoLineNumbers, addLineNumbersToText, updateOpenedFile, reloadOpenFiles, gitSetupUser, gitRevertFile, tryFileOp) where
 
 import Control.Concurrent.Async (concurrently)
 import Control.Exception (IOException, bracket, try)
@@ -20,6 +20,7 @@ import System.Environment qualified as Env
 import System.Exit qualified as Exit
 import System.FilePath qualified as FP
 import System.IO (hClose)
+import System.IO.Error (tryIOError)
 import System.Process qualified as Proc
 import System.Timeout qualified as Timeout
 
@@ -31,6 +32,71 @@ runAll = foldM step (Right ())
 
 toFilePath :: Config -> Text -> FilePath
 toFilePath cfg x = configBaseDir cfg FP.</> T.unpack x
+
+tryFileOp :: FilePath -> (FilePath -> IO (Either T.Text ())) -> IO (Maybe T.Text) -> IO (Either T.Text ())
+tryFileOp path op checker = do
+  -- Check if file exists first to fail early
+  alreadyExists <- DIR.doesFileExist path
+  if not alreadyExists
+    then op path
+    else do
+      let backupPath = path ++ ".bak"
+          cleanupBackup = tryIOError $ void (DIR.removeFile backupPath)
+
+      -- Use bracket to ensure proper resource management
+      bracket
+        (createBackup backupPath)
+        ( \backupResult -> case backupResult of
+            Right _ -> cleanupBackup
+            Left _ -> return $ Right ()
+        )
+        ( \backupResult -> case backupResult of
+            Left err -> return $ Left err
+            Right _ -> processOperation backupPath
+        )
+  where
+    -- Create backup and return either error or success
+    createBackup :: FilePath -> IO (Either T.Text ())
+    createBackup backupPath = do
+      result <- tryIOError $ DIR.copyFile path backupPath
+      case result of
+        Left err -> return $ Left $ T.pack $ "Failed to create backup: " ++ show err
+        Right _ -> return $ Right ()
+
+    -- Process the operation and validation
+    processOperation :: FilePath -> IO (Either T.Text ())
+    processOperation backupPath = do
+      opResult <- op path
+      case opResult of
+        Left err -> return $ Left err
+        Right _ -> validateAndFinalize backupPath
+
+    -- Validate results and handle restoration if needed
+    validateAndFinalize :: FilePath -> IO (Either T.Text ())
+    validateAndFinalize backupPath = do
+      checkerResult <- checker
+      case checkerResult of
+        Nothing -> return $ Right ()
+        Just err -> restoreBackup backupPath err
+
+    -- Restore from backup when validation fails
+    restoreBackup :: FilePath -> T.Text -> IO (Either T.Text ())
+    restoreBackup backupPath err = do
+      restoreResult <- tryIOError $ do
+        DIR.removeFile path
+        DIR.copyFile backupPath path
+
+      case restoreResult of
+        Left restoreErr ->
+          return
+            $ Left
+            $ T.pack
+            $ "Validation failed: "
+            ++ T.unpack err
+            ++ ". Additionally, failed to restore backup: "
+            ++ show restoreErr
+        Right _ ->
+          return $ Left err
 
 readFileToText :: FilePath -> IO Text
 readFileToText path = do
@@ -183,7 +249,7 @@ addComment idx originalLine =
   let comment = "/* " <> T.pack (show idx) <> " */"
    in if T.null originalLine
         then comment
-        else comment <> " " <> originalLine 
+        else comment <> " " <> originalLine
 
 ensureNoLineNumbers :: FilePath -> IO (Either Text Text)
 ensureNoLineNumbers filepath = do
@@ -378,4 +444,4 @@ gitAddAndCommit file = do
 gitRevertFile :: FilePath -> FilePath -> IO (Either Text ())
 gitRevertFile basePath name = DIR.withCurrentDirectory basePath $ do
   res <- runProcessWithTimeout 10 "." [] "git" ["restore", name]
-  handleExitCode ("'git restore " <> (T.pack name) <> "'") res
+  handleExitCode ("'git restore " <> T.pack name <> "'") res

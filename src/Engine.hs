@@ -61,9 +61,9 @@ makeSyntaxErrorCorrectionPrompt tools exampleReturn llmMsg err = do
   let returnValueDesc = Tools.returnValueToDescription exampleReturn
       toolDesc = Tools.toolsToDescription tools
       msgBeginning = "You are an agent responsible for error correction of LLM output. There is a specific syntax for tools that the LLM could use, described as follows: " <> toolDesc <> "\nThere is also a syntax for values the LLM may return, as follows: " <> returnValueDesc
-      msgRes = "The LLM returned syntactically incorrect output:\n" <> (content llmMsg) <> "\nThe exact error was: " <> err <> "\nPlease output the same output as above but with the syntax error corrected, thanks!"
+      msgRes = "The LLM returned syntactically incorrect output:\n" <> content llmMsg <> "\nThe exact error was: " <> err <> "\nPlease output the same output as above but with the syntax error corrected, thanks!"
   return $ Message (roleName RoleUser) (msgBeginning <> msgRes)
-  
+
 runPromptWithSyntaxErrorCorrection :: (ToJSON a) => [Tools.Tool] -> a -> [Message] -> AppM (Message, UsageData)
 runPromptWithSyntaxErrorCorrection tools example messages = do
   (res, queryStats) <- runPrompt messages
@@ -81,12 +81,12 @@ runPromptWithSyntaxErrorCorrection tools example messages = do
 mergeAdjacentRoleMessages :: [Message] -> [Message]
 mergeAdjacentRoleMessages [] = []
 mergeAdjacentRoleMessages [msg] = [msg]
-mergeAdjacentRoleMessages (msg1:msg2:rest)
+mergeAdjacentRoleMessages (msg1 : msg2 : rest)
   | role msg1 == role msg2 =
       let mergedContent = content msg1 <> "\n (...consecutive messages from same role merged...) \n" <> content msg2
-          mergedMsg = msg1 { content = mergedContent }
-      in mergeAdjacentRoleMessages (mergedMsg:rest)
-  | otherwise = msg1 : mergeAdjacentRoleMessages (msg2:rest)
+          mergedMsg = msg1 {content = mergedContent}
+       in mergeAdjacentRoleMessages (mergedMsg : rest)
+  | otherwise = msg1 : mergeAdjacentRoleMessages (msg2 : rest)
 
 contextToMessages :: (ToJSON a) => Context -> [Tools.Tool] -> AppState -> a -> [Message]
 contextToMessages Context {..} tools theState exampleReturn = do
@@ -147,12 +147,13 @@ truncateOldMessages role numRecentMessagesToKeep numCharsToKeep msgs =
 data ErrorKind = SyntaxError | SemanticError
   deriving (Eq, Ord, Show)
 
-data FileClosed = FileClosed{
-  closedFileName :: Text
+data FileClosed = FileClosed
+  { closedFileName :: Text
   }
   deriving (Generic, Eq, Ord, Show)
 
 instance ToJSON FileClosed
+
 instance FromJSON FileClosed
 
 validateFileClosed :: FileClosed -> AppM (Either (MsgKind, Text) ())

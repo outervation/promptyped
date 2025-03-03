@@ -77,6 +77,19 @@ setupDirectoryGo cfg = do
       TIO.writeFile "main.go" "package main \n \n func main() { }"
       return $ Right ()
 
+checkFormatGo ::
+  -- | Timeout in seconds
+  NominalDiffTime ->
+  -- | Project directory
+  FilePath ->
+  IO (Maybe Text)
+checkFormatGo timeout dir = Dir.withCurrentDirectory dir $ do
+  fmtResult <- runProcessWithTimeout timeout "." [] "go" ["fmt"]
+  res <- handleExitCode "'go fmt'" fmtResult
+  case res of
+    Left err -> pure . Just $ "The change you attempted to make would produce invalid syntax, with go fmt failing with:\n" <> err <> "\nPlease try again, being careful with line numbers (remembering they're inclusive; [startLine, endLine]). An off-by-one error for instance might accidentally delete the closing bracket of a previous function, or fail to replace the final bracket of a function being replaced (leading to duplicate closing brackets)."
+    Right () -> pure Nothing
+
 buildProjectGo ::
   -- | Timeout in seconds
   NominalDiffTime ->
@@ -130,7 +143,12 @@ instance BuildSystem GoLang where
 
   isBuildableFile fileName = pure $ isCPlusPlusFileExtension fileName
 
-  getIgnoredDirs = pure $ ["build", ".git", "contrib"]
+  getIgnoredDirs = pure ["build", ".git", "contrib"]
+
+  getFormatChecker cfg = do
+    let baseDir = configBaseDir cfg
+    let timeout = secondsToNominalDiffTime . fromIntegral $ configBuildTimeoutSeconds cfg
+    return $ checkFormatGo timeout baseDir
 
 parquetDoc :: Text
 parquetDoc =
