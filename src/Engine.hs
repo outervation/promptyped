@@ -44,7 +44,7 @@ updateStats generation usage timeTaken = do
 runPrompt :: [Message] -> AppM (Message, UsageData)
 runPrompt messages = do
   st <- get
-  liftIO $ Logging.logInfo "SendMessages" (show . reverse . take 5 $ reverse messages)
+  liftIO $ Logging.logInfo "SendMessages" (T.unlines . map renderMessage . reverse . take 5 $ reverse messages)
   let openFileNames = T.intercalate "," $ map openFileName (stateOpenFiles st)
       existingFileNames = T.intercalate "," $ map existingFileName (stateFiles st)
   liftIO $ Logging.logInfo "SendMessages" $ "OpenFiles: " <> openFileNames
@@ -206,6 +206,7 @@ runAiFuncInner checkContextSize origCtxt tools exampleReturn postProcessor remai
         ctxt' = addErrorToContext ctxt msg OtherMsg
         maxErrs = configTaskMaxFailures cfg
         fileClosedRes = FileClosed "leastImportantFileName.go"
+    liftIO $ Logging.logInfo "ContextReduction" $ "Telling model to reduce context size; msg: " <> msg
     runAiFuncInner @bs DontCheckContextSize ctxt' [Tools.ToolCloseFile] fileClosedRes validateFileClosed maxErrs
     return ()
   liftIO $ Logging.logInfo "AiResponse" (show res)

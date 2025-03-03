@@ -245,6 +245,9 @@ instance ToJSON Message
 
 instance FromJSON Message
 
+renderMessage :: Message -> Text
+renderMessage (Message role text) = "{" <> role <> ": \n" <> text <> "\n}"
+
 data MsgKind = CompileFailMsg | TestFailMsg | OtherMsg
   deriving (Eq, Ord, Show)
 

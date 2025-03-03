@@ -467,7 +467,7 @@ sendQuery :: Text -> Text -> Text -> Text -> Text -> Maybe Float -> [Message] ->
 sendQuery apiSite apiKey siteUrl siteName model temperature msgs = do
   let initialQuery = if apiSite /= "openrouter.ai" && apiSite /= "api.deepseek.com" then sendQueryRaw else sendQueryStreaming
       numAttempts = 5
-  Logging.logDebug "sendQuery" (show msgs)
+  Logging.logDebug "sendQuery" (T.unlines $ map renderMessage msgs)
   let queryWithEmptyCheck remainingAttempts = do
         Logging.logInfo "sendQueryAttempt" ("Attempt " <> show (numAttempts + 1 - remainingAttempts) <> " with " <> show (length msgs) <> " messages")
         result <- initialQuery apiSite apiKey siteUrl siteName model temperature msgs
