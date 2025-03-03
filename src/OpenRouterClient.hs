@@ -353,8 +353,9 @@ parseAllSSEChunks bodyReader = do
       | otherwise =
           case parseDataLine lineBS of
             Nothing -> do
+              let line = T.strip $ TE.decodeUtf8 lineBS
               -- e.g., an SSE keep-alive or just empty “data:” lines that aren’t JSON
-              when (BS.length lineBS > 0) $ putTextLn $ "Got unused line " <> show lineBS
+              when (BS.length lineBS > 0 && line /= ": OPENROUTER PROCESSING") $ putTextLn $ "Got unused line " <> show lineBS
               pure (contentSoFar, idSoFar, usageSoFar, False)
             Just "[DONE]" -> do
               -- Done signal

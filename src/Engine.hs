@@ -68,9 +68,13 @@ runPromptWithSyntaxErrorCorrection :: (ToJSON a) => [Tools.Tool] -> a -> [Messag
 runPromptWithSyntaxErrorCorrection tools example messages = do
   (res, queryStats) <- runPrompt messages
   let mayToolsCalled = Tools.findToolsCalled (content res) tools
-  case mayToolsCalled of
-    Right _ -> pure (res, queryStats)
-    Left err -> do
+      mayRawTextBlocks = Tools.extractRawStrings (content res)
+  case (mayToolsCalled, mayRawTextBlocks) of
+    (Right _, Right _) -> pure (res, queryStats)
+    (Left err, _) -> handleErr err res queryStats
+    (_, Left err) -> handleErr err res queryStats
+  where
+    handleErr err res queryStats = do
       let errorCorrectionMsg = makeSyntaxErrorCorrectionPrompt tools example res err
       (res', _) <- runPrompt errorCorrectionMsg
       let mayToolsCalled' = Tools.findToolsCalled (content res') tools

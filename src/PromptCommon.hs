@@ -213,7 +213,7 @@ checkCompileTestResults = do
   pure $ case (compileRes res, testRes res) of
     (Nothing, Nothing) -> Right ()
     (Just compileErr, _) -> Left (CompileFailMsg, "Error, compilation failed, fix it before returning. Note that if you see a 'missing import path' compilation error, it may be because you forgot a closing ')' for the go import list. If you see 'is not a package path' when trying to import a local file you created, remember you should include 'project_name/filename', NOT '/home/username/project_name/filename' or 'username/project_name/filename' The last error was: " <> compileErr)
-    (Nothing, Just testErr) -> Left (TestFailMsg, "Error, unit tests didn't all pass, fix them first. I encourage you to add more logging/printf for debugging if necessary, and to record your current step and planned future steps in the journal.txt . The last error was: " <> testErr)
+    (Nothing, Just testErr) -> Left (TestFailMsg, "Error, unit tests didn't all pass (or failed to compile), fix them first. I encourage you to add more logging/printf for debugging if necessary, and to record your current step and planned future steps in the journal.txt . The last error was: " <> testErr)
 
 validateUnitTest :: UnitTestDone -> AppM (Either (MsgKind, Text) ())
 validateUnitTest t = case unitTestPassedSuccessfully t of
