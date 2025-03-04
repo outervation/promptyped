@@ -478,10 +478,9 @@ retryWithDelay maxAttempts delayMicros shouldLog action = go maxAttempts
 -- Main query function with generation stats
 sendQuery :: Text -> Text -> Text -> Text -> Text -> Maybe Float -> [Message] -> IO (Either Text QueryResult)
 sendQuery apiSite apiKey siteUrl siteName model temperature msgs = do
-  let
-    shouldStream = apiSite == "openrouter.ai" || apiSite == "api.deepseek.com" || apiSite == "generativelanguage.googleapis.com"
-    initialQuery = if not shouldStream then sendQueryRaw else sendQueryStreaming
-    numAttempts = 5
+  let shouldStream = apiSite == "openrouter.ai" || apiSite == "api.deepseek.com" || apiSite == "generativelanguage.googleapis.com"
+      initialQuery = if not shouldStream then sendQueryRaw else sendQueryStreaming
+      numAttempts = 5
   Logging.logDebug "sendQuery" (T.unlines $ map renderMessage msgs)
   let queryWithEmptyCheck remainingAttempts = do
         Logging.logInfo "sendQueryAttempt" ("Attempt " <> show (numAttempts + 1 - remainingAttempts) <> " with " <> show (length msgs) <> " messages")
@@ -499,19 +498,24 @@ sendQuery apiSite apiKey siteUrl siteName model temperature msgs = do
           Left err -> pure $ Left err
   queryResult <- retryWithDelay numAttempts 3000000 ShouldLog $ queryWithEmptyCheck numAttempts
   case queryResult of
-    Left err -> pure $ Left $ "Error sending query to openrouter: " <> show err
-    Right resp -> case apiSite == "openrouter.ai" of
-      False -> pure $ extractResult resp $ GenerationStats 0 0 0
-      True -> case (resp.id) of
-        Nothing -> pure $ Left "Missing expected id field for message"
-        Just respId -> do
-          statsResult <- retryWithDelay 5 3000000 ShouldNotLog $ getGenerationStats apiSite apiKey respId
-          case statsResult of
-            -- Left err -> pure $ Left $ "Error fetching generation stats: " <> show err
-            Left err -> do
-              putTextLn $ "Failed to get generation stats: " <> err
-              pure $ extractResult resp $ GenerationStats 0 0 0
-            Right statsResp -> pure $ extractResult resp (generationData statsResp)
+    Left err -> pure . Left $ "Error sending query to openrouter: " <> show err
+    Right resp -> case resp.choices of
+      [] -> pure $ Left "OpenRouter query returned no message!"
+      (x : _) -> do
+        let noGenStatsRes = QueryResult x.message resp.usage $ GenerationStats 0 0 0
+        let msgLen = T.length noGenStatsRes.message.content
+        case apiSite == "openrouter.ai" of
+          False -> pure $ Right noGenStatsRes
+          True -> case (resp.id, msgLen > 0) of
+            (_, False) -> pure $ Right noGenStatsRes
+            (Nothing, True) -> pure $ Left "Missing expected id field for message"
+            (Just respId, True) -> do
+              statsResult <- retryWithDelay 5 3000000 ShouldNotLog $ getGenerationStats apiSite apiKey respId
+              case statsResult of
+                Left err -> do
+                  putTextLn $ "Failed to get generation stats: " <> err
+                  pure $ Right noGenStatsRes
+                Right statsResp -> pure . Right $ QueryResult x.message resp.usage (generationData statsResp)
 
 -- Example usage:
 example :: Text -> Text -> IO ()

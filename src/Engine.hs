@@ -169,7 +169,7 @@ validateFileClosed (FileClosed fileName) = do
     False -> pure $ Right ()
 
 data CheckContextSize = DoCheckContextSize | DontCheckContextSize
- deriving (Eq, Ord, Show)
+  deriving (Eq, Ord, Show)
 
 runAiFunc ::
   forall bs a b.
@@ -221,7 +221,7 @@ runAiFuncInner checkContextSize origCtxt tools exampleReturn postProcessor remai
     (_, Left err) -> addErrorAndRecurse ("Error in raw text syntax: " <> err) ctxtWithAiMsg SyntaxError OtherMsg
     (Right callsRaw, Right rawTextBlocks) -> handleToolCalls ctxtWithAiMsg callsRaw rawTextBlocks
   where
-    recur recurCtxt remainingErrs' = runAiFuncInner @bs checkContextSize recurCtxt tools exampleReturn postProcessor remainingErrs' 
+    recur recurCtxt remainingErrs' = runAiFuncInner @bs checkContextSize recurCtxt tools exampleReturn postProcessor remainingErrs'
 
     handleToolCalls :: Context -> [(Tools.Tool, [AET.Object])] -> Tools.RawTexts -> AppM b
     handleToolCalls ctxtWithAiMsg callsRaw rawTextBlocks = case Tools.processToolsArgs callsRaw rawTextBlocks of
