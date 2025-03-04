@@ -244,12 +244,12 @@ makeUnitTestsInner background fileName makeTestPrompt = do
                 UnitTest "testsSomethingelseWorks" "Should test that ..."
               ]
           }
-  let runner fileName' = Engine.runAiFunc @bs (makeCtxt $ makeTestPrompt fileName') allTools exampleUnitTests validateUnitTests (configTaskMaxFailures cfg)
+  let runner fileName' = Engine.runAiFunc @bs (makeCtxt $ makeTestPrompt fileName') MediumIntelligenceRequired allTools exampleUnitTests validateUnitTests (configTaskMaxFailures cfg)
   planRes <- memoise (configCacheDir cfg) "test_planner" fileName show runner
   let testFileName = unitTestFileName planRes
   Tools.openFile testFileName cfg
   let exampleUnitTestDone = UnitTestDone True
-  let makeUnitTest UnitTest {..} = Engine.runAiFunc @bs (makeCtxt $ makeUnitTestPrompt fileName testFileName unitTestName unitTestSummary) allTools exampleUnitTestDone validateUnitTest (configTaskMaxFailures cfg)
+  let makeUnitTest UnitTest {..} = Engine.runAiFunc @bs (makeCtxt $ makeUnitTestPrompt fileName testFileName unitTestName unitTestSummary) MediumIntelligenceRequired allTools exampleUnitTestDone validateUnitTest (configTaskMaxFailures cfg)
   forM_ (unitTests planRes) $ \test ->
     memoise (configCacheDir cfg) ("test_creator_" <> testFileName) test unitTestName makeUnitTest
 
@@ -285,7 +285,7 @@ makeFile background pf = do
           }
   isBuildable <- BS.isBuildableFile @bs pf.name
   when isBuildable $ do
-    let runner fileName = Engine.runAiFunc @bs (makeCtxt fileName) allTools exampleCreatedFiles validateCreatedFiles (configTaskMaxFailures cfg)
+    let runner fileName = Engine.runAiFunc @bs (makeCtxt fileName) MediumIntelligenceRequired allTools exampleCreatedFiles validateCreatedFiles (configTaskMaxFailures cfg)
     createdFiles <- memoise (configCacheDir cfg) "file_creator" pf.name id runner
     forM_ createdFiles $ \x -> modify' $ updateFileDesc (createdFileName x) (createdFileSummary x)
     makeUnitTests @bs background pf
@@ -305,7 +305,7 @@ makeRefactorFileTask background initialDeps fileName desiredChanges = do
                   contextRest = []
                 }
             exampleChange = ModifiedFile "someFile.go" "Update the file to add ... so that it ..."
-        Engine.runAiFunc @bs ctxt allTools exampleChange validateAlwaysPass (configTaskMaxFailures cfg)
+        Engine.runAiFunc @bs ctxt MediumIntelligenceRequired allTools exampleChange validateAlwaysPass (configTaskMaxFailures cfg)
   forM_ desiredChanges $ \x -> do
     modification <- memoise (configCacheDir cfg) ("file_modifier_" <> fileName) x (\desc -> desc.name) makeChange
     let modificationText = "Intended modification: " <> x.summary <> ", with model describing what it did as " <> show modification <> "."
@@ -357,7 +357,7 @@ makeRefactorFilesProject = do
                   contextRest = []
                 }
         setupOpenFiles fileName
-        Engine.runAiFunc @bs ctxt (Tools.ToolAppendFile : readOnlyTools) exampleProposedChanges validateThingsWithDependencies (configTaskMaxFailures cfg)
+        Engine.runAiFunc @bs ctxt MediumIntelligenceRequired (Tools.ToolAppendFile : readOnlyTools) exampleProposedChanges validateThingsWithDependencies (configTaskMaxFailures cfg)
   plannedTasks <- forM_ sourceFileNames $ \fileName -> do
     fileTasks <- memoise (configCacheDir cfg) "file_dependencies" fileName id getChangesTask
     return $ FileProposedChanges fileName fileTasks
@@ -379,7 +379,7 @@ makeRefactorFilesProject = do
           [ FileProposedChanges "someFile.go" exampleThingsWithDependencies,
             FileProposedChanges "someOtherFile.go" exampleThingsWithDependencies
           ]
-      refineChangesTask () = Engine.runAiFunc @bs combineCtxt (Tools.ToolAppendFile : readOnlyTools) combineExample validateAlwaysPass (configTaskMaxFailures cfg)
+      refineChangesTask () = Engine.runAiFunc @bs combineCtxt HighIntelligenceRequired (Tools.ToolAppendFile : readOnlyTools) combineExample validateAlwaysPass (configTaskMaxFailures cfg)
   modify' clearOpenFiles
   Tools.openFile docFileName cfg
   Tools.openFile journalFileName cfg
@@ -404,7 +404,7 @@ makeRefactorFilesProject = do
                 ThingWithDependencies "someOtherFile.go" "This file contains functionality for something different ..." ["someFile.go"]
               ]
           }
-      getExtraFilesTask () = Engine.runAiFunc @bs extraFilesCtxt readOnlyTools exampleExtraFiles validateThingsWithDependencies (configTaskMaxFailures cfg)
+      getExtraFilesTask () = Engine.runAiFunc @bs extraFilesCtxt HighIntelligenceRequired readOnlyTools exampleExtraFiles validateThingsWithDependencies (configTaskMaxFailures cfg)
   extraFilesNeeded <- memoise (configCacheDir cfg) "all_extra_files" () (const "") getExtraFilesTask
   let makeFileBackground = background <> "\n You are currently working on adding some extra files that are necessary as part of the refactoring."
   forM_ extraFilesNeeded (makeFile @bs makeFileBackground)
@@ -429,7 +429,7 @@ makeCreateFilesProject = do
             contextRest = []
           }
       exampleArch = ThingWithDescription "The architecture of the project will be as follows: ..."
-      archRunner () = Engine.runAiFunc @bs archCtxt readOnlyTools exampleArch validateAlwaysPass (configTaskMaxFailures cfg)
+      archRunner () = Engine.runAiFunc @bs archCtxt HighIntelligenceRequired readOnlyTools exampleArch validateAlwaysPass (configTaskMaxFailures cfg)
   plannedArch <- memoise (configCacheDir cfg) "architecture" () (const "") archRunner
 
   let ctxt =
@@ -445,6 +445,6 @@ makeCreateFilesProject = do
                 ThingWithDependencies "someOtherFile.go" "This file contains functionality for something different ..." ["someFile.go"]
               ]
           }
-      runner () = Engine.runAiFunc @bs ctxt readOnlyTools examplePlannedFiles validateThingsWithDependencies (configTaskMaxFailures cfg)
+      runner () = Engine.runAiFunc @bs ctxt HighIntelligenceRequired readOnlyTools examplePlannedFiles validateThingsWithDependencies (configTaskMaxFailures cfg)
   plannedFiles <- memoise (configCacheDir cfg) "file_planner" () (const "") runner
   forM_ plannedFiles (makeFile @bs ctxt.contextBackground)

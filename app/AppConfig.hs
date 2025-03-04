@@ -15,7 +15,9 @@ instance ToJSON ProjectKind
 data AppConfig = AppConfig
   { apiKey :: Text,
     apiSite :: Text,
-    modelName :: Text,
+    lowIntModelName :: Text,
+    mediumIntModelName :: Text,
+    highIntModelName :: Text,
     baseDir :: Text,
     cacheDir :: Text,
     logFileDir :: Text,

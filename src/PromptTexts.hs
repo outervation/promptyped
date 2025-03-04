@@ -42,11 +42,23 @@ makeArchitectureDesignPrompt = "Please think carefully and design the architectu
 binanceSummary :: Text
 binanceSummary =
   [r|
-Note the binance websocket API descriptions describe how to build a book from depth streams and snapshots based on their sequence ID. Building a book isn't required, but the saved data should be such that it can be used to build a book. If a market data book-building message is missed, then a new snapshot should be requested from the rest API as described in the docs. The relevant docs for it are in binanceApiDetails.txt, you should OpenFile=<[{ "fileName": "binanceApiDetails.txt" }]> to view them when needed. You should also store regular snapshots from the rest API, e.g. once every minute.
+Note the binance websocket API descriptions describe how to build a book from depth streams and snapshots based on their sequence ID. Building a book isn't required, but the saved data should be such that it can be used to build a book. If a market data book-building message is missed, then a new snapshot should be requested from the rest API as described in the docs. The relevant docs for it are in binanceApiDetails.txt, you should OpenFile=<[{ "fileName": "binanceApiDetails.txt" }]> (or "binanceApiDetails_CoinMFutures.txt" for futures) to view them when needed. You should also store regular snapshots from the rest API, e.g. once every minute.
 
-Binance websocket API docs are available in the folder for reference. The application should download trade and aggregate trade streams (the formats are different so store each as a separate table), and book data (everything necessary for building/tracking an orderbook; there are both diff and update streams, it should store both), and best price data, but doesn't need the historical summary messages. 
+Binance websocket API docs are available in the folder for reference; note that spot and futures have slightly different formats. The application should download trade and aggregate trade streams (the formats are different), and book data (everything necessary for building/tracking an orderbook; there are both diff and update streams, _it should subscribe to both_), and best price data, but doesn't need the historical summary messages. For futures it should also store the mark price data.
 
-For unit testing the binance API websocket connection/rest API components, unit tests should be written that just connect to a busy product (i.e. BTCUSDT), wait atmost e.g. 10 seconds to recieve data, then try parsing it and assert that it matches the expected format, failing and printing how it doesn't match (along with the whole text/json) if it doesn't to make it easy for you to see what's wrong and fix the code.
+There should be a single normalised trade format that should be a superset of information from the different kind of trade messages. It should also have a numTrades field, capturing the number of trades (just one, for a single event), and windowSizeMs (how big the time window, for aggregated trades published e.g. every 100ms it'd be 100). All kinds of trades should be converted into this format then saved. In this format, there is a separate record for each price level traded, but if the original format doesn't specify exact per-price traded quantities then instead the min_price and max_price fields are used (in the normal case, min_price and max_price as the same price).
+
+Aside from the normalised trade format, there should also be a normalised level-current-qty format (which both snapshots and the book update messages are converted into), that should also contain a snapshot/message ID incremented after every message (so individual updates can be identified wrt whether they belong in the same message or not). There should also be a normalised level-qty-change message, separate from the level-current-qty, used for the update messages (which show qty changes instead of the new qty). Both the above message types should record an update for each price level (i.e. we don't store any record with a variable number of price/qty fields, instead we store a separate record for each price, but with a messageID field of some sort so those belong to the same original update can be identified). The level-qty-change fields should also store all the underlying ids necessary for building a book from snapshots, and should re-request a snapshot any time an update is missed.
+
+There should also be a normalised bbo update message, containing a superset of the information in both exchanges' BBO update messages, and a normalised mark price message (although only futures have a mark price).
+
+In total, the above gives 5 normalised message types to record into Parquet: trade, level_qty_change, level_new_qty, bbo_update, and mark_price_update. Each should include all timestamps provided by the exchange (which may be optional/zero in some cases), as well as the time the recording process received the message.
+
+The program should take as config a JSON file, with a list of exchange/feedcode pairs. There should be separate objects with the same interface for each exchange (only two exchanges for now, binance_spot and binance_cfutures but more will be added later), and some function that handles dispatching a subscription to the right exchange based on the name. There should also be a single subscriber interface that each separate exchange implements, but they should share the basic websocket code, which should include reconnection logic for when it disconnects, as the exchange sometimes does.
+
+The main file should be minimal, and just pass the config and hook up/start the multiExchangeSubscriber and recorder. The individual exchange subscribers should have tests that each kind of subscription they make successfully receives and parses data (as well as the snapshots they request).
+
+For unit testing the binance API websocket connection/rest API components, unit tests should be written that just connect to a busy product (i.e. BTCUSDT), wait at most e.g. 10 seconds to recieve data, then try parsing it and assert that it matches the expected format, failing and printing how it doesn't match (along with the whole text/json) if it doesn't, to make it easy for you to see what's wrong and fix the code.
 
 Note the Binance market data APIs are public and don't need an API key.
 
@@ -59,8 +71,9 @@ It's designed to be an LLM-developed and managed application, so the design shou
 
 IMPORTANT NOTE: To keep context size minimal you won't see your full previous responses/history, so I recommend keeping a journal in "journal.txt", which you can append a short summary of what you're trying to do at each step, and what you plan to do next, in case you expect to have future steps in that task and don't want to lose your train of thought between responses.
 
-When you make changes to a source file, if compilation and unit tests pass then the file is added and committed to a git repo in the base directory. You may use the Revert tool where necessary to get back to the last version of a file when compilation and all tests passed.
 |]
+
+    -- When you make changes to a source file, if compilation and unit tests pass then the file is added and committed to a git repo in the base directory. You may use the Revert tool where necessary to get back to the last version of a file when compilation and all tests passed.
 
 projectSummary :: Text -> Text
 projectSummary projectName = projectSummaryGolang projectName <> approachSummary <> binanceSummary
@@ -68,7 +81,7 @@ projectSummary projectName = projectSummaryGolang projectName <> approachSummary
 projectSummaryGolang :: Text -> Text
 projectSummaryGolang projectName =
   [r|
-You are an agent involved in coding a Go application. It's a binance market data recorder, but the code will later be used in HFT so minimising dynamic allocation and cache misses is important. You should record the data to Parquet files. It should support subscribing to multiple instruments, but should use a separate stream for each. The only external library you need to use is github.com/xitongsys/parquet-go. Documentation is available in the directory for your reference. Each type of market data should be stored in a separate file. There should be one file per instrument/date (UTC data), and the filename should contain the instrument and date. It should stop resuming recording to an existing file.
+You are an agent involved in coding a Go application. It's a binance market data recorder, but the code will later be used in HFT so minimising dynamic allocation and cache misses is important. You should record the data to Parquet files. It should support subscribing to multiple instruments, but should use a separate stream for each. The only external library you need to use is github.com/xitongsys/parquet-go. Documentation is available in the directory for your reference. Each type of market data should be stored in a separate file. There should be one file per exchange/instrument/date (UTC data), and the filename should contain the exchange (with binance futures and binance being separate exchanges), instrument and date. It should support resuming recording to an existing file after restart.
 
 NOTE: the imports for parquet-go are:
 "github.com/xitongsys/parquet-go/parquet"

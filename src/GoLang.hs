@@ -9,7 +9,7 @@ import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
 import Data.Time.Clock (NominalDiffTime, secondsToNominalDiffTime)
 import FileSystem (gitInit, gitSetupUser, handleExitCode, runAll, runProcessWithTimeout)
-import PromptTexts (binanceApiDoc)
+import PromptTexts (binanceApiDoc, binanceFuturesApiDoc)
 import Relude
 import System.Directory qualified as Dir
 import System.FilePath qualified as FP
@@ -73,6 +73,7 @@ setupDirectoryGo cfg = do
     addDocs :: IO (Either Text ())
     addDocs = do
       TIO.writeFile "binanceApiDetails.txt" binanceApiDoc
+      TIO.writeFile "binanceApiDetails_CoinMFutures.txt" binanceFuturesApiDoc
       TIO.writeFile "parquet-go-readme.md" parquetDoc
       TIO.writeFile "main.go" "package main \n \n func main() { }"
       return $ Right ()

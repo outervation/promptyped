@@ -41,16 +41,18 @@ updateStats generation usage timeTaken = do
   liftIO $ Logging.logInfo "QueryMetrics" (show metrics)
   modify' $ updateStateMetrics metrics
 
-runPrompt :: [Message] -> AppM (Message, UsageData)
-runPrompt messages = do
+runPrompt :: IntelligenceRequired -> [Message] -> AppM (Message, UsageData)
+runPrompt intReq messages = do
   st <- get
+  cfg <- ask
   liftIO $ Logging.logInfo "SendMessages" (T.unlines . map renderMessage . reverse . take 5 $ reverse messages)
   let openFileNames = T.intercalate "," $ map openFileName (stateOpenFiles st)
       existingFileNames = T.intercalate "," $ map existingFileName (stateFiles st)
+      model = getModel cfg intReq
   liftIO $ Logging.logInfo "SendMessages" $ "OpenFiles: " <> openFileNames
   liftIO $ Logging.logInfo "SendMessages" $ "ExistingFiles: " <> existingFileNames
-  cfg <- ask
-  let timedQuery = timeIONano64 $ Client.sendQuery (configApiSite cfg) (configApiKey cfg) "prompTyped" "prompTyped" (configModel cfg) (configModelTemperature cfg) messages
+
+  let timedQuery = timeIONano64 $ Client.sendQuery (configApiSite cfg) (configApiKey cfg) "prompTyped" "prompTyped" model (configModelTemperature cfg) messages
   (mayRes, nanosTaken) <- liftIO timedQuery
   case mayRes of
     Left err -> throwError $ "Error running prompt, with messages " <> show messages <> ": " <> err
@@ -64,9 +66,9 @@ makeSyntaxErrorCorrectionPrompt tools exampleReturn llmMsg err = do
       msgRes = "The LLM returned syntactically incorrect output:\n" <> content llmMsg <> "\nThe exact error was: " <> err <> "\nPlease output the same output as above but with the syntax error corrected, thanks!"
   return $ Message (roleName RoleUser) (msgBeginning <> msgRes)
 
-runPromptWithSyntaxErrorCorrection :: (ToJSON a) => [Tools.Tool] -> a -> [Message] -> AppM (Message, UsageData)
-runPromptWithSyntaxErrorCorrection tools example messages = do
-  (res, queryStats) <- runPrompt messages
+runPromptWithSyntaxErrorCorrection :: (ToJSON a) => IntelligenceRequired -> [Tools.Tool] -> a -> [Message] -> AppM (Message, UsageData)
+runPromptWithSyntaxErrorCorrection intReq tools example messages = do
+  (res, queryStats) <- runPrompt intReq messages
   let mayToolsCalled = Tools.findToolsCalled (content res) tools
       mayRawTextBlocks = Tools.extractRawStrings (content res)
   case (mayToolsCalled, mayRawTextBlocks, T.length (content res) == 0) of
@@ -77,7 +79,7 @@ runPromptWithSyntaxErrorCorrection tools example messages = do
   where
     handleErr err res queryStats = do
       let errorCorrectionMsg = makeSyntaxErrorCorrectionPrompt tools example res err
-      (res', _) <- runPrompt errorCorrectionMsg
+      (res', _) <- runPrompt intReq errorCorrectionMsg
       let mayToolsCalled' = Tools.findToolsCalled (content res') tools
       case mayToolsCalled' of
         Right _ -> pure (res', queryStats)
@@ -175,6 +177,7 @@ runAiFunc ::
   forall bs a b.
   (FromJSON a, ToJSON a, Show a, BS.BuildSystem bs) =>
   Context ->
+  IntelligenceRequired ->
   [Tools.Tool] ->
   a ->
   (a -> AppM (Either (MsgKind, Text) b)) ->
@@ -187,12 +190,13 @@ runAiFuncInner ::
   (FromJSON a, ToJSON a, Show a, BS.BuildSystem bs) =>
   CheckContextSize ->
   Context ->
+  IntelligenceRequired ->
   [Tools.Tool] ->
   a ->
   (a -> AppM (Either (MsgKind, Text) b)) ->
   RemainingFailureTolerance ->
   AppM b
-runAiFuncInner checkContextSize origCtxt tools exampleReturn postProcessor remainingErrs = do
+runAiFuncInner checkContextSize origCtxt intReq tools exampleReturn postProcessor remainingErrs = do
   when (remainingErrs <= 0) $ throwError "Aborting as reached max number of errors"
   cfg <- ask
   theState <- get
@@ -201,14 +205,14 @@ runAiFuncInner checkContextSize origCtxt tools exampleReturn postProcessor remai
       shortenedOldErrCtxt = updateContextMessages aiTruncatedCtxt shortenOldErrorMessages
       ctxt = updateContextMessages shortenedOldErrCtxt (takeEnd (numOldMessagesToKeepInContext + 1))
       messages = contextToMessages ctxt tools theState exampleReturn
-  (res, queryStats) <- runPromptWithSyntaxErrorCorrection tools exampleReturn messages
+  (res, queryStats) <- runPromptWithSyntaxErrorCorrection intReq tools exampleReturn messages
   when (prompt_tokens queryStats > configModelMaxInputTokens cfg && checkContextSize == DoCheckContextSize) $ do
     let msg = "Input context length is now " <> show (prompt_tokens queryStats) <> ", more than the configured max of " <> show (configModelMaxInputTokens cfg) <> ". Please CloseFile the least important open file."
         ctxt' = addErrorToContext ctxt msg OtherMsg
         maxErrs = configTaskMaxFailures cfg
         fileClosedRes = FileClosed "leastImportantFileName.go"
     liftIO $ Logging.logInfo "ContextReduction" $ "Telling model to reduce context size; msg: " <> msg
-    runAiFuncInner @bs DontCheckContextSize ctxt' [Tools.ToolCloseFile] fileClosedRes validateFileClosed maxErrs
+    runAiFuncInner @bs DontCheckContextSize ctxt' MediumIntelligenceRequired [Tools.ToolCloseFile] fileClosedRes validateFileClosed maxErrs
     return ()
   liftIO $ Logging.logInfo "AiResponse" (show res)
   let aiMsg = content res
@@ -221,7 +225,7 @@ runAiFuncInner checkContextSize origCtxt tools exampleReturn postProcessor remai
     (_, Left err) -> addErrorAndRecurse ("Error in raw text syntax: " <> err) ctxtWithAiMsg SyntaxError OtherMsg
     (Right callsRaw, Right rawTextBlocks) -> handleToolCalls ctxtWithAiMsg callsRaw rawTextBlocks
   where
-    recur recurCtxt remainingErrs' = runAiFuncInner @bs checkContextSize recurCtxt tools exampleReturn postProcessor remainingErrs'
+    recur recurCtxt remainingErrs' = runAiFuncInner @bs checkContextSize recurCtxt intReq tools exampleReturn postProcessor remainingErrs'
 
     handleToolCalls :: Context -> [(Tools.Tool, [AET.Object])] -> Tools.RawTexts -> AppM b
     handleToolCalls ctxtWithAiMsg callsRaw rawTextBlocks = case Tools.processToolsArgs callsRaw rawTextBlocks of

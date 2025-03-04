@@ -19,7 +19,9 @@ makeGoBinanceApiDataRecorder aCfg = do
         Config
           { configApiKey = apiKey aCfg,
             configApiSite = apiSite aCfg,
-            configModel = modelName aCfg,
+            configLowIntModel = lowIntModelName aCfg,
+            configMediumIntModel = mediumIntModelName aCfg,
+            configHighIntModel = highIntModelName aCfg,
             configBaseDir = T.unpack $ baseDir aCfg,
             configCacheDir = T.unpack $ cacheDir aCfg,
             configBuildTimeoutSeconds = buildTimeoutSeconds aCfg,

@@ -106,7 +106,9 @@ data ForbiddenFile = ForbiddenFile
 data Config = Config
   { configApiKey :: Text,
     configApiSite :: Text,
-    configModel :: Text,
+    configLowIntModel :: Text,
+    configMediumIntModel :: Text,
+    configHighIntModel :: Text,
     configBaseDir :: FilePath,
     configCacheDir :: FilePath,
     configBuildTimeoutSeconds :: Int,
@@ -120,6 +122,14 @@ data Config = Config
     configModelMaxInputTokens :: Int
   }
   deriving (Eq, Ord, Show)
+
+data IntelligenceRequired = HighIntelligenceRequired | MediumIntelligenceRequired | LowIntelligenceRequired
+  deriving (Eq, Ord, Show)
+
+getModel :: Config -> IntelligenceRequired -> Text
+getModel cfg LowIntelligenceRequired = configLowIntModel cfg
+getModel cfg MediumIntelligenceRequired = configMediumIntModel cfg
+getModel cfg HighIntelligenceRequired = configHighIntModel cfg
 
 isFileForbidden :: Config -> Text -> Maybe Text
 isFileForbidden cfg name = do
