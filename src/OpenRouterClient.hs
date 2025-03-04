@@ -69,7 +69,7 @@ data UsageData = UsageData
 instance FromJSON UsageData
 
 data ChatResponse = ChatResponse
-  { id :: Text,
+  { id :: Maybe Text,
     choices :: [Choice],
     usage :: UsageData
   }
@@ -132,10 +132,13 @@ type GenerationAPI =
 -- Combined base API with both endpoints
 type BaseAPI = ChatCompletionsAPI :<|> GenerationAPI
 
--- Two variants of the full API
 type DirectAPI = "v1" :> BaseAPI
 
+-- Used by OpenRouter
 type PrefixedAPI = "api" :> "v1" :> BaseAPI
+
+-- Used by gemini
+type GeminiAPI = "v1beta" :> "openai" :> BaseAPI
 
 -- Create separate proxies
 directAPI :: Proxy DirectAPI
@@ -143,6 +146,9 @@ directAPI = Proxy
 
 prefixedAPI :: Proxy PrefixedAPI
 prefixedAPI = Proxy
+
+geminiAPI :: Proxy GeminiAPI
+geminiAPI = Proxy
 
 type ChatClient = Maybe Text -> Maybe Text -> Maybe Text -> ChatRequest -> ClientM ChatResponse
 
@@ -153,6 +159,9 @@ getClients provider =
   case provider of
     "openrouter.ai" ->
       let (chat :<|> gen) = client prefixedAPI
+       in (chat, gen)
+    "generativelanguage.googleapis.com" ->
+      let (chat :<|> gen) = client geminiAPI
        in (chat, gen)
     _ ->
       -- Default to direct style
@@ -205,8 +214,12 @@ sendQueryStreaming apiSite apiKey siteUrl siteName model temperature msgs = do
   manager <- newTlsManagerWith tlsManagerSettings
 
   -- Build the raw URL, for example: https://<apiSite>/v1/chat/completions
-  let url = "https://" <> T.unpack apiSite <> (if apiSite == "openrouter.ai" then "/api/v1/chat/completions" else "/v1/chat/completions")
-  let baseUrl = BaseUrl Https (T.unpack apiSite) 443 ""
+  let urlPath = case apiSite of
+        "openrouter.ai" -> "/api/v1/chat/completions"
+        "generativelanguage.googleapis.com" -> "/v1beta/openai/chat/completions"
+        _ -> "/v1/chat/completions"
+      url = "https://" <> T.unpack apiSite <> urlPath
+      baseUrl = BaseUrl Https (T.unpack apiSite) 443 ""
   initReq <- parseRequest url
 
   -- Construct the JSON payload. If you prefer, you can reuse ChatRequest & encode that:
@@ -424,8 +437,8 @@ mkChatResponse content mbUsage queryId =
           }
    in ChatResponse
         { id = case queryId of
-            Just (MkQueryId x) -> x
-            Nothing -> "",
+            Just (MkQueryId x) -> Just x
+            Nothing -> Nothing,
           choices = [c],
           usage = case mbUsage of
             Just u -> u
@@ -465,8 +478,10 @@ retryWithDelay maxAttempts delayMicros shouldLog action = go maxAttempts
 -- Main query function with generation stats
 sendQuery :: Text -> Text -> Text -> Text -> Text -> Maybe Float -> [Message] -> IO (Either Text QueryResult)
 sendQuery apiSite apiKey siteUrl siteName model temperature msgs = do
-  let initialQuery = if apiSite /= "openrouter.ai" && apiSite /= "api.deepseek.com" then sendQueryRaw else sendQueryStreaming
-      numAttempts = 5
+  let
+    shouldStream = apiSite == "openrouter.ai" || apiSite == "api.deepseek.com" || apiSite == "generativelanguage.googleapis.com"
+    initialQuery = if not shouldStream then sendQueryRaw else sendQueryStreaming
+    numAttempts = 5
   Logging.logDebug "sendQuery" (T.unlines $ map renderMessage msgs)
   let queryWithEmptyCheck remainingAttempts = do
         Logging.logInfo "sendQueryAttempt" ("Attempt " <> show (numAttempts + 1 - remainingAttempts) <> " with " <> show (length msgs) <> " messages")
@@ -487,14 +502,16 @@ sendQuery apiSite apiKey siteUrl siteName model temperature msgs = do
     Left err -> pure $ Left $ "Error sending query to openrouter: " <> show err
     Right resp -> case apiSite == "openrouter.ai" of
       False -> pure $ extractResult resp $ GenerationStats 0 0 0
-      True -> do
-        statsResult <- retryWithDelay 5 3000000 ShouldNotLog $ getGenerationStats apiSite apiKey resp.id
-        case statsResult of
-          -- Left err -> pure $ Left $ "Error fetching generation stats: " <> show err
-          Left err -> do
-            putTextLn $ "Failed to get generation stats: " <> err
-            pure $ extractResult resp $ GenerationStats 0 0 0
-          Right statsResp -> pure $ extractResult resp (generationData statsResp)
+      True -> case (resp.id) of
+        Nothing -> pure $ Left "Missing expected id field for message"
+        Just respId -> do
+          statsResult <- retryWithDelay 5 3000000 ShouldNotLog $ getGenerationStats apiSite apiKey respId
+          case statsResult of
+            -- Left err -> pure $ Left $ "Error fetching generation stats: " <> show err
+            Left err -> do
+              putTextLn $ "Failed to get generation stats: " <> err
+              pure $ extractResult resp $ GenerationStats 0 0 0
+            Right statsResp -> pure $ extractResult resp (generationData statsResp)
 
 -- Example usage:
 example :: Text -> Text -> IO ()
@@ -509,7 +526,8 @@ example site apiKey = do
       -- "o1-mini"
       -- "openai/o1-mini"
       -- "gpt-4o-mini"
-      "openai/gpt-3.5-turbo"
+      -- "openai/gpt-3.5-turbo"
+      "gemini-2.0-flash-thinking-exp"
       -- "deepseek-ai/DeepSeek-R1"
       -- "meta-llama/Llama-3.3-70B-Instruct"
       Nothing

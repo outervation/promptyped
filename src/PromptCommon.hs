@@ -192,7 +192,7 @@ validateUnitTests :: UnitTests -> AppM (Either (MsgKind, Text) UnitTests)
 validateUnitTests cf = pure $ Right cf
 
 allTools :: [Tools.Tool]
-allTools = [Tools.ToolOpenFile, Tools.ToolCloseFile, Tools.ToolAppendFile, Tools.ToolInsertInFile, Tools.ToolEditFile, Tools.ToolRevertFile, Tools.ToolPanic, Tools.ToolReturn]
+allTools = [Tools.ToolOpenFile, Tools.ToolCloseFile, Tools.ToolAppendFile, Tools.ToolInsertInFile, Tools.ToolEditFile, Tools.ToolPanic, Tools.ToolReturn]
 
 readOnlyTools :: [Tools.Tool]
 readOnlyTools = [Tools.ToolOpenFile, Tools.ToolCloseFile, Tools.ToolPanic, Tools.ToolReturn]

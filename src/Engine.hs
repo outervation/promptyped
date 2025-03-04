@@ -69,10 +69,11 @@ runPromptWithSyntaxErrorCorrection tools example messages = do
   (res, queryStats) <- runPrompt messages
   let mayToolsCalled = Tools.findToolsCalled (content res) tools
       mayRawTextBlocks = Tools.extractRawStrings (content res)
-  case (mayToolsCalled, mayRawTextBlocks) of
-    (Right _, Right _) -> pure (res, queryStats)
-    (Left err, _) -> handleErr err res queryStats
-    (_, Left err) -> handleErr err res queryStats
+  case (mayToolsCalled, mayRawTextBlocks, T.length (content res) == 0) of
+    (_, _, True) -> pure (res, queryStats)
+    (Right _, Right _, False) -> pure (res, queryStats)
+    (Left err, _, False) -> handleErr err res queryStats
+    (_, Left err, False) -> handleErr err res queryStats
   where
     handleErr err res queryStats = do
       let errorCorrectionMsg = makeSyntaxErrorCorrectionPrompt tools example res err
