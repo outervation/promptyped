@@ -109,10 +109,28 @@ topologicalSortThingsWithDependencies existingFiles (ThingsWithDependencies file
 
   pure $ reverse sortedFiles
 
+validatePropertyOfThingsWithDependencies :: ThingsWithDependencies -> (ThingWithDependencies -> Maybe Text) -> Either (MsgKind, Text) ThingsWithDependencies
+validatePropertyOfThingsWithDependencies (ThingsWithDependencies things) validator =
+  case catMaybes (map validator things) of
+        [] -> Right $ ThingsWithDependencies things
+        errors -> Left (OtherMsg, (T.intercalate ", " errors))
+
+validatePathNotNested :: ThingWithDependencies -> Maybe Text
+validatePathNotNested thing =
+  if T.isInfixOf "/" thing.name
+  then Just $ "Error; nested paths are not allowed, but " <> thing.name <> " is a nested path."
+  else Nothing
+                                   
 validateThingsWithDependencies :: ThingsWithDependencies -> AppM (Either (MsgKind, Text) [ThingWithDependencies])
 validateThingsWithDependencies pf = do
   st <- get
   return $ either (\x -> Left (OtherMsg, x)) Right $ topologicalSortThingsWithDependencies (stateFiles st) pf
+
+validateFileNamesNoNestedPaths :: ThingsWithDependencies -> AppM (Either (MsgKind, Text) [ThingWithDependencies])
+validateFileNamesNoNestedPaths things = do
+  case validatePropertyOfThingsWithDependencies things validatePathNotNested of
+    Left err -> pure $ Left err
+    Right things' -> validateThingsWithDependencies things'
 
 data ThingWithDescription = ThingWithDescription
   { description :: Text
@@ -213,7 +231,7 @@ checkCompileTestResults = do
   pure $ case (compileRes res, testRes res) of
     (Nothing, Nothing) -> Right ()
     (Just compileErr, _) -> Left (CompileFailMsg, "Error, compilation failed, fix it before returning. Note that if you see a 'missing import path' compilation error, it may be because you forgot a closing ')' for the go import list. If you see 'is not a package path' when trying to import a local file you created, remember you should include 'project_name/filename', NOT '/home/username/project_name/filename' or 'username/project_name/filename' The last error was: " <> compileErr)
-    (Nothing, Just testErr) -> Left (TestFailMsg, "Error, unit tests didn't all pass (or failed to compile), fix them first. I encourage you to add more logging/printf for debugging if necessary, and to record your current step and planned future steps in the journal.txt . The last error was: " <> testErr)
+    (Nothing, Just testErr) -> Left (TestFailMsg, "Error, unit tests didn't all pass (or failed to compile), fix them first. I encourage you to add more logging/printf for debugging if necessary, and to record your current step and planned future steps in the journal.txt . If you see 'is not a package path' when trying to import a local file you created into a test, remember you should include 'project_name/filename', NOT '/home/username/project_name/filename' or 'username/project_name/filename, and put everything in package main. The last error was: " <> testErr)
 
 validateUnitTest :: UnitTestDone -> AppM (Either (MsgKind, Text) ())
 validateUnitTest t = case unitTestPassedSuccessfully t of
@@ -404,7 +422,7 @@ makeRefactorFilesProject = do
                 ThingWithDependencies "someOtherFile.go" "This file contains functionality for something different ..." ["someFile.go"]
               ]
           }
-      getExtraFilesTask () = Engine.runAiFunc @bs extraFilesCtxt HighIntelligenceRequired readOnlyTools exampleExtraFiles validateThingsWithDependencies (configTaskMaxFailures cfg)
+      getExtraFilesTask () = Engine.runAiFunc @bs extraFilesCtxt HighIntelligenceRequired readOnlyTools exampleExtraFiles validateFileNamesNoNestedPaths (configTaskMaxFailures cfg)
   extraFilesNeeded <- memoise (configCacheDir cfg) "all_extra_files" () (const "") getExtraFilesTask
   let makeFileBackground = background <> "\n You are currently working on adding some extra files that are necessary as part of the refactoring."
   forM_ extraFilesNeeded (makeFile @bs makeFileBackground)
@@ -445,6 +463,6 @@ makeCreateFilesProject = do
                 ThingWithDependencies "someOtherFile.go" "This file contains functionality for something different ..." ["someFile.go"]
               ]
           }
-      runner () = Engine.runAiFunc @bs ctxt HighIntelligenceRequired readOnlyTools examplePlannedFiles validateThingsWithDependencies (configTaskMaxFailures cfg)
+      runner () = Engine.runAiFunc @bs ctxt HighIntelligenceRequired readOnlyTools examplePlannedFiles validateFileNamesNoNestedPaths (configTaskMaxFailures cfg)
   plannedFiles <- memoise (configCacheDir cfg) "file_planner" () (const "") runner
   forM_ plannedFiles (makeFile @bs ctxt.contextBackground)

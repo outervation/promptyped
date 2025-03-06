@@ -375,9 +375,9 @@ handleExitCode opName res = do
             <> " with exit code "
             <> show code
             <> "\nstdout:\n"
-            <> truncateText 20 stdoutRes
+            <> truncateText 30 stdoutRes
             <> "\nstderr:\n"
-            <> truncateText 20 stderrRes
+            <> truncateText 30 stderrRes
 
 gitInit :: FilePath -> IO (Either Text ())
 gitInit path = DIR.withCurrentDirectory path $ do

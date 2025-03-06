@@ -155,7 +155,7 @@ data ErrorKind = SyntaxError | SemanticError
   deriving (Eq, Ord, Show)
 
 data FileClosed = FileClosed
-  { closedFileName :: Text
+  { fileName :: Text
   }
   deriving (Generic, Eq, Ord, Show)
 
@@ -208,11 +208,14 @@ runAiFuncInner checkContextSize origCtxt intReq tools exampleReturn postProcesso
   (res, queryStats) <- runPromptWithSyntaxErrorCorrection intReq tools exampleReturn messages
   when (prompt_tokens queryStats > configModelMaxInputTokens cfg && checkContextSize == DoCheckContextSize) $ do
     let msg = "Input context length is now " <> show (prompt_tokens queryStats) <> ", more than the configured max of " <> show (configModelMaxInputTokens cfg) <> ". Please CloseFile the least important open file."
-        ctxt' = addErrorToContext ctxt msg OtherMsg
-        maxErrs = configTaskMaxFailures cfg
         fileClosedRes = FileClosed "leastImportantFileName.go"
+        fileClosedExample = Tools.returnValueToDescription $ fileClosedRes
+        taskExtra = "Your context is now too large, so please CloseFile the least important file (based on the above task) and after calling CloseFile immediately return like " <> fileClosedExample <> ". Please don't use any other tools or return anything else as they're disabled until you return a FileClosed."
+        ctxt' = (addErrorToContext ctxt msg OtherMsg) { contextTask = contextTask ctxt <> "\n" <> taskExtra}
+        maxErrs = configTaskMaxFailures cfg
     liftIO $ Logging.logInfo "ContextReduction" $ "Telling model to reduce context size; msg: " <> msg
-    runAiFuncInner @bs DontCheckContextSize ctxt' MediumIntelligenceRequired [Tools.ToolCloseFile] fileClosedRes validateFileClosed maxErrs
+    closedFile <- runAiFuncInner @bs DontCheckContextSize ctxt' MediumIntelligenceRequired [Tools.ToolCloseFile, Tools.ToolReturn] fileClosedRes validateFileClosed maxErrs
+    liftIO $ Logging.logInfo "ContextReduction" $ "Successfully closed file: " <> show closedFile
     return ()
   liftIO $ Logging.logInfo "AiResponse" (show res)
   let aiMsg = content res

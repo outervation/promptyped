@@ -37,7 +37,7 @@ Your current project is refactoring. First you'll, for each source file, analyse
     <> taskDescription
 
 makeArchitectureDesignPrompt :: Text
-makeArchitectureDesignPrompt = "Please think carefully and design the architecture for the project given the requirements above, returning a detailed description of the planned architecture."
+makeArchitectureDesignPrompt = "Please think carefully and design the architecture for the project given the requirements above, returning a detailed description of the planned architecture. Do not write the exact actual file names yet though, that's for a later planning step. The project must have everything in a single directory; no nested paths."
 
 binanceSummary :: Text
 binanceSummary =

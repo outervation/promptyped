@@ -16,6 +16,7 @@ import Data.ByteString.Lazy qualified as LBS
 import Data.List as L
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
+import Logging qualified
 import Data.Vector qualified as V
 import FileSystem qualified as FS
 import Relude
@@ -550,6 +551,7 @@ extractFnCalls fullText fnName =
 --    just yields an empty list for that tool, which we omit in the final result.
 --------------------------------------------------------------------------------
 
+
 findToolsCalled :: Text -> [Tool] -> Either Text [(Tool, [AET.Object])]
 findToolsCalled txt tools =
   let -- For each tool, try extracting all JSON objects
@@ -734,6 +736,7 @@ handleFileOperation ::
 handleFileOperation fileName ioAction requiresOpenFile errorPrefix successMsg ctxt = do
   theState <- get
   cfg <- ask
+  liftIO $ Logging.logInfo "FileOperation" $ "Attempting action with success name: " <> successMsg
   let filePath = FS.toFilePath cfg fileName
   case isFileForbidden cfg fileName of
     Just err -> pure $ mkError ctxt OtherMsg $ "Error: cannot modify forbidden file. " <> err
@@ -743,13 +746,16 @@ handleFileOperation fileName ioAction requiresOpenFile errorPrefix successMsg ct
         then do
           checker <- BS.getFormatChecker @a cfg
           let op = FS.tryFileOp filePath ioAction checker
+              onErr :: Text -> AppM Context
+              onErr err = do
+                updateFileIfExistsOnDisk fileName cfg
+                pure $ mkError ctxt OtherMsg err
           res <- liftIO op
-          either (pure . mkError ctxt OtherMsg) (const $ onSuccess cfg ctxt) res
+          either onErr (const $ onSuccess cfg ctxt) res
         else pure $ mkError ctxt OtherMsg (errorPrefix <> fileName)
   where
     onSuccess cfg ctxt' = do
-      theState <- get
-      unless (fileExists fileName theState) $ modify' (addExistingFile fileName "")
+      liftIO $ Logging.logInfo "FileOperation" "File operation succeeded."
       openFile fileName cfg
       let successCtxt = mkSuccess ctxt' OtherMsg successMsg
       considerBuildAndTest @a fileName >>= \case
@@ -758,11 +764,20 @@ handleFileOperation fileName ioAction requiresOpenFile errorPrefix successMsg ct
           pure successCtxt
         Just (msgKind, err) -> pure $ mkError successCtxt msgKind (show msgKind <> ": " <> err)
 
+updateFileIfExistsOnDisk :: Text -> Config -> AppM ()
+updateFileIfExistsOnDisk fileName cfg = do
+  let filePath = FS.toFilePath cfg fileName
+  exists <- liftIO $ FS.fileExistsOnDisk filePath
+  when exists $ openFile fileName cfg
+
 openFile :: Text -> Config -> AppM ()
 openFile fileName cfg = do
+  st <- get
   contents <- liftIO $ FS.readFileToTextAndOpen (FS.toFilePath cfg fileName)
   modify' (ensureOpenFile fileName contents)
   FS.updateOpenedFile fileName
+  unless (fileExists fileName st) $ modify' (addExistingFile fileName "")
+  liftIO $ Logging.logInfo "OpenFile" $ "Opened file " <> fileName <> "."
 
 getRawText :: RawTexts -> Text -> AppM Text
 getRawText rawTexts name = case lookupText name rawTexts of
@@ -775,13 +790,11 @@ runTool _ (ToolCallOpenFile args) origCtxt = do
   cfg <- ask
   let initialCtxt = origCtxt
   ctxtUpdates <- forM args $ \(OpenFileArg fileName) -> do
-    let exists = fileExists fileName theState
-        alreadyOpen = fileAlreadyOpen fileName theState
+    let alreadyOpen = fileAlreadyOpen fileName theState
     case alreadyOpen of
       True -> pure $ \ctxt -> mkError ctxt OtherMsg ("file already open: " <> fileName)
       False -> do
         openFile fileName cfg
-        unless exists $ modify' (addExistingFile fileName "")
         pure $ \ctxt -> mkSuccess ctxt OtherMsg ("Opened file: " <> fileName)
   return $ foldl' (\acc f -> f acc) initialCtxt ctxtUpdates
 runTool _ (ToolCallCloseFile args) origCtxt = do
