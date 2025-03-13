@@ -144,6 +144,11 @@ instance FromJSON ThingWithDescription
 validateAlwaysPass :: a -> AppM (Either (MsgKind, Text) a)
 validateAlwaysPass x = pure $ Right x
 
+validateAlwaysPassIfCompileTestsFine :: a -> AppM (Either (MsgKind, Text) a)
+validateAlwaysPassIfCompileTestsFine x = do
+  res <- checkCompileTestResults
+  pure $ either Left (Right . const x) res
+
 data CreatedFile = CreatedFile
   { createdFileName :: Text,
     createdFileSummary :: Text
@@ -326,7 +331,7 @@ makeRefactorFileTask background initialDeps fileName desiredChanges refactorUnit
                   contextRest = []
                 }
             exampleChange = ModifiedFile "someFile.go" "Update the file to add ... so that it ..."
-        Engine.runAiFunc @bs ctxt MediumIntelligenceRequired allTools exampleChange validateAlwaysPass (configTaskMaxFailures cfg)
+        Engine.runAiFunc @bs ctxt MediumIntelligenceRequired allTools exampleChange validateAlwaysPassIfCompileTestsFine (configTaskMaxFailures cfg)
   modifications <- forM desiredChanges $ \x -> do
     modification <- memoise (configCacheDir cfg) ("file_modifier_" <> fileName) x (\desc -> desc.name) makeChange
     return $ "Intended modification: " <> x.summary <> ", with model describing what it did as " <> show modification <> "."
