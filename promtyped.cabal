@@ -28,12 +28,13 @@ library
     default-extensions: NoImplicitPrelude
     ghc-options:        -Wall
     build-depends:
-        base >=4.20,
         aeson,
         async,
+        base >=4.20,
         containers,
         data-default-class,
         directory,
+        exceptions,
         extra,
         filepath,
         groups,
@@ -42,11 +43,11 @@ library
         http-client-tls,
         http-types,
         mtl,
-        network, 
+        network,
         process,
         raw-strings-qq,
-        relude ^>=1.2.0,
         regex-pcre,
+        relude ^>=1.2.0,
         servant,
         servant-client,
         servant-client-core,
@@ -58,14 +59,14 @@ library
 executable promtyped
     main-is:            Main.hs
     hs-source-dirs:     app
+    other-modules:
+        AppConfig
+        BinanceApiDataRecorder
+
     default-language:   GHC2024
     default-extensions: NoImplicitPrelude
-    other-modules:
-       AppConfig 
-       BinanceApiDataRecorder
     ghc-options:        -Wall
     build-depends:
-        promtyped,
         HUnit,
         QuickCheck,
         aeson,
@@ -74,6 +75,7 @@ executable promtyped
         base >=4.20,
         containers,
         directory,
+        exceptions,
         extra,
         filepath,
         groups,
@@ -83,6 +85,7 @@ executable promtyped
         mtl,
         network,
         process,
+        promtyped,
         relude ^>=1.2.0,
         scientific,
         temporary,
@@ -104,12 +107,12 @@ test-suite promtyped-tests
     default-extensions: NoImplicitPrelude
     ghc-options:        -Wall -threaded -rtsopts -with-rtsopts=-N
     build-depends:
-        promtyped,
         HUnit,
         QuickCheck,
         base >=4.20,
         containers,
         directory,
+        exceptions,
         extra,
         filepath,
         groups,
@@ -119,6 +122,7 @@ test-suite promtyped-tests
         mtl,
         network,
         process,
+        promtyped,
         relude ^>=1.2.0,
         temporary,
         text,

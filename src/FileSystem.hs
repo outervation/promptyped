@@ -5,6 +5,7 @@ module FileSystem (replaceInFile, readFileToText, readFileToTextAndOpen, appendT
 import Control.Concurrent.Async (concurrently)
 import Control.Exception (IOException, bracket, try)
 import Control.Monad (foldM)
+import Control.Monad.Catch qualified as Catch
 import Control.Monad.Except (throwError)
 import Core
 import Data.ByteString qualified as BS
@@ -33,18 +34,18 @@ runAll = foldM step (Right ())
 toFilePath :: Config -> Text -> FilePath
 toFilePath cfg x = configBaseDir cfg FP.</> T.unpack x
 
-tryFileOp :: FilePath -> (FilePath -> IO (Either T.Text ())) -> IO (Maybe T.Text) -> IO (Either T.Text ())
+tryFileOp :: FilePath -> (FilePath -> IO (Either T.Text ())) -> AppM (Maybe T.Text) -> AppM (Either T.Text ())
 tryFileOp path op checker = do
   -- Check if file exists first to fail early
-  alreadyExists <- DIR.doesFileExist path
+  alreadyExists <- liftIO $ DIR.doesFileExist path
   if not alreadyExists
-    then op path
+    then liftIO $ op path
     else do
       let backupPath = path ++ ".bak"
-          cleanupBackup = tryIOError $ void (DIR.removeFile backupPath)
+          cleanupBackup = liftIO $ tryIOError $ void (DIR.removeFile backupPath)
 
       -- Use bracket to ensure proper resource management
-      bracket
+      Catch.bracket
         (createBackup backupPath)
         ( \backupResult -> case backupResult of
             Right _ -> cleanupBackup
@@ -56,23 +57,23 @@ tryFileOp path op checker = do
         )
   where
     -- Create backup and return either error or success
-    createBackup :: FilePath -> IO (Either T.Text ())
+    createBackup :: FilePath -> AppM (Either T.Text ())
     createBackup backupPath = do
-      result <- tryIOError $ DIR.copyFile path backupPath
+      result <- liftIO $ tryIOError $ DIR.copyFile path backupPath
       case result of
         Left err -> return $ Left $ T.pack $ "Failed to create backup: " ++ show err
         Right _ -> return $ Right ()
 
     -- Process the operation and validation
-    processOperation :: FilePath -> IO (Either T.Text ())
+    processOperation :: FilePath -> AppM (Either T.Text ())
     processOperation backupPath = do
-      opResult <- op path
+      opResult <- liftIO $ op path
       case opResult of
         Left err -> return $ Left err
         Right _ -> validateAndFinalize backupPath
 
     -- Validate results and handle restoration if needed
-    validateAndFinalize :: FilePath -> IO (Either T.Text ())
+    validateAndFinalize :: FilePath -> AppM (Either T.Text ())
     validateAndFinalize backupPath = do
       checkerResult <- checker
       case checkerResult of
@@ -80,9 +81,10 @@ tryFileOp path op checker = do
         Just err -> restoreBackup backupPath err
 
     -- Restore from backup when validation fails
-    restoreBackup :: FilePath -> T.Text -> IO (Either T.Text ())
+    restoreBackup :: FilePath -> T.Text -> AppM (Either T.Text ())
     restoreBackup backupPath err = do
-      restoreResult <- tryIOError $ do
+      modifiedFile <- liftIO $ readFileToText path
+      restoreResult <- liftIO $ tryIOError $ do
         DIR.removeFile path
         DIR.copyFile backupPath path
 
@@ -96,7 +98,7 @@ tryFileOp path op checker = do
             ++ ". Additionally, failed to restore backup: "
             ++ show restoreErr
         Right _ ->
-          return $ Left err
+          return . Left $ err <> "\n. The file post-modification looked like: " <> addLineNumbersToText modifiedFile
 
 readFileToText :: FilePath -> IO Text
 readFileToText path = do
@@ -128,7 +130,7 @@ reloadOpenFiles = do
 readFileToTextAndOpen :: FilePath -> IO Text
 readFileToTextAndOpen path = do
   exists <- DIR.doesFileExist path
-  unless exists $ DIR.createDirectoryIfMissing True (FP.takeDirectory path) >> writeFileText path ""
+  unless exists $ DIR.createDirectoryIfMissing True (FP.takeDirectory path)
   mayPath <- try @IOException (readFileBS path)
   return $ case mayPath of
     Left _ -> ""
@@ -172,9 +174,9 @@ validateReplaceInFileParams :: Int -> Int -> Int -> Either T.Text ()
 validateReplaceInFileParams totalLines startLineNum endLineNum
   | startLineNum < 0 = Left "startLineNum must be non-negative"
   | endLineNum < 0 = Left "endLineNum must be non-negative"
-  | endLineNum < startLineNum = Left "endLineNum must be greater than or equal to startLineNum"
   | startLineNum >= totalLines = Left $ T.pack $ "startLineNum must be less than total number of lines (" <> show totalLines <> ")"
   | endLineNum > totalLines = Left $ T.pack $ "endLineNum must be less than or equal to total number of lines (" <> show totalLines <> ")"
+  | endLineNum < startLineNum = Left $ "endLineNum " <> show endLineNum <> " must be greater than or equal to startLineNum " <> show startLineNum <> ". Note these are internal line numbers, in [startLineNum, endLineNum) format where the end line number is exclusive; this may not exactly match tool input format where the endLineNum is inclusive."
   | otherwise = Right ()
 
 appendToFile :: FilePath -> T.Text -> IO (Either T.Text ())
@@ -258,11 +260,11 @@ ensureNoLineNumbers filepath = do
   where
     processFileContents :: FilePath -> IO Text
     processFileContents fp = do
-      contents <- TIO.readFile fp
+      contents <- readFileToText fp
       let originalLines = V.fromList (T.lines contents)
           processedLines = V.map removeLineNumberComment originalLines
           newContents = T.unlines (V.toList processedLines)
-      TIO.writeFile fp newContents
+      when (T.length contents > 0) $ TIO.writeFile fp newContents
       pure newContents
 
 addLineNumbersToText :: Text -> Text
@@ -280,9 +282,9 @@ ensureLineNumbers filepath = do
   where
     processFileContents :: FilePath -> IO Text
     processFileContents fp = do
-      contents <- TIO.readFile fp
+      contents <- readFileToText fp
       let newContents = addLineNumbersToText contents
-      TIO.writeFile fp newContents
+      when (T.length contents > 0) $ TIO.writeFile fp newContents
       pure newContents
 
 getFileNames :: FilePath -> IO [Text]

@@ -13,7 +13,7 @@ makeUnitTestsPrompt :: Text -> Text
 makeUnitTestsPrompt fileName = makeUnitTestsPromptInner $ "Please decide upon some key unit tests to write for " <> fileName <> "."
 
 makeUnitTestsForSpecificChangePrompt :: Text -> Text -> Text
-makeUnitTestsForSpecificChangePrompt change fileName = makeUnitTestsPromptInner $ "Please decide upon some key unit tests to write for the change you just made: " <> change <> " in fileName " <> fileName <> "."
+makeUnitTestsForSpecificChangePrompt change fileName = makeUnitTestsPromptInner $ "Please decide upon some key unit tests to write for the change(s) you just made: " <> change <> " in fileName " <> fileName <> "."
 
 makeUnitTestsPromptInner :: Text -> Text
 makeUnitTestsPromptInner starter = starter <> "Return a list of unit test names and descriptions in the format specified. If there are parts that will be hard to unit test fully (e.g. connecting to an external API), then you should design tests that just connect to the API and verify the downloaded/streamed data parses correctly and passes sanity assertions (with a timeout of e.g. 10 seconds that makes the test fail if no data is received). Remember to also open any helpful .txt/.md documentation from the list of available files."
@@ -73,7 +73,7 @@ IMPORTANT NOTE: To keep context size minimal you won't see your full previous re
 
 |]
 
-    -- When you make changes to a source file, if compilation and unit tests pass then the file is added and committed to a git repo in the base directory. You may use the Revert tool where necessary to get back to the last version of a file when compilation and all tests passed.
+-- When you make changes to a source file, if compilation and unit tests pass then the file is added and committed to a git repo in the base directory. You may use the Revert tool where necessary to get back to the last version of a file when compilation and all tests passed.
 
 projectSummary :: Text -> Text
 projectSummary projectName = projectSummaryGolang projectName <> approachSummary <> binanceSummary
@@ -81,7 +81,7 @@ projectSummary projectName = projectSummaryGolang projectName <> approachSummary
 projectSummaryGolang :: Text -> Text
 projectSummaryGolang projectName =
   [r|
-You are an agent involved in coding a Go application. It's a binance market data recorder, but the code will later be used in HFT so minimising dynamic allocation and cache misses is important. You should record the data to Parquet files. It should support subscribing to multiple instruments, but should use a separate stream for each. The only external library you need to use is github.com/xitongsys/parquet-go. Documentation is available in the directory for your reference. Each type of market data should be stored in a separate file. There should be one file per exchange/instrument/date (UTC data), and the filename should contain the exchange (with binance futures and binance being separate exchanges), instrument and date. It should support resuming recording to an existing file after restart.
+You are an agent involved in coding a Go application. It's a binance market data recorder, but the code will later be used in HFT so minimising dynamic allocation and cache misses is important. You should record the data to Parquet files. It should support subscribing to multiple instruments, but should use a separate stream for each. The only external library you need to use is github.com/xitongsys/parquet-go. Documentation is available in the directory for your reference. Each type of market data should be stored in a separate file. There should be one file per exchange/instrument/date (UTC data), and the filename should contain the exchange (with binance futures and binance being separate exchanges), instrument and date. It should not support resuming recording to an existing file after restart, as Parquet doesn't support this.
 
 NOTE: the imports for parquet-go are:
 "github.com/xitongsys/parquet-go/parquet"

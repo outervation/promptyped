@@ -496,7 +496,7 @@ sendQuery apiSite apiKey siteUrl siteName model temperature msgs = do
                   else pure $ Right resp -- Give up and return empty response
               else pure $ Right resp
           Left err -> pure $ Left err
-  queryResult <- retryWithDelay numAttempts 3000000 ShouldLog $ queryWithEmptyCheck numAttempts
+  queryResult <- retryWithDelay numAttempts 6000000 ShouldLog $ queryWithEmptyCheck numAttempts
   case queryResult of
     Left err -> pure . Left $ "Error sending query to openrouter: " <> show err
     Right resp -> case resp.choices of

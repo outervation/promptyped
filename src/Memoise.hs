@@ -27,6 +27,7 @@ instance (FromJSON b) => FromJSON (CacheData b)
 
 loadFromCache :: (FromJSON b) => FilePath -> AppM b
 loadFromCache fileName = do
+  liftIO $ putTextLn $ "Loading file from cache: " <> T.pack fileName
   eitherCache <- liftIO $ eitherDecodeFileStrict' fileName
   case eitherCache of
     Left err -> throwError $ "Failed to parse cache at " <> show fileName <> ": " <> show err

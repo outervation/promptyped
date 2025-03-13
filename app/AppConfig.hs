@@ -3,9 +3,10 @@ module AppConfig where
 import Data.Aeson
 import Data.ByteString.Lazy qualified as BS
 import Data.Text qualified as T
+import PromptCommon qualified as PC
 import Relude
 
-data ProjectKind = CreateProject | RefactorProject
+data ProjectKind = CreateProject | RefactorProject | TargetedRefactorProject | FileAnalysisProject
   deriving (Generic, Eq, Ord, Show)
 
 instance FromJSON ProjectKind
@@ -28,7 +29,8 @@ data AppConfig = AppConfig
     taskMaxFailures :: Int,
     projectKind :: ProjectKind,
     modelTemperature :: Maybe Float,
-    modelMaxInputTokens :: Int
+    modelMaxInputTokens :: Int,
+    targetedRefactorCfg :: Maybe PC.TargetedRefactorConfig
   }
   deriving (Generic, Eq, Ord, Show)
 

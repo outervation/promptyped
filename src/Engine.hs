@@ -23,7 +23,7 @@ shortenedMessageLength :: Int
 shortenedMessageLength = 200
 
 numRecentAiMessagesNotToTruncate :: Int
-numRecentAiMessagesNotToTruncate = 2
+numRecentAiMessagesNotToTruncate = 1
 
 numOldMessagesToKeepInContext :: Int
 numOldMessagesToKeepInContext = 10
@@ -63,7 +63,7 @@ makeSyntaxErrorCorrectionPrompt tools exampleReturn llmMsg err = do
   let returnValueDesc = Tools.returnValueToDescription exampleReturn
       toolDesc = Tools.toolsToDescription tools
       msgBeginning = "You are an agent responsible for error correction of LLM output. There is a specific syntax for tools that the LLM could use, described as follows: " <> toolDesc <> "\nThere is also a syntax for values the LLM may return, as follows: " <> returnValueDesc
-      msgRes = "The LLM returned syntactically incorrect output:\n" <> content llmMsg <> "\nThe exact error was: " <> err <> "\nPlease output the same output as above but with the syntax error corrected, thanks!"
+      msgRes = "The LLM returned syntactically incorrect output:\n" <> content llmMsg <> "\nThe exact error was: " <> err <> "\nPlease output the same output as above but with the syntax error corrected, thanks! If you can't fix it, just return it as-is and it'll be handled downstream, don't panic."
   return $ Message (roleName RoleUser) (msgBeginning <> msgRes)
 
 runPromptWithSyntaxErrorCorrection :: (ToJSON a) => IntelligenceRequired -> [Tools.Tool] -> a -> [Message] -> AppM (Message, UsageData)
@@ -78,6 +78,7 @@ runPromptWithSyntaxErrorCorrection intReq tools example messages = do
     (_, Left err, False) -> handleErr err res queryStats
   where
     handleErr err res queryStats = do
+      liftIO $ Logging.logInfo "RunPromptWithSyntaxErrorCorrection" "Requesting syntax fix."
       let errorCorrectionMsg = makeSyntaxErrorCorrectionPrompt tools example res err
       (res', _) <- runPrompt intReq errorCorrectionMsg
       let mayToolsCalled' = Tools.findToolsCalled (content res') tools
@@ -95,11 +96,20 @@ mergeAdjacentRoleMessages (msg1 : msg2 : rest)
        in mergeAdjacentRoleMessages (mergedMsg : rest)
   | otherwise = msg1 : mergeAdjacentRoleMessages (msg2 : rest)
 
+getTask :: AppState -> Text -> Text
+getTask st mainTask = do
+  let res = stateCompileTestRes st
+  "YOUR CURRENT TASK: " <> case (compileRes res, testRes res) of
+    (Nothing, Nothing) -> mainTask
+    (Just compileErr, _) -> "Fix the project build error. The error: \n" <> compileErr <> "\n. The task you were working on when compilation failed:  " <> mainTask
+    (Nothing, Just testErr) -> "Fix the error that occurred building or running the tests. The error: \n" <> testErr <> "\n. The task you were working on when compilation failed:  " <> mainTask
+
 contextToMessages :: (ToJSON a) => Context -> [Tools.Tool] -> AppState -> a -> [Message]
 contextToMessages Context {..} tools theState exampleReturn = do
   let messages = map snd contextRest
+      taskDesc = getTask theState contextTask
       returnValueDesc = Tools.returnValueToDescription exampleReturn
-      allTexts = [contextBackground, filesDesc, openFilesDesc, toolDesc, returnValueDesc, "YOUR CURRENT TASK: " <> contextTask]
+      allTexts = [contextBackground, filesDesc, openFilesDesc, toolDesc, returnValueDesc, taskDesc]
    in mergeAdjacentRoleMessages $ Message {role = roleName RoleUser, content = T.unlines allTexts} : messages
   where
     toolDesc = Tools.toolsToDescription tools
@@ -200,6 +210,8 @@ runAiFuncInner checkContextSize origCtxt intReq tools exampleReturn postProcesso
   when (remainingErrs <= 0) $ throwError "Aborting as reached max number of errors"
   cfg <- ask
   theState <- get
+  let (RemainingFailureTolerance failureToleranceInt) = configTaskMaxFailures cfg
+  when (theState.stateCompileTestRes.numConsecutiveSyntaxCheckFails > failureToleranceInt) $ throwError "Aborting as reached max number of errors attempting to write syntactically correct code"
   let truncateOldAiMessages = truncateOldMessages "assistant" numRecentAiMessagesNotToTruncate shortenedMessageLength
       aiTruncatedCtxt = updateContextMessages origCtxt truncateOldAiMessages
       shortenedOldErrCtxt = updateContextMessages aiTruncatedCtxt shortenOldErrorMessages
@@ -211,7 +223,7 @@ runAiFuncInner checkContextSize origCtxt intReq tools exampleReturn postProcesso
         fileClosedRes = FileClosed "leastImportantFileName.go"
         fileClosedExample = Tools.returnValueToDescription $ fileClosedRes
         taskExtra = "Your context is now too large, so please CloseFile the least important file (based on the above task) and after calling CloseFile immediately return like " <> fileClosedExample <> ". Please don't use any other tools or return anything else as they're disabled until you return a FileClosed."
-        ctxt' = (addErrorToContext ctxt msg OtherMsg) { contextTask = contextTask ctxt <> "\n" <> taskExtra}
+        ctxt' = (addErrorToContext ctxt msg OtherMsg) {contextTask = contextTask ctxt <> "\n" <> taskExtra}
         maxErrs = configTaskMaxFailures cfg
     liftIO $ Logging.logInfo "ContextReduction" $ "Telling model to reduce context size; msg: " <> msg
     closedFile <- runAiFuncInner @bs DontCheckContextSize ctxt' MediumIntelligenceRequired [Tools.ToolCloseFile, Tools.ToolReturn] fileClosedRes validateFileClosed maxErrs

@@ -16,9 +16,9 @@ import Data.ByteString.Lazy qualified as LBS
 import Data.List as L
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
-import Logging qualified
 import Data.Vector qualified as V
 import FileSystem qualified as FS
+import Logging qualified
 import Relude
 import ShapeChecker (checkShapesMatch)
 
@@ -291,11 +291,11 @@ mkSampleCodeBox name = "\nRAWTEXT[" <> name <> "]=R\"r( someCodeHere()\n someMor
 
 -- Returns arg format json, rawTextBoxExample, description
 toolArgFormatAndDesc :: Tool -> (Text, Text, Text)
-toolArgFormatAndDesc ToolReturn = ("{ }", "", "Return a value; format depends on the task and is described further down below.")
+toolArgFormatAndDesc ToolReturn = ("{ }", "", "Return a value; format depends on the task and is described further down below. Note you can only return a single value at a time!")
 toolArgFormatAndDesc ToolFileLineOp = (toJ FileLineOpArg {fileName = "somefile.txt", startLineNum = 5, endLineNum = 10, rawTextName = "codeBoxToUse", origToolName = "originalToolName"}, mkSampleCodeBox "codeBoxToUse", "You should panic if you see this; it's an internal tool that insert/edit are transformed into, and you shouldn't call it directly.")
 toolArgFormatAndDesc ToolOpenFile = (toJ OpenFileArg {fileName = "someFile.txt"}, "", "Load a file into the context")
 toolArgFormatAndDesc ToolCloseFile = (toJ CloseFileArg {fileName = "someFile.txt"}, "", "Remove a file from the context")
-toolArgFormatAndDesc ToolAppendFile = (toJ AppendFileArg {fileName = "somefile.txt", rawTextName = "codeToAppendBox"}, mkSampleCodeBox "codeToAppendBox", "Append code/text to a file. Can be used to create a new file.")
+toolArgFormatAndDesc ToolAppendFile = (toJ AppendFileArg {fileName = "somefile.txt", rawTextName = "codeToAppendBox"}, mkSampleCodeBox "codeToAppendBox", "Append code/text to the bottom of a file. Can be used to create a new file if the file exists.")
 toolArgFormatAndDesc ToolReplaceFile = (toJ AppendFileArg {fileName = "somefile.txt", rawTextName = "codeToReplaceBox"}, mkSampleCodeBox "codeToReplaceBox", "Replace a file with the provided code/text to a file. Can be used to create a new file. Prefer this over editing when the file is small.")
 toolArgFormatAndDesc ToolEditFile = (toJ EditFileArg {fileName = "somefile.txt", startLineNum = 5, endLineNum = 10, rawTextName = "codeBoxToReplaceWith"}, mkSampleCodeBox "codeBoxToReplaceWith", "Replace text in [startLineNum, endLineNum] with the text you provide. Note if making multiple edits to the same file, the start/end line numbers of different edits cannot overlap. IMPORTANT: if you insert more lines than you're replacing, the rest will be inserted, not replaced. So inserting 2 lines at at startLineNum=15 endLineNum=15 will only replace the existing line 15 in the file, and add the second provided line after that, it won't replace lines 15 and 16. Note too that the line-numbers are provided to you at the START of the line in every file. Remember line numbers start at zero.")
 toolArgFormatAndDesc ToolInsertInFile = (toJ InsertInFileArg {fileName = "somefile.txt", lineNum = 17, rawTextName = "codeToInsertBox"}, mkSampleCodeBox "codeToInsertBox", "Insert the provided text into the file at lineNum, not replacing/overwriting the content on that line (instead it's moved to below the inserted text).")
@@ -551,7 +551,6 @@ extractFnCalls fullText fnName =
 --    just yields an empty list for that tool, which we omit in the final result.
 --------------------------------------------------------------------------------
 
-
 findToolsCalled :: Text -> [Tool] -> Either Text [(Tool, [AET.Object])]
 findToolsCalled txt tools =
   let -- For each tool, try extracting all JSON objects
@@ -703,12 +702,14 @@ considerBuildAndTest fileName = do
     True -> do
       timeIONano64M (BS.buildProject @a cfg) >>= \case
         (Just err, compileNanos) -> do
+          liftIO $ Logging.logInfo "ConsiderBuildAndTest" $ "Compilation/tests failed: " <> err
           liftIO $ putTextLn $ "Compilation failed: " <> err
           modify' $ updateLastCompileState (Just err)
           modify' $ updateStateMetrics (mempty {metricsNumCompileFails = 1, metricsCompileTime = compileNanos})
           FS.reloadOpenFiles
           return $ Just (CompileFailMsg, err)
         (Nothing, compileNanos) -> do
+          liftIO $ Logging.logInfo "ConsiderBuildAndTest" "Compilation and tests succeeded."
           modify' $ updateLastCompileState Nothing
           (result, testNanos) <- timeIONano64M $ BS.testProject @a cfg
           ignoredDirs <- BS.getIgnoredDirs @a
@@ -745,12 +746,25 @@ handleFileOperation fileName ioAction requiresOpenFile errorPrefix successMsg ct
       if alreadyOpen || requiresOpenFile == RequiresOpenFileFalse
         then do
           checker <- BS.getFormatChecker @a cfg
-          let op = FS.tryFileOp filePath ioAction checker
+          let checker' :: AppM (Maybe Text)
+              checker' = do
+                checkRes <- liftIO checker
+                case checkRes of
+                  Nothing -> do
+                    modify' onSyntaxCheckPass
+                    pure Nothing
+                  Just err -> do
+                    modify' onSyntaxCheckFail
+                    pure $ Just err
+              -- op = FS.tryFileOp filePath ioAction checker'
+              op = liftIO $ ioAction filePath
               onErr :: Text -> AppM Context
               onErr err = do
+                liftIO $ Logging.logInfo "FileOperation" "File operation failed."
                 updateFileIfExistsOnDisk fileName cfg
                 pure $ mkError ctxt OtherMsg err
-          res <- liftIO op
+          res <- op
+          -- res <- liftIO $ ioAction filePath
           either onErr (const $ onSuccess cfg ctxt) res
         else pure $ mkError ctxt OtherMsg (errorPrefix <> fileName)
   where

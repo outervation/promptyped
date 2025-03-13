@@ -112,15 +112,15 @@ topologicalSortThingsWithDependencies existingFiles (ThingsWithDependencies file
 validatePropertyOfThingsWithDependencies :: ThingsWithDependencies -> (ThingWithDependencies -> Maybe Text) -> Either (MsgKind, Text) ThingsWithDependencies
 validatePropertyOfThingsWithDependencies (ThingsWithDependencies things) validator =
   case catMaybes (map validator things) of
-        [] -> Right $ ThingsWithDependencies things
-        errors -> Left (OtherMsg, (T.intercalate ", " errors))
+    [] -> Right $ ThingsWithDependencies things
+    errors -> Left (OtherMsg, T.intercalate ", " errors)
 
 validatePathNotNested :: ThingWithDependencies -> Maybe Text
 validatePathNotNested thing =
   if T.isInfixOf "/" thing.name
-  then Just $ "Error; nested paths are not allowed, but " <> thing.name <> " is a nested path."
-  else Nothing
-                                   
+    then Just $ "Error; nested paths are not allowed, but " <> thing.name <> " is a nested path."
+    else Nothing
+
 validateThingsWithDependencies :: ThingsWithDependencies -> AppM (Either (MsgKind, Text) [ThingWithDependencies])
 validateThingsWithDependencies pf = do
   st <- get
@@ -263,7 +263,7 @@ makeUnitTestsInner background fileName makeTestPrompt = do
               ]
           }
   let runner fileName' = Engine.runAiFunc @bs (makeCtxt $ makeTestPrompt fileName') MediumIntelligenceRequired allTools exampleUnitTests validateUnitTests (configTaskMaxFailures cfg)
-  planRes <- memoise (configCacheDir cfg) "test_planner" fileName show runner
+  planRes <- memoise (configCacheDir cfg) "test_planner" fileName id runner
   let testFileName = unitTestFileName planRes
   Tools.openFile testFileName cfg
   let exampleUnitTestDone = UnitTestDone True
@@ -308,8 +308,11 @@ makeFile background pf = do
     forM_ createdFiles $ \x -> modify' $ updateFileDesc (createdFileName x) (createdFileSummary x)
     makeUnitTests @bs background pf
 
-makeRefactorFileTask :: forall bs. (BS.BuildSystem bs) => Text -> [ExistingFile] -> Text -> [ThingWithDependencies] -> AppM ()
-makeRefactorFileTask background initialDeps fileName desiredChanges = do
+data AutoRefactorUnitTests = DoAutoRefactorUnitTests | DontAutoRefactorUnitTests
+  deriving (Eq, Ord, Show)
+
+makeRefactorFileTask :: forall bs. (BS.BuildSystem bs) => Text -> [ExistingFile] -> Text -> [ThingWithDependencies] -> AutoRefactorUnitTests -> AppM ()
+makeRefactorFileTask background initialDeps fileName desiredChanges refactorUnitTests = do
   cfg <- ask
   modify' clearOpenFiles
   -- Note: file opened first will appear last (most recent)
@@ -324,14 +327,16 @@ makeRefactorFileTask background initialDeps fileName desiredChanges = do
                 }
             exampleChange = ModifiedFile "someFile.go" "Update the file to add ... so that it ..."
         Engine.runAiFunc @bs ctxt MediumIntelligenceRequired allTools exampleChange validateAlwaysPass (configTaskMaxFailures cfg)
-  forM_ desiredChanges $ \x -> do
+  modifications <- forM desiredChanges $ \x -> do
     modification <- memoise (configCacheDir cfg) ("file_modifier_" <> fileName) x (\desc -> desc.name) makeChange
-    let modificationText = "Intended modification: " <> x.summary <> ", with model describing what it did as " <> show modification <> "."
-    makeUnitTestsInner @bs background fileName $ makeUnitTestsForSpecificChangePrompt modificationText
+    return $ "Intended modification: " <> x.summary <> ", with model describing what it did as " <> show modification <> "."
+  let modificationsTxt = "The model made the following changes: \n" <> T.unlines modifications
+  when (refactorUnitTests == DoAutoRefactorUnitTests)
+    $ makeUnitTestsInner @bs background fileName
+    $ makeUnitTestsForSpecificChangePrompt modificationsTxt
 
 makeRefactorFilesProject :: forall bs. (BS.BuildSystem bs) => AppM ()
 makeRefactorFilesProject = do
-  st <- get
   cfg <- ask
   ignoredDirs <- BS.getIgnoredDirs @bs
   let docFileName = "binanceApiDetails_CoinMFutures.txt"
@@ -345,6 +350,7 @@ makeRefactorFilesProject = do
         forM_ [fileName, journalFileName, docFileName] $ \x -> Tools.openFile x cfg
   existingFileNames <- liftIO $ FS.getFileNamesRecursive ignoredDirs cfg.configBaseDir
   modify' (updateExistingFiles existingFileNames)
+  st <- get
   sourceFileNames <- filterM (BS.isBuildableFile @bs) $ map existingFileName st.stateFiles
   let task =
         "YOUR OBJECTIVE is to refactor the project to add support for Binance CoinM futures market data (it currently only supports Binance spot), as described in binanceApiDetails_CoinMFutures.txt."
@@ -427,7 +433,7 @@ makeRefactorFilesProject = do
   let makeFileBackground = background <> "\n You are currently working on adding some extra files that are necessary as part of the refactoring."
   forM_ extraFilesNeeded (makeFile @bs makeFileBackground)
   let docDeps = [ExistingFile docFileName ""]
-  forM_ plannedTasksRefined.filesProposedChanges $ \x -> makeRefactorFileTask @bs background docDeps x.fileName x.proposedChanges
+  forM_ plannedTasksRefined.filesProposedChanges $ \x -> makeRefactorFileTask @bs background docDeps x.fileName x.proposedChanges DoAutoRefactorUnitTests
 
 makeCreateFilesProject :: forall bs. (BS.BuildSystem bs) => AppM ()
 makeCreateFilesProject = do
@@ -466,3 +472,131 @@ makeCreateFilesProject = do
       runner () = Engine.runAiFunc @bs ctxt HighIntelligenceRequired readOnlyTools examplePlannedFiles validateFileNamesNoNestedPaths (configTaskMaxFailures cfg)
   plannedFiles <- memoise (configCacheDir cfg) "file_planner" () (const "") runner
   forM_ plannedFiles (makeFile @bs ctxt.contextBackground)
+
+data TargetedRefactorConfigItem = TargetedRefactorConfigItem
+  { refactorFile :: Text,
+    refactorTask :: Text,
+    refactorFileDependencies :: [Text],
+    refactorUpdateTests :: Bool
+  }
+  deriving (Generic, Eq, Ord, Show)
+
+instance ToJSON TargetedRefactorConfigItem
+
+instance FromJSON TargetedRefactorConfigItem
+
+data TargetedRefactorConfig = TargetedRefactorConfig
+  { refactorSummary :: Text,
+    refactorFileTasks :: [TargetedRefactorConfigItem]
+  }
+  deriving (Generic, Eq, Ord, Show)
+
+instance ToJSON TargetedRefactorConfig
+
+instance FromJSON TargetedRefactorConfig
+
+makeTargetedRefactorProject :: forall bs. (BS.BuildSystem bs) => TargetedRefactorConfig -> AppM ()
+makeTargetedRefactorProject refactorCfg = do
+  cfg <- ask
+  ignoredDirs <- BS.getIgnoredDirs @bs
+  existingFileNames <- liftIO $ FS.getFileNamesRecursive ignoredDirs cfg.configBaseDir
+  modify' (updateExistingFiles existingFileNames)
+  let setupOpenFiles fileNames = do
+        modify' clearOpenFiles
+        forM_ (fileNames ++ [journalFileName]) $ \x -> Tools.openFile x cfg
+  st <- get
+  let summary = refactorCfg.refactorSummary
+      doRefactor :: TargetedRefactorConfigItem -> AppM ()
+      doRefactor rCfg = do
+        unless (fileExists rCfg.refactorFile st) $ throwError $ "Trying to refactor file that doesn't exist: " <> rCfg.refactorFile
+        let background = projectSummary (T.pack cfg.configBaseDir) <> "\n" <> summary
+            exampleTasks =
+              ThingsWithDependencies
+                $ [ ThingWithDependencies "addNewClassX" "Class X, which does ..., must be added to support ..." [],
+                    ThingWithDependencies "addNewFuncY" "Function Y, which does ..., must be added to support ..." ["addNewClassX"]
+                  ]
+            relFiles = rCfg.refactorFile : rCfg.refactorFileDependencies
+            autoRefactorUnitTests = if rCfg.refactorUpdateTests then DoAutoRefactorUnitTests else DontAutoRefactorUnitTests
+            mkCtxt fileName =
+              Context
+                { contextBackground = background,
+                  contextTask =
+                    "Please return a list of tasks that must be done to refactor "
+                      <> fileName
+                      <> " to achieve the objective: "
+                      <> rCfg.refactorTask
+                      <> "."
+                      <> "Each task should list other task dependencies if any, and there should be no circular dependencies."
+                      <> "If there's something relevant for later that you can't encode well in the return value, please AppendFile=<[{\"fileName\": \"journal.txt\", \"rawTextName\": \"journalUpdateTextBoxName\"}]> it to the journal.",
+                  contextRest = []
+                }
+            taskBackground = background <> "\nYour task for this file is: " <> rCfg.refactorTask
+            getChangesTask fileName = Engine.runAiFunc @bs (mkCtxt fileName) HighIntelligenceRequired (Tools.ToolAppendFile : readOnlyTools) exampleTasks validateThingsWithDependencies (configTaskMaxFailures cfg)
+        setupOpenFiles relFiles
+        plannedTasks <- memoise (configCacheDir cfg) "file_tasks" rCfg.refactorFile id getChangesTask
+        case getExistingFiles rCfg.refactorFileDependencies st of
+          Left err -> throwError $ "Dependency listed for " <> rCfg.refactorFile <> " does not exist: " <> err
+          Right deps -> makeRefactorFileTask @bs taskBackground deps rCfg.refactorFile plannedTasks autoRefactorUnitTests
+  forM_ refactorCfg.refactorFileTasks doRefactor
+
+data FileAnalysisResult = FileAnalysisResult
+  { waysItDoesntMeetSpec :: Text,
+    overallContentSummary :: Text
+  }
+  deriving (Generic, Eq, Ord, Show)
+
+renderFileAnalysisResult :: FileAnalysisResult -> Text
+renderFileAnalysisResult (FileAnalysisResult spec overall) = "FileAnalysisResult{\n waysItDoesntMeetSpec: " <> spec <> "\n,\n overallContentSummary: " <> overall <> "\n}"
+
+instance ToJSON FileAnalysisResult
+
+instance FromJSON FileAnalysisResult
+
+makeFileAnalysisProject :: forall bs. (BS.BuildSystem bs) => AppM ()
+makeFileAnalysisProject = do
+  cfg <- ask
+  ignoredDirs <- BS.getIgnoredDirs @bs
+  existingFileNames <- liftIO $ FS.getFileNamesRecursive ignoredDirs cfg.configBaseDir
+  modify' (updateExistingFiles existingFileNames)
+  st <- get
+  sourceFileNames <- filterM (BS.isBuildableFile @bs) $ map existingFileName st.stateFiles
+  let background = projectSummary (T.pack cfg.configBaseDir)
+      setupOpenFile fileName = do
+        modify' clearOpenFiles
+        Tools.openFile fileName cfg
+      getSummary :: Text -> AppM (Text, FileAnalysisResult)
+      getSummary fileName = do
+        let mkCtxt name =
+              Context
+                { contextBackground = background,
+                  contextTask =
+                    "Please check if "
+                      <> name
+                      <> " matches the specification, and return any ways it fails to satisfy it. Please also return detailed notes on its behaviour, for reference when checking other files.",
+                  contextRest = []
+                }
+            exampleRes = FileAnalysisResult (fileName <> "doesn't meet the spec completely because it's supposed to ..., but it doesn't, and ...") "The file fulfills the following spec-relevant behaviours:"
+            getChangesTask name = Engine.runAiFunc @bs (mkCtxt name) MediumIntelligenceRequired readOnlyTools exampleRes validateAlwaysPass (configTaskMaxFailures cfg)
+        setupOpenFile fileName
+        fileRes <- memoise (configCacheDir cfg) "file_analysis" fileName id getChangesTask
+        return (fileName, fileRes)
+  summaries <- forM sourceFileNames getSummary
+  let summariesCat = T.unlines $ map (\(name, res) -> name <> ":\n" <> renderFileAnalysisResult res) summaries
+      combinedSummaryCtxt =
+        Context
+          { contextBackground = background,
+            contextTask = "You previously analysed files in the project to identify any way they failed to match the spec. Now, based on the result of your analysis (which was per-file), can you see any other ways in which overall the project fails to match the spec? The analysis was:\n" <> summariesCat,
+            contextRest = []
+          }
+      exampleCombinedRes = ThingWithDescription "Overall the project doesn't have any files that fulfil the ... requirement completely because ..."
+      getCombinedSummary () = Engine.runAiFunc @bs combinedSummaryCtxt HighIntelligenceRequired readOnlyTools exampleCombinedRes validateAlwaysPass (configTaskMaxFailures cfg)
+  modify' clearOpenFiles
+  combinedSummary <- memoise (configCacheDir cfg) "file_analysis_combined" () show getCombinedSummary
+  let summaryFileName = "specComplianceSummary.txt"
+      summaryFilePath = FS.toFilePath cfg summaryFileName
+      finalResult = summariesCat <> "\n" <> combinedSummary.description
+  liftIO $ FS.clearFileOnDisk summaryFilePath
+  writeRes <- liftIO $ FS.appendToFile summaryFilePath finalResult
+  case writeRes of
+    Left err -> throwError $ "Failed to write to " <> T.pack summaryFilePath <> " due to " <> err <> " with text: \n" <> finalResult
+    Right () -> putTextLn $ "Wrote result to " <> T.pack summaryFilePath

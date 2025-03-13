@@ -3,6 +3,7 @@
 module Core where
 
 import Control.Exception (throw)
+import Control.Monad.Catch (MonadCatch, MonadMask, MonadThrow)
 import Control.Monad.Except
 import Data.Aeson
 import Data.Group (Group, invert)
@@ -54,6 +55,22 @@ fileAlreadyOpen name theState =
 addExistingFile :: Text -> Text -> AppState -> AppState
 addExistingFile name desc theState =
   theState {stateFiles = ExistingFile name desc : stateFiles theState}
+
+getExistingFiles :: [Text] -> AppState -> Either Text [ExistingFile]
+getExistingFiles filesToGet st =
+  case errors of
+    (err : _) -> Left err
+    [] -> Right matches
+  where
+    existing = stateFiles st
+    lookupFile name =
+      case filter (\file -> existingFileName file == name) existing of
+        [] -> Left $ "Error, file does not exist: " <> name
+        (m : _) -> Right m
+
+    results = map lookupFile filesToGet
+    errors = lefts results
+    matches = rights results
 
 addOpenFile :: Text -> Text -> AppState -> AppState
 addOpenFile name contents theState =
@@ -136,9 +153,10 @@ isFileForbidden cfg name = do
   let match = filter (\x -> forbiddenFileName x == name) (configForbiddenFiles cfg)
   case match of
     (x : _) -> Just $ "File " <> name <> " is forbidden to modify because: " <> forbiddenFileReason x
-    [] -> if T.isInfixOf "/" name
-      then Just $ "Filename " <> name <> " is forbidden because it contains '/'; no nested paths are allowed!"
-      else Nothing
+    [] ->
+      if T.isInfixOf "/" name
+        then Just $ "Filename " <> name <> " is forbidden because it contains '/'; no nested paths are allowed!"
+        else Nothing
 
 -- Metrics type for tracking
 data Metrics = Metrics
@@ -189,7 +207,7 @@ instance Group Metrics where
         metricsNumTestFails = -test
       }
 
-data CompileTestState = CompileTestState {compileRes :: Maybe Text, testRes :: Maybe Text}
+data CompileTestState = CompileTestState {compileRes :: Maybe Text, testRes :: Maybe Text, numConsecutiveSyntaxCheckFails :: Int}
   deriving (Generic, Eq, Ord, Show)
 
 instance FromJSON CompileTestState
@@ -215,6 +233,14 @@ updateLastTestState :: Maybe Text -> AppState -> AppState
 updateLastTestState res st =
   st {stateCompileTestRes = (stateCompileTestRes st) {testRes = res}}
 
+onSyntaxCheckFail :: AppState -> AppState
+onSyntaxCheckFail st =
+  st {stateCompileTestRes = (stateCompileTestRes st) {numConsecutiveSyntaxCheckFails = numConsecutiveSyntaxCheckFails (stateCompileTestRes st) + 1}}
+
+onSyntaxCheckPass :: AppState -> AppState
+onSyntaxCheckPass st =
+  st {stateCompileTestRes = (stateCompileTestRes st) {numConsecutiveSyntaxCheckFails = 0}}
+
 resetCompileTestState :: AppM ()
 resetCompileTestState = do
   modify' $ updateLastCompileState Nothing
@@ -235,7 +261,10 @@ newtype AppM a = AppM
       MonadReader Config,
       MonadState AppState,
       MonadError AppError,
-      MonadIO
+      MonadIO,
+      MonadThrow,
+      MonadCatch,
+      MonadMask
     )
 
 getEnvVars :: AppM [(String, String)]

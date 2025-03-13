@@ -3,6 +3,7 @@
 module BinanceApiDataRecorder where
 
 import AppConfig
+import Control.Monad.Except
 import Core
 import Data.Text qualified as T
 import GoLang (GoLang)
@@ -37,7 +38,7 @@ makeGoBinanceApiDataRecorder aCfg = do
             configModelTemperature = modelTemperature aCfg,
             configModelMaxInputTokens = modelMaxInputTokens aCfg
           }
-  let initialState = AppState mempty [] [] (CompileTestState Nothing Nothing)
+  let initialState = AppState mempty [] [] (CompileTestState Nothing Nothing 0)
       logDir = T.unpack $ logFileDir aCfg
       logPath = logDir FP.</> "promptyped_binapi_downloader.log"
       debugLogPath = logDir FP.</> "promptyped_binapi_downloader.debug.log"
@@ -47,6 +48,10 @@ makeGoBinanceApiDataRecorder aCfg = do
   let projectFn = case (projectKind aCfg) of
         CreateProject -> makeCreateFilesProject @GoLang
         RefactorProject -> makeRefactorFilesProject @GoLang
+        FileAnalysisProject -> makeFileAnalysisProject @GoLang
+        TargetedRefactorProject -> case targetedRefactorCfg aCfg of
+          Just refactorCfg -> makeTargetedRefactorProject @GoLang refactorCfg
+          Nothing -> throwError $ "Missing targeted refactor config!"
   res <- runApp cfg initialState projectFn
   case res of
     Left err -> putTextLn $ "Process ended with error: " <> show err
