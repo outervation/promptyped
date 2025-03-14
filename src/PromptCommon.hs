@@ -23,6 +23,15 @@ import Tools qualified
 journalFileName :: Text
 journalFileName = "journal.txt"
 
+data ProjectTexts = ProjectTexts {
+  projectSummaryText :: Text
+  }
+  deriving (Generic, Eq, Ord, Show)
+
+instance ToJSON ProjectTexts
+
+instance FromJSON ProjectTexts
+
 data ThingWithDependencies = ThingWithDependencies
   { name :: Text,
     summary :: Text,
@@ -340,17 +349,12 @@ makeRefactorFileTask background initialDeps fileName desiredChanges refactorUnit
     $ makeUnitTestsInner @bs background fileName
     $ makeUnitTestsForSpecificChangePrompt modificationsTxt
 
-makeRefactorFilesProject :: forall bs. (BS.BuildSystem bs) => AppM ()
-makeRefactorFilesProject = do
+makeRefactorFilesProject :: forall bs. (BS.BuildSystem bs) => ProjectTexts -> AppM ()
+makeRefactorFilesProject projectTexts = do
   cfg <- ask
   ignoredDirs <- BS.getIgnoredDirs @bs
   let docFileName = "binanceApiDetails_CoinMFutures.txt"
-      docFilePath = FS.toFilePath cfg docFileName
-  docAlreadyExists <- liftIO $ FS.fileExistsOnDisk docFilePath
-  unless docAlreadyExists $ do
-    createDocRes <- liftIO $ FS.appendToFile docFilePath binanceFuturesApiDoc
-    when (isLeft createDocRes) $ throwError $ "Error creating docs: " <> show createDocRes
-  let setupOpenFiles fileName = do
+      setupOpenFiles fileName = do
         modify' clearOpenFiles
         forM_ [fileName, journalFileName, docFileName] $ \x -> Tools.openFile x cfg
   existingFileNames <- liftIO $ FS.getFileNamesRecursive ignoredDirs cfg.configBaseDir
@@ -365,7 +369,7 @@ makeRefactorFilesProject = do
           <> "You need to support aggregate trade streams, individual symbol book ticker streams, partial book depth streams, diff book depth streams, and mark price streams. Remember to implement logic so the data can be used for managing a local orderbook correctly, as already done for Binance Spot; how to do this is described in the doc."
       objectiveShortName = "Add support for Binance CoinM futures"
       refactorBackground = makeRefactorBackgroundPrompt task
-      background = projectSummary (T.pack cfg.configBaseDir) <> "\n" <> refactorBackground
+      background = projectTexts.projectSummaryText <> "\n" <> refactorBackground
       exampleThingsWithDependencies =
         [ ThingWithDependencies "addNewClassX" "Class X, which does ..., must be added to support ..." [],
           ThingWithDependencies "addNewFuncY" "Function Y, which does ..., must be added to support ..." ["addNewClassX"]
@@ -440,16 +444,16 @@ makeRefactorFilesProject = do
   let docDeps = [ExistingFile docFileName ""]
   forM_ plannedTasksRefined.filesProposedChanges $ \x -> makeRefactorFileTask @bs background docDeps x.fileName x.proposedChanges DoAutoRefactorUnitTests
 
-makeCreateFilesProject :: forall bs. (BS.BuildSystem bs) => AppM ()
-makeCreateFilesProject = do
+makeCreateFilesProject :: forall bs. (BS.BuildSystem bs) => ProjectTexts -> ProjectConfig -> AppM ()
+makeCreateFilesProject projectTexts projectCfg = do
   cfg <- ask
   liftIO $ DIR.createDirectoryIfMissing True cfg.configBaseDir
-  setupRes <- BS.setupProject @bs cfg
+  setupRes <- BS.setupProject @bs cfg projectCfg
   when (isJust setupRes) $ throwError $ "Error setting up base project dir: " <> show setupRes
   ignoredDirs <- BS.getIgnoredDirs @bs
   existingFileNames <- liftIO $ FS.getFileNamesRecursive ignoredDirs cfg.configBaseDir
   modify' (updateExistingFiles existingFileNames)
-  let background = projectSummary (T.pack cfg.configBaseDir)
+  let background = projectTexts.projectSummaryText
       archPrompt = makeArchitectureDesignPrompt
       archCtxt =
         Context
@@ -500,8 +504,8 @@ instance ToJSON TargetedRefactorConfig
 
 instance FromJSON TargetedRefactorConfig
 
-makeTargetedRefactorProject :: forall bs. (BS.BuildSystem bs) => TargetedRefactorConfig -> AppM ()
-makeTargetedRefactorProject refactorCfg = do
+makeTargetedRefactorProject :: forall bs. (BS.BuildSystem bs) =>  ProjectTexts -> TargetedRefactorConfig -> AppM ()
+makeTargetedRefactorProject projectTexts refactorCfg = do
   cfg <- ask
   ignoredDirs <- BS.getIgnoredDirs @bs
   existingFileNames <- liftIO $ FS.getFileNamesRecursive ignoredDirs cfg.configBaseDir
@@ -514,7 +518,7 @@ makeTargetedRefactorProject refactorCfg = do
       doRefactor :: TargetedRefactorConfigItem -> AppM ()
       doRefactor rCfg = do
         unless (fileExists rCfg.refactorFile st) $ throwError $ "Trying to refactor file that doesn't exist: " <> rCfg.refactorFile
-        let background = projectSummary (T.pack cfg.configBaseDir) <> "\n" <> summary
+        let background = projectTexts.projectSummaryText <> "\n" <> summary
             exampleTasks =
               ThingsWithDependencies
                 $ [ ThingWithDependencies "addNewClassX" "Class X, which does ..., must be added to support ..." [],
@@ -557,15 +561,15 @@ instance ToJSON FileAnalysisResult
 
 instance FromJSON FileAnalysisResult
 
-makeFileAnalysisProject :: forall bs. (BS.BuildSystem bs) => AppM ()
-makeFileAnalysisProject = do
+makeFileAnalysisProject :: forall bs. (BS.BuildSystem bs) => ProjectTexts -> AppM ()
+makeFileAnalysisProject projectTexts = do
   cfg <- ask
   ignoredDirs <- BS.getIgnoredDirs @bs
   existingFileNames <- liftIO $ FS.getFileNamesRecursive ignoredDirs cfg.configBaseDir
   modify' (updateExistingFiles existingFileNames)
   st <- get
   sourceFileNames <- filterM (BS.isBuildableFile @bs) $ map existingFileName st.stateFiles
-  let background = projectSummary (T.pack cfg.configBaseDir)
+  let background = projectTexts.projectSummaryText
       setupOpenFile fileName = do
         modify' clearOpenFiles
         Tools.openFile fileName cfg

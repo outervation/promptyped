@@ -454,11 +454,6 @@ getGenerationStats apiSite apiKey generationId = do
   let (_, genClient) = getClients apiSite
   runClientM (genClient (Just generationId) (Just auth)) clientEnv
 
-extractResult :: ChatResponse -> GenerationStats -> Either Text QueryResult
-extractResult resp stats = case choices resp of
-  (x : _) -> Right $ QueryResult x.message resp.usage stats
-  [] -> Left "OpenRouter query returned no message!"
-
 data ShouldLog = ShouldLog | ShouldNotLog
   deriving (Eq, Ord, Show)
 

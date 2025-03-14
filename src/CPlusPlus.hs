@@ -10,7 +10,6 @@ import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
 import Data.Time.Clock (NominalDiffTime, secondsToNominalDiffTime)
 import FileSystem (runProcessWithTimeout)
-import PromptTexts (binanceApiDoc)
 import Relude
 import System.Directory qualified as Dir
 import System.Exit qualified as Exit
@@ -42,8 +41,8 @@ setupDirectoryCpp dir = do
             ("spdlogDocSummary.txt", spdlogDoc),
             ("libwebsocketsDocSummary.txt", libwebsocketsDoc),
             ("cppHttplibDocSummary.txt", cppHttplibDoc),
-            ("doctestDocSummary.txt", doctestDoc),
-            ("binanceApiDetails.txt", binanceApiDoc)
+            ("doctestDocSummary.txt", doctestDoc)
+--            ("binanceApiDetails.txt", binanceApiDoc) TODO: take these in as a param instead
           ]
     forM_ docs (\(name, doc) -> TIO.writeFile (dir FP.</> name) doc)
 
@@ -163,7 +162,7 @@ instance BuildSystem CPlusPlusLang where
     let timeout = secondsToNominalDiffTime . fromIntegral $ configBuildTimeoutSeconds cfg
     liftIO $ runTestsCpp timeout baseDir envVars
 
-  setupProject cfg = liftIO $ setupDirectoryCpp $ configBaseDir cfg
+  setupProject cfg projectCfg = liftIO $ setupDirectoryCpp $ configBaseDir cfg
 
   isBuildableFile fileName = pure $ isCPlusPlusFileExtension fileName
 

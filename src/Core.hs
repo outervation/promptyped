@@ -140,6 +140,11 @@ data Config = Config
   }
   deriving (Eq, Ord, Show)
 
+data ProjectConfig = ProjectConfig {
+  projectDependencyNames :: [Text],
+  projectInitialFiles :: [(FilePath, Text)]
+  } deriving (Eq, Ord, Show)
+
 data IntelligenceRequired = HighIntelligenceRequired | MediumIntelligenceRequired | LowIntelligenceRequired
   deriving (Eq, Ord, Show)
 

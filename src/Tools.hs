@@ -703,7 +703,7 @@ considerBuildAndTest fileName = do
       timeIONano64M (BS.buildProject @a cfg) >>= \case
         (Just err, compileNanos) -> do
           liftIO $ Logging.logInfo "ConsiderBuildAndTest" $ "Compilation/tests failed: " <> err
-          liftIO $ putTextLn $ "Compilation failed: " <> err
+          --liftIO $ putTextLn $ "Compilation failed: " <> err
           modify' $ updateLastCompileState (Just err)
           modify' $ updateStateMetrics (mempty {metricsNumCompileFails = 1, metricsCompileTime = compileNanos})
           FS.reloadOpenFiles
@@ -756,15 +756,14 @@ handleFileOperation fileName ioAction requiresOpenFile errorPrefix successMsg ct
                   Just err -> do
                     modify' onSyntaxCheckFail
                     pure $ Just err
-              -- op = FS.tryFileOp filePath ioAction checker'
-              op = liftIO $ ioAction filePath
+              op = FS.tryFileOp filePath ioAction checker'
+              -- op = liftIO $ ioAction filePath
               onErr :: Text -> AppM Context
               onErr err = do
                 liftIO $ Logging.logInfo "FileOperation" "File operation failed."
                 updateFileIfExistsOnDisk fileName cfg
                 pure $ mkError ctxt OtherMsg err
           res <- op
-          -- res <- liftIO $ ioAction filePath
           either onErr (const $ onSuccess cfg ctxt) res
         else pure $ mkError ctxt OtherMsg (errorPrefix <> fileName)
   where
