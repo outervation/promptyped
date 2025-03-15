@@ -23,8 +23,8 @@ import Tools qualified
 journalFileName :: Text
 journalFileName = "journal.txt"
 
-data ProjectTexts = ProjectTexts {
-  projectSummaryText :: Text
+data ProjectTexts = ProjectTexts
+  { projectSummaryText :: Text
   }
   deriving (Generic, Eq, Ord, Show)
 
@@ -504,7 +504,7 @@ instance ToJSON TargetedRefactorConfig
 
 instance FromJSON TargetedRefactorConfig
 
-makeTargetedRefactorProject :: forall bs. (BS.BuildSystem bs) =>  ProjectTexts -> TargetedRefactorConfig -> AppM ()
+makeTargetedRefactorProject :: forall bs. (BS.BuildSystem bs) => ProjectTexts -> TargetedRefactorConfig -> AppM ()
 makeTargetedRefactorProject projectTexts refactorCfg = do
   cfg <- ask
   ignoredDirs <- BS.getIgnoredDirs @bs
@@ -609,3 +609,270 @@ makeFileAnalysisProject projectTexts = do
   case writeRes of
     Left err -> throwError $ "Failed to write to " <> T.pack summaryFilePath <> " due to " <> err <> " with text: \n" <> finalResult
     Right () -> putTextLn $ "Wrote result to " <> T.pack summaryFilePath
+
+data SpecSegmentPlan = SpecSegmentPlan
+  { segmentFileName :: Text,
+    segmentTitle :: Text,
+    startLineNum :: Int,
+    endLineNum :: Int
+  }
+  deriving (Generic, Eq, Ord, Show)
+
+instance ToJSON SpecSegmentPlan
+
+instance FromJSON SpecSegmentPlan
+
+data SpecSegmentPlans = SpecSegmentPlans
+  { segmentPlans :: [SpecSegmentPlan]
+  }
+  deriving (Generic, Eq, Ord, Show)
+
+instance ToJSON SpecSegmentPlans
+
+instance FromJSON SpecSegmentPlans
+
+validateSpecSegmentPlans ::
+  -- | docLength (total number of lines in the spec)
+  Int ->
+  -- | the proposed chunking plan
+  SpecSegmentPlans ->
+  AppM (Either (MsgKind, Text) SpecSegmentPlans)
+validateSpecSegmentPlans docLength ssp@(SpecSegmentPlans segments) = do
+  let errors = concatMap checkSegment segments <> checkNoOverlaps (sortOn (.startLineNum) segments)
+
+  if null errors
+    then pure $ Right ssp
+    else pure $ Left (OtherMsg, T.unlines errors)
+  where
+    -- \| Validate an individual segment
+    checkSegment :: SpecSegmentPlan -> [Text]
+    checkSegment SpecSegmentPlan {..} =
+      let errs =
+            [ "startLineNum must be >= 1, but got: " <> show startLineNum
+            | startLineNum < 1
+            ]
+              <> [ "endLineNum must be >= 1, but got: " <> show endLineNum
+                 | endLineNum < 1
+                 ]
+              <> [ "endLineNum (" <> show endLineNum <> ") cannot exceed docLength (" <> show docLength <> ")"
+                 | endLineNum > docLength
+                 ]
+              <> [ "startLineNum (" <> show startLineNum <> ") cannot exceed endLineNum (" <> show endLineNum <> ")"
+                 | startLineNum > endLineNum
+                 ]
+       in errs
+
+    -- \| Ensure no overlapping segments when sorted by startLineNum.
+    --   Because ranges are inclusive, we require that:
+    --      next.startLineNum > current.endLineNum
+    checkNoOverlaps :: [SpecSegmentPlan] -> [Text]
+    checkNoOverlaps [] = []
+    checkNoOverlaps [_] = []
+    checkNoOverlaps (x : y : rest) =
+      let e =
+            if y.startLineNum <= x.endLineNum
+              then
+                [ "Overlapping segments detected: ("
+                    <> x.segmentFileName
+                    <> " has range "
+                    <> show (x.startLineNum, x.endLineNum)
+                    <> ") overlaps with ("
+                    <> y.segmentFileName
+                    <> " has range "
+                    <> show (y.startLineNum, y.endLineNum)
+                    <> ")"
+                ]
+              else []
+       in e <> checkNoOverlaps (y : rest)
+
+--------------------------------------------------------------------------------
+
+makeCreateBasedOnSpecProject ::
+  forall bs.
+  (BS.BuildSystem bs) =>
+  ProjectTexts ->
+  -- | path or filename of the spec
+  Text ->
+  ProjectConfig ->
+  AppM ()
+makeCreateBasedOnSpecProject projectTexts specFileName projectCfg = do
+  cfg <- ask
+  liftIO $ DIR.createDirectoryIfMissing True (configBaseDir cfg)
+  setupRes <- BS.setupProject @bs cfg projectCfg
+  when (isJust setupRes)
+    $ throwError
+    $ "Error setting up base project dir: "
+    <> show setupRes
+
+  -- 1) Read entire spec
+  let specPathOnDisk = FS.toFilePath cfg specFileName
+  specExists <- liftIO $ FS.fileExistsOnDisk specPathOnDisk
+  unless specExists
+    $ throwError
+    $ "Spec file does not exist: "
+    <> T.pack specPathOnDisk
+
+  allSpecText <- liftIO $ FS.readFileToText specPathOnDisk
+  let allSpecLines = T.lines allSpecText
+
+  -- 2) Prompt for chunking plan
+  let lineCount = length allSpecLines
+      chunkCtxt =
+        Context
+          { contextBackground =
+              projectTexts.projectSummaryText,
+            contextTask =
+              "We have a specification in "
+                <> specFileName
+                <> " from lines 1.."
+                <> show lineCount
+                <> ". Please split it into multiple doc files, each covering a coherent subset. This allows the LLM to only load the relevant parts of the spec into context while working on each section.\n"
+                <> "For each doc file, return:\n"
+                <> "- segmentFileName\n"
+                <> "- segmentTitle\n"
+                <> "- startLineNum\n"
+                <> "- endLineNum\n\n"
+                <> "Return JSON describing the chunking plan for the spec.",
+            contextRest = []
+          }
+      exampleSegments =
+        SpecSegmentPlans
+          { segmentPlans =
+              [ SpecSegmentPlan "http_spec_part1.txt" "HTTP Request-Line and Headers" 1 100,
+                SpecSegmentPlan "http_spec_part2.txt" "HTTP Response Formats" 101 200
+              ]
+          }
+
+      -- If you want to allow journaling while chunking the spec,
+      -- you can add `Tools.ToolAppendFile` to readOnlyTools:
+      chunkingTools = Tools.ToolAppendFile : readOnlyTools
+
+      getSegmentPlans () =
+        Engine.runAiFunc @bs
+          chunkCtxt
+          HighIntelligenceRequired
+          chunkingTools
+          exampleSegments
+          (validateSpecSegmentPlans lineCount)
+          (configTaskMaxFailures cfg)
+
+  segmentPlansResult <- memoise (configCacheDir cfg) "split_spec_into_docs" () (const "") getSegmentPlans
+
+  -- 3) Write out doc files
+  forM_ (segmentPlansResult.segmentPlans) $ \SpecSegmentPlan {..} -> do
+    let docFileFp = FS.toFilePath cfg segmentFileName
+        startIdx = max 1 startLineNum
+        endIdx = min lineCount endLineNum
+    if startIdx <= endIdx
+      then do
+        let segmentText =
+              T.unlines
+                $ take (endIdx - startIdx + 1)
+                $ drop (startIdx - 1) allSpecLines
+        liftIO $ FS.clearFileOnDisk docFileFp
+        appendRes <- liftIO $ FS.appendToFile docFileFp segmentText
+        case appendRes of
+          Left err ->
+            throwError
+              $ "Error writing doc segment "
+              <> segmentFileName
+              <> ": "
+              <> err
+          Right () -> pure ()
+      else do
+        putTextLn
+          $ "Warning: Invalid line range for "
+          <> segmentFileName
+          <> " ("
+          <> show startLineNum
+          <> " to "
+          <> show endLineNum
+          <> ")"
+        liftIO $ FS.clearFileOnDisk docFileFp
+        appendRes <-
+          liftIO
+            $ FS.appendToFile docFileFp
+            $ "[No lines, invalid start/end range]\n"
+            <> segmentTitle
+        case appendRes of
+          Left err ->
+            throwError
+              $ "Error writing doc segment "
+              <> segmentFileName
+              <> ": "
+              <> err
+          Right () -> pure ()
+
+  -- 4) Gather doc files + existing files
+  ignoredDirs <- BS.getIgnoredDirs @bs
+  existingFileNames <- liftIO $ FS.getFileNamesRecursive ignoredDirs (configBaseDir cfg)
+  modify' (updateExistingFiles existingFileNames)
+
+  -- 5) Architecture design
+  let archPrompt = makeArchitectureDesignPrompt <> " Your architecture should ideally break it into relatively independent components corresponding to the different sub-sections of the spec to minimise the amount of spec that needs to be included in the context."
+      archCtxt =
+        Context
+          { contextBackground =
+              projectTexts.projectSummaryText
+                <> "\nWe have these doc files describing different parts of the spec:\n"
+                <> Tools.toJ (segmentPlansResult.segmentPlans),
+            contextTask = archPrompt,
+            contextRest = []
+          }
+      exampleArch =
+        ThingWithDescription
+          "Overall architecture referencing sub-spec doc files..."
+      archRunner () =
+        Engine.runAiFunc @bs
+          archCtxt
+          HighIntelligenceRequired
+          readOnlyTools
+          exampleArch
+          validateAlwaysPass
+          (configTaskMaxFailures cfg)
+
+  plannedArch <- memoise (configCacheDir cfg) "architecture" () (const "") archRunner
+
+  -- 6) Code file planning
+  let background =
+        projectTexts.projectSummaryText
+          <> "\nThe architecture will be as follows:\n"
+          <> plannedArch.description
+          <> "\nWe have these doc files for reference:\n"
+          <> Tools.toJ (segmentPlansResult.segmentPlans)
+
+      filePlanCtxt =
+        Context
+          { contextBackground = background,
+            contextTask = makeFilenamesPrompt,
+            contextRest = []
+          }
+      examplePlannedFiles =
+        ThingsWithDependencies
+          { items =
+              [ ThingWithDependencies
+                  "someFile.go"
+                  "Handles lines 1..100 from http_spec_part1.txt"
+                  ["http_spec_part1.txt"],
+                ThingWithDependencies
+                  "someOtherFile.go"
+                  "Handles lines 101..200 from http_spec_part2.txt"
+                  ["http_spec_part2.txt"]
+              ]
+          }
+
+      runner () =
+        Engine.runAiFunc @bs
+          filePlanCtxt
+          HighIntelligenceRequired
+          readOnlyTools
+          examplePlannedFiles
+          validateFileNamesNoNestedPaths
+          (configTaskMaxFailures cfg)
+
+  plannedFiles <- memoise (configCacheDir cfg) "file_planner" () (const "") runner
+
+  -- 7) Create each file
+  forM_ plannedFiles (makeFile @bs filePlanCtxt.contextBackground)
+
+  putTextLn "Finished creating project based on spec!"

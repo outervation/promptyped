@@ -62,6 +62,7 @@ executable promtyped
     other-modules:
         AppConfig
         BinanceApiDataRecorder
+        Http11Server
 
     default-language:   GHC2024
     default-extensions: NoImplicitPrelude

@@ -42,7 +42,7 @@ setupDirectoryCpp dir = do
             ("libwebsocketsDocSummary.txt", libwebsocketsDoc),
             ("cppHttplibDocSummary.txt", cppHttplibDoc),
             ("doctestDocSummary.txt", doctestDoc)
---            ("binanceApiDetails.txt", binanceApiDoc) TODO: take these in as a param instead
+            --            ("binanceApiDetails.txt", binanceApiDoc) TODO: take these in as a param instead
           ]
     forM_ docs (\(name, doc) -> TIO.writeFile (dir FP.</> name) doc)
 

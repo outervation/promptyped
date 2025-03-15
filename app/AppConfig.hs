@@ -1,5 +1,8 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module AppConfig where
 
+import Core
 import Data.Aeson
 import Data.ByteString.Lazy qualified as BS
 import Data.Text qualified as T
@@ -33,6 +36,31 @@ data AppConfig = AppConfig
     targetedRefactorCfg :: Maybe PC.TargetedRefactorConfig
   }
   deriving (Generic, Eq, Ord, Show)
+
+appConfigToConfig :: AppConfig -> Config
+appConfigToConfig aCfg =
+  let cannotModifyDepReason = "You should not need to import any extra external libraries for this project, the stdlib can do everything you need."
+   in Config
+        { configApiKey = apiKey aCfg,
+          configApiSite = apiSite aCfg,
+          configLowIntModel = lowIntModelName aCfg,
+          configMediumIntModel = mediumIntModelName aCfg,
+          configHighIntModel = highIntModelName aCfg,
+          configBaseDir = T.unpack $ baseDir aCfg,
+          configCacheDir = T.unpack $ cacheDir aCfg,
+          configBuildTimeoutSeconds = buildTimeoutSeconds aCfg,
+          configBuildNumJobs = buildNumJobs aCfg,
+          configGitUserName = gitUserName aCfg,
+          configGitUserEmail = gitUserEmail aCfg,
+          configEnvVars = [],
+          configTaskMaxFailures = RemainingFailureTolerance (taskMaxFailures aCfg),
+          configForbiddenFiles =
+            [ ForbiddenFile "go.mod" cannotModifyDepReason,
+              ForbiddenFile "go.sum" cannotModifyDepReason
+            ],
+          configModelTemperature = modelTemperature aCfg,
+          configModelMaxInputTokens = modelMaxInputTokens aCfg
+        }
 
 instance FromJSON AppConfig
 

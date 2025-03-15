@@ -8,57 +8,38 @@ import Control.Monad.Except
 import Core
 import Data.Text qualified as T
 import GoLang (GoLang)
-import Text.RawString.QQ (r)
-import PromptTexts qualified
 import Logging qualified
 import PromptCommon
+import PromptTexts qualified
 import Relude
 import System.FilePath qualified as FP
 import System.Log.Logger qualified as Logger
+import Text.RawString.QQ (r)
 
 makeGoBinanceApiDataRecorder :: AppConfig -> IO ()
 makeGoBinanceApiDataRecorder aCfg = do
-  let cannotModifyDepReason = "You should not need to import any extra external libraries for this project, the stdlib can do everything you need."
-  let cfg =
-        Config
-          { configApiKey = apiKey aCfg,
-            configApiSite = apiSite aCfg,
-            configLowIntModel = lowIntModelName aCfg,
-            configMediumIntModel = mediumIntModelName aCfg,
-            configHighIntModel = highIntModelName aCfg,
-            configBaseDir = T.unpack $ baseDir aCfg,
-            configCacheDir = T.unpack $ cacheDir aCfg,
-            configBuildTimeoutSeconds = buildTimeoutSeconds aCfg,
-            configBuildNumJobs = buildNumJobs aCfg,
-            configGitUserName = gitUserName aCfg,
-            configGitUserEmail = gitUserEmail aCfg,
-            configEnvVars = [],
-            configTaskMaxFailures = RemainingFailureTolerance (taskMaxFailures aCfg),
-            configForbiddenFiles =
-              [ ForbiddenFile "go.mod" cannotModifyDepReason,
-                ForbiddenFile "go.sum" cannotModifyDepReason
-              ],
-            configModelTemperature = modelTemperature aCfg,
-            configModelMaxInputTokens = modelMaxInputTokens aCfg
-          }
+  let cfg = appConfigToConfig aCfg
       dependencies =
-            [ "github.com/xitongsys/parquet-go",
-              "github.com/xitongsys/parquet-go-source",
-              "github.com/apache/thrift",
-              "github.com/gorilla/websocket",
-              "github.com/xitongsys/parquet-go/parquet",
-              "github.com/xitongsys/parquet-go/reader",
-              "github.com/xitongsys/parquet-go/writer"
-            ]
-      initialFiles =  [("binanceApiDetails.txt", binanceApiDoc),
-                       ("binanceApiDetails_CoinMFutures.txt", binanceFuturesApiDoc),
-                       ("parquet-go-readme.md", parquetDoc)]
-      projectCfg = ProjectConfig {
-        projectDependencyNames = dependencies,
-        projectInitialFiles  = initialFiles
-        } 
+        [ "github.com/xitongsys/parquet-go",
+          "github.com/xitongsys/parquet-go-source",
+          "github.com/apache/thrift",
+          "github.com/gorilla/websocket",
+          "github.com/xitongsys/parquet-go/parquet",
+          "github.com/xitongsys/parquet-go/reader",
+          "github.com/xitongsys/parquet-go/writer"
+        ]
+      initialFiles =
+        [ ("binanceApiDetails.txt", binanceApiDoc),
+          ("binanceApiDetails_CoinMFutures.txt", binanceFuturesApiDoc),
+          ("parquet-go-readme.md", parquetDoc)
+        ]
+      projectCfg =
+        ProjectConfig
+          { projectDependencyNames = dependencies,
+            projectInitialFiles = initialFiles
+          }
       backgroundTexts = projectSummary . T.pack $ configBaseDir cfg
-      projectTexts = ProjectTexts { projectSummaryText = backgroundTexts}
+      projectTexts = ProjectTexts {projectSummaryText = backgroundTexts}
       initialState = AppState mempty [] [] (CompileTestState Nothing Nothing 0)
       logDir = T.unpack $ logFileDir aCfg
       logPath = logDir FP.</> "promptyped_binapi_downloader.log"
@@ -66,9 +47,8 @@ makeGoBinanceApiDataRecorder aCfg = do
   Logging.initializeLogger logPath debugLogPath Logger.INFO
   liftIO $ Logging.logInfo "Initial config" (show cfg)
   liftIO $ Logging.logInfo "Initial state" (show initialState)
-  let
-    projectFn :: AppM ()
-    projectFn = case (projectKind aCfg) of
+  let projectFn :: AppM ()
+      projectFn = case (projectKind aCfg) of
         CreateProject -> makeCreateFilesProject @GoLang projectTexts projectCfg
         RefactorProject -> makeRefactorFilesProject @GoLang projectTexts
         FileAnalysisProject -> makeFileAnalysisProject @GoLang projectTexts
@@ -83,7 +63,6 @@ makeGoBinanceApiDataRecorder aCfg = do
       liftIO $ Logging.logInfo "Final state" (show $ stateMetrics finalState)
       liftIO . putTextLn . show $ cfg
       liftIO . putTextLn . show $ stateMetrics finalState
-
 
 projectSummary :: Text -> Text
 projectSummary projectName = projectSummaryGolang projectName <> PromptTexts.approachSummary <> binanceSummary
@@ -823,7 +802,7 @@ Binance’s documentation outlines a specific sequence to properly maintain an o
     Book ticker stream (optional): If only the best bid/ask is needed, you can use the <symbol>@bookTicker stream which directly gives you the current best prices without maintaining the full book. But for full order depth, you must use the diff stream + snapshot as above.
 
 |]
-    
+
 binanceFuturesApiDoc :: Text
 binanceFuturesApiDoc =
   [r|

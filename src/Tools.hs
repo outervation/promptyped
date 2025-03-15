@@ -703,7 +703,7 @@ considerBuildAndTest fileName = do
       timeIONano64M (BS.buildProject @a cfg) >>= \case
         (Just err, compileNanos) -> do
           liftIO $ Logging.logInfo "ConsiderBuildAndTest" $ "Compilation/tests failed: " <> err
-          --liftIO $ putTextLn $ "Compilation failed: " <> err
+          -- liftIO $ putTextLn $ "Compilation failed: " <> err
           modify' $ updateLastCompileState (Just err)
           modify' $ updateStateMetrics (mempty {metricsNumCompileFails = 1, metricsCompileTime = compileNanos})
           FS.reloadOpenFiles

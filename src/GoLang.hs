@@ -18,8 +18,6 @@ eitherToMaybe :: Either Text () -> Maybe Text
 eitherToMaybe (Left err) = Just err
 eitherToMaybe _ = Nothing
 
-
-
 setupDirectoryGo ::
   -- | Path to the project directory
   Config ->
@@ -65,7 +63,7 @@ setupDirectoryGo cfg projectCfg = do
 
     addDocs :: IO (Either Text ())
     addDocs = do
-      forM_ (projectInitialFiles projectCfg) $ \ (name, txt) -> TIO.writeFile name txt
+      forM_ (projectInitialFiles projectCfg) $ \(name, txt) -> TIO.writeFile name txt
       TIO.writeFile "main.go" "package main \n \n func main() { }"
       return $ Right ()
 
@@ -141,4 +139,3 @@ instance BuildSystem GoLang where
     let baseDir = configBaseDir cfg
     let timeout = secondsToNominalDiffTime . fromIntegral $ configBuildTimeoutSeconds cfg
     return $ checkFormatGo timeout baseDir
-
