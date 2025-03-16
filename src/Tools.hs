@@ -709,9 +709,10 @@ considerBuildAndTest fileName = do
           FS.reloadOpenFiles
           return $ Just (CompileFailMsg, err)
         (Nothing, compileNanos) -> do
-          liftIO $ Logging.logInfo "ConsiderBuildAndTest" "Compilation and tests succeeded."
+          liftIO $ Logging.logInfo "ConsiderBuildAndTest" "Compilation succeeded."
           modify' $ updateLastCompileState Nothing
           (result, testNanos) <- timeIONano64M $ BS.testProject @a cfg
+          liftIO $ Logging.logInfo "ConsiderBuildAndTest" $ "Testing " <> if isJust result then "failed." else "succeeded."
           ignoredDirs <- BS.getIgnoredDirs @a
           existingFileNames <- liftIO $ FS.getFileNamesRecursive ignoredDirs baseDir
           modify' (updateExistingFiles existingFileNames)
@@ -719,6 +720,9 @@ considerBuildAndTest fileName = do
           FS.reloadOpenFiles
           modify' $ updateLastTestState result
           when (isJust result) $ modify $ updateStateMetrics (mempty {metricsNumTestFails = 1, metricsCompileTime = compileNanos, metricsTestTime = testNanos})
+          case result of
+            Just err -> liftIO $ putTextLn $ "Test error: " <> err
+            Nothing -> return ()
           return $ fmap (TestFailMsg,) result
 
 data RequiresOpenFile = RequiresOpenFileTrue | RequiresOpenFileFalse
@@ -760,7 +764,7 @@ handleFileOperation fileName ioAction requiresOpenFile errorPrefix successMsg ct
               -- op = liftIO $ ioAction filePath
               onErr :: Text -> AppM Context
               onErr err = do
-                liftIO $ Logging.logInfo "FileOperation" "File operation failed."
+                liftIO $ Logging.logInfo "FileOperation" $ "File operation failed due to: " <> err
                 updateFileIfExistsOnDisk fileName cfg
                 pure $ mkError ctxt OtherMsg err
           res <- op

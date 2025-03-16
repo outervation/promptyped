@@ -143,7 +143,7 @@ clearFileOnDisk path = do
     $ writeFile path ""
 
 replaceInFile :: FilePath -> Int -> Int -> T.Text -> IO (Either T.Text ())
-replaceInFile fileName startLineNum endLineNumDesired newText = do
+replaceInFile fileName startLineNumDesired endLineNumDesired newText = do
   putTextLn $ "Editing file " <> show fileName
   -- Try to read the file and handle potential IO exceptions
   fileResult <- try $ TIO.readFile fileName :: IO (Either IOException T.Text)
@@ -152,6 +152,7 @@ replaceInFile fileName startLineNum endLineNumDesired newText = do
     Right content -> do
       let theLines = T.lines content
           totalLines = length theLines
+          startLineNum = min totalLines startLineNumDesired
           endLineNum = min totalLines endLineNumDesired
 
       -- Validate input parameters

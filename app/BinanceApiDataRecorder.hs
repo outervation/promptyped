@@ -50,7 +50,7 @@ makeGoBinanceApiDataRecorder aCfg = do
   let projectFn :: AppM ()
       projectFn = case (projectKind aCfg) of
         CreateProject -> makeCreateFilesProject @GoLang projectTexts projectCfg
-        RefactorProject -> makeRefactorFilesProject @GoLang projectTexts
+        RefactorProject -> makeRefactorFilesProject @GoLang projectTexts bigRefactorCfg
         FileAnalysisProject -> makeFileAnalysisProject @GoLang projectTexts
         TargetedRefactorProject -> case targetedRefactorCfg aCfg of
           Just refactorCfg -> makeTargetedRefactorProject @GoLang projectTexts refactorCfg
@@ -63,6 +63,17 @@ makeGoBinanceApiDataRecorder aCfg = do
       liftIO $ Logging.logInfo "Final state" (show $ stateMetrics finalState)
       liftIO . putTextLn . show $ cfg
       liftIO . putTextLn . show $ stateMetrics finalState
+
+bigRefactorCfg :: BigRefactorConfig
+bigRefactorCfg = BigRefactorConfig{
+  bigRefactorInitialOpenFiles = ["binanceApiDetails_CoinMFutures.txt"],
+  bigRefactorOverallTask = "YOUR OBJECTIVE is to refactor the project to add support for Binance CoinM futures market data (it currently only supports Binance spot), as described in binanceApiDetails_CoinMFutures.txt."
+          <> "Note that the datatypes may be slightly different than for Binance spot; when this is the case you should create different structs for each, and store them in different parquet tables to the existing types."
+          <> "The data should be saved to filenames containing the kind (spot or future), date and instrument, not just the date and instrument."
+          <> "The config should be kind,instrument pairs, not just instrument, and depending on kind the code will properly pick and connect to Binance Spot or Futures."
+          <> "You need to support aggregate trade streams, individual symbol book ticker streams, partial book depth streams, diff book depth streams, and mark price streams. Remember to implement logic so the data can be used for managing a local orderbook correctly, as already done for Binance Spot; how to do this is described in the doc.",
+  bigRefactorOverallTaskShortName = "Add support for Binance CoinM futures"
+  }
 
 projectSummary :: Text -> Text
 projectSummary projectName = projectSummaryGolang projectName <> PromptTexts.approachSummary <> binanceSummary

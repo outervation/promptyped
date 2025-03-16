@@ -12,7 +12,6 @@ import FileSystem (gitInit, gitSetupUser, handleExitCode, runAll, runProcessWith
 import Relude
 import System.Directory qualified as Dir
 import System.FilePath qualified as FP
-import Text.RawString.QQ (r)
 
 eitherToMaybe :: Either Text () -> Maybe Text
 eitherToMaybe (Left err) = Just err
