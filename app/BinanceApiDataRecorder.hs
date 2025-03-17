@@ -50,11 +50,13 @@ makeGoBinanceApiDataRecorder aCfg = do
   let projectFn :: AppM ()
       projectFn = case (projectKind aCfg) of
         CreateProject -> makeCreateFilesProject @GoLang projectTexts projectCfg
-        RefactorProject -> makeRefactorFilesProject @GoLang projectTexts bigRefactorCfg
+        RefactorProject -> case bigRefactorCfg aCfg of
+          Just refactorCfg -> makeRefactorFilesProject @GoLang projectTexts refactorCfg
+          Nothing -> throwError "Missing big refactor config!"
         FileAnalysisProject -> makeFileAnalysisProject @GoLang projectTexts
         TargetedRefactorProject -> case targetedRefactorCfg aCfg of
           Just refactorCfg -> makeTargetedRefactorProject @GoLang projectTexts refactorCfg
-          Nothing -> throwError $ "Missing targeted refactor config!"
+          Nothing -> throwError "Missing targeted refactor config!"
   res <- runApp cfg initialState projectFn
   case res of
     Left err -> putTextLn $ "Process ended with error: " <> show err
@@ -64,8 +66,8 @@ makeGoBinanceApiDataRecorder aCfg = do
       liftIO . putTextLn . show $ cfg
       liftIO . putTextLn . show $ stateMetrics finalState
 
-bigRefactorCfg :: BigRefactorConfig
-bigRefactorCfg = BigRefactorConfig{
+sampleBigRefactorCfg :: BigRefactorConfig
+sampleBigRefactorCfg = BigRefactorConfig{
   bigRefactorInitialOpenFiles = ["binanceApiDetails_CoinMFutures.txt"],
   bigRefactorOverallTask = "YOUR OBJECTIVE is to refactor the project to add support for Binance CoinM futures market data (it currently only supports Binance spot), as described in binanceApiDetails_CoinMFutures.txt."
           <> "Note that the datatypes may be slightly different than for Binance spot; when this is the case you should create different structs for each, and store them in different parquet tables to the existing types."

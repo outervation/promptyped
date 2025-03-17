@@ -40,7 +40,9 @@ makeGoHttpServer aCfg = do
   let projectFn :: AppM ()
       projectFn = case (projectKind aCfg) of
         CreateProject -> makeCreateBasedOnSpecProject @GoLang projectTexts specFileName projectCfg
-        RefactorProject -> makeRefactorFilesProject @GoLang projectTexts bigRefactorCfg
+        RefactorProject -> case bigRefactorCfg aCfg of
+          Just refactorCfg -> makeRefactorFilesProject @GoLang projectTexts refactorCfg
+          Nothing -> throwError "Missing big refactor config!"
         TargetedRefactorProject -> case targetedRefactorCfg aCfg of
           Just refactorCfg -> makeTargetedRefactorProject @GoLang projectTexts refactorCfg
           Nothing -> throwError $ "Missing targeted refactor config!"
@@ -54,8 +56,8 @@ makeGoHttpServer aCfg = do
       liftIO . putTextLn . show $ cfg
       liftIO . putTextLn . show $ stateMetrics finalState
 
-bigRefactorCfg :: BigRefactorConfig
-bigRefactorCfg = BigRefactorConfig{
+sampleBigRefactorCfg :: BigRefactorConfig
+sampleBigRefactorCfg = BigRefactorConfig{
   bigRefactorInitialOpenFiles = ["architecture.txt", "docs_summary.json", "files_summary.json"],
   bigRefactorOverallTask = "YOUR OVERALL OBJECTIVE is to finalize the project; the initial implementation did not implement main.go. You need to find a file that combines everything into a single testable component (or create one if one doesn't exist), and write a bunch (a lot, thank you!) of integration tests for it that start the server locally running on a non-protected port, make http queries to it (e.g. using the Go stdlib) and assert that the results are correct/as expected. Once that's done, main.go should be populated, such that it just loads a json config (please implement an appropriate format) and uses it to start the server.",
   bigRefactorOverallTaskShortName = "Finalize HTTP1.1 server"
@@ -82,6 +84,8 @@ Key project requirements:
     Consider performance implications while maintaining correctness and maintainability
 
 The goal is to create a server implementation that is correct, maintainable, and allows developers to understand each part of the HTTP specification in isolation.
+
+There should be a final, testable server file that integrates all the separate components into a server, and then a small main file that just loads a json config and uses it to start the server.
 
 It should be written in Golang, and should not use any existing stdlib HTTP server code (except in unit testing where necessary). No external dependencies are necessary.
 

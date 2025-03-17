@@ -7,6 +7,7 @@ module PromptCommon where
 
 import BuildSystem as BS
 import Control.Monad.Except
+import Control.Monad.Loops (untilM_)
 import Core
 import Data.Aeson as AE
 import Data.Graph
@@ -70,6 +71,16 @@ data FilesProposedChanges = FilesProposedChanges
 instance ToJSON FilesProposedChanges
 
 instance FromJSON FilesProposedChanges
+
+compilationAndTestsPass :: AppM Bool
+compilationAndTestsPass = do
+  st <- get
+  let res  = stateCompileTestRes st
+      cErr = compileRes res
+      tErr = testRes    res
+  return $ case (cErr, tErr) of
+    (Nothing, Nothing) -> True
+    _ -> False
 
 topologicalSortThingsWithDependencies :: [ExistingFile] -> ThingsWithDependencies -> Either Text [ThingWithDependencies]
 topologicalSortThingsWithDependencies existingFiles (ThingsWithDependencies files) = do
@@ -354,7 +365,9 @@ data BigRefactorConfig = BigRefactorConfig{
   bigRefactorOverallTask :: Text,
   bigRefactorOverallTaskShortName :: Text
   }
-  deriving (Eq, Ord, Show)
+  deriving (Generic, Eq, Ord, Show)
+instance ToJSON BigRefactorConfig
+instance FromJSON BigRefactorConfig
 
 makeRefactorFilesProject :: forall bs. (BS.BuildSystem bs) => ProjectTexts -> BigRefactorConfig -> AppM ()
 makeRefactorFilesProject projectTexts refactorCfg = do
@@ -367,8 +380,9 @@ makeRefactorFilesProject projectTexts refactorCfg = do
   modify' (updateExistingFiles existingFileNames)
   st <- get
   sourceFileNames <- filterM (BS.isBuildableFile @bs) $ map existingFileName st.stateFiles
-  fixFailedTestsAndCompilation @bs refactorCfg.bigRefactorOverallTask
-  return ()
+  let fixErrs = fixFailedTestsAndCompilation @bs refactorCfg.bigRefactorOverallTask refactorCfg.bigRefactorInitialOpenFiles
+  fixErrs
+  untilM_ fixErrs compilationAndTestsPass
   let task = refactorCfg.bigRefactorOverallTask
       objectiveShortName = refactorCfg.bigRefactorOverallTaskShortName
       refactorBackground = makeRefactorBackgroundPrompt task
@@ -843,11 +857,11 @@ makeCreateBasedOnSpecProject projectTexts specFileName projectCfg = do
 
   putTextLn "Finished creating project based on spec!"
 
-fixFailedTestsAndCompilation
+fixFailedTestsAndCompilationSimple
   :: forall bs. (BS.BuildSystem bs)
   => Text
   -> AppM ()
-fixFailedTestsAndCompilation background = do
+fixFailedTestsAndCompilationSimple background = do
   cfg <- ask
   origSt <- get
   sourceFileNames <- filterM (BS.isBuildableFile @bs) $ map existingFileName origSt.stateFiles
@@ -874,3 +888,183 @@ fixFailedTestsAndCompilation background = do
           Engine.runAiFunc @bs ctxt MediumIntelligenceRequired allTools exampleUnitTestDone validateUnitTest (configTaskMaxFailures cfg)
           return ()
       
+
+-- | A plan of how to fix each file that is failing compilation/tests
+data FailingFilePlan = FailingFilePlan
+  { failingFileName :: Text
+  , failingFileReason          :: Text
+    -- ^ Why it fails (taken from or inferred from compile/test messages)
+  , failingFileDependencies    :: [Text]
+    -- ^ Other files that may need to be opened/fixed
+  , fixPlan         :: Text
+    -- ^ A textual plan or summary of how the fix should proceed
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON FailingFilePlan
+instance FromJSON FailingFilePlan
+
+-- | The top-level JSON structure listing all failing files
+data FailingFilesPlan = FailingFilesPlan
+  { failingFiles :: [FailingFilePlan]
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON FailingFilesPlan
+instance FromJSON FailingFilesPlan
+
+-- | When we ask the LLM to fix a single file, it returns yes/no plus a rationale.
+--   We'll use a validator that checks the real compile/test results to see if
+--   references to that file remain.
+data SingleFileFixResult = SingleFileFixResult
+  { fileFixConfirmed :: Bool
+  , rationale        :: Text
+  }
+  deriving (Show, Eq, Generic)
+
+instance ToJSON SingleFileFixResult
+instance FromJSON SingleFileFixResult
+
+--------------------------------------------------------------------------------
+-- Validator: Checking that a single file is fixed
+--------------------------------------------------------------------------------
+
+-- | This validator re-runs the entire build+test suite, then
+--   checks whether the error logs still mention @fileName@.
+--   If yes, we fail => the LLM gets re-prompted to fix the file.
+--   If no, we pass => continue to the next failing file.
+validateSingleFileFix
+  :: forall bs. (BS.BuildSystem bs)
+  => Text                   -- ^ The file we’re trying to fix
+  -> SingleFileFixResult
+  -> AppM (Either (MsgKind, Text) SingleFileFixResult)
+validateSingleFileFix fileName userRes = do
+  -- Re-run build and tests (pick a buildable file if you like):
+  _ <- Tools.considerBuildAndTest @bs fileName
+  st <- get
+  let cErr = compileRes (stateCompileTestRes st)
+      tErr = testRes    (stateCompileTestRes st)
+  case (cErr, tErr) of
+    (Nothing, Nothing) ->
+      -- No errors at all => definitely no mention of 'fileName'.
+      pure $ Right userRes
+    (Just err, _) -> pure $ Left (OtherMsg, "Compilation is still failing; error is: " <> err)
+    _ ->
+      let allErr = fromMaybe "" cErr <> "\n" <> fromMaybe "" tErr
+      in if T.isInfixOf (" " <> fileName) allErr
+           then pure $ Left
+              ( OtherMsg
+              , "Still seeing an error referencing " <> fileName
+                <> ". The build/test errors are:\n"
+                <> allErr
+              )
+           else
+              -- Some other file is still failing, but *this* file isn't
+              -- mentioned => we consider this file "fixed."
+              pure $ Right userRes
+
+fixFailedTestsAndCompilation
+  :: forall bs. (BS.BuildSystem bs)
+  => Text      -- ^ Some background or context that the LLM should always see
+  -> [Text]    -- ^ Relevant dependencies
+  -> AppM ()
+fixFailedTestsAndCompilation background relevantFiles = do
+  cfg <- ask
+
+  -- 1) First check if everything is OK
+  --    (pick any buildable file or an existing main file, etc.)
+  _ <- Tools.considerBuildAndTest @bs "main.go"
+  st <- get
+  let res  = stateCompileTestRes st
+      cErr = compileRes res
+      tErr = testRes    res
+
+  case (cErr, tErr) of
+    (Nothing, Nothing) -> do
+      putTextLn "Compilation and all tests are already passing. Nothing to fix."
+      pure ()
+
+    _ -> do
+      let errorsCombined =
+            "Compilation error:\n" <> fromMaybe "" cErr
+            <> "\nTest error:\n"   <> fromMaybe "" tErr
+
+      -- 2) Ask the LLM to produce a plan listing the failing files
+      let planContext =
+            Context
+              { contextBackground = background
+              , contextTask =
+                  "YOUR CURRENT TASK: fixing compilation/test failures. "
+                  <> "We have the following errors:\n"
+                  <> errorsCombined
+                  <> "\n\nPlease identify which files are failing (don't compile, or have a unit test that fails to pass)."
+                  <> "For each failing file, list:\n"
+                  <> "- failingFileName\n"
+                  <> "- failingFileReason (how or why it fails)\n"
+                  <> "- failingFileDependencies (other files we may need to open to fix it)\n"
+                  <> "- fixPlan (the approach to fix that file)\n\n"
+                  <> "Return them as JSON in the required format. For dependencies, remember to "
+                  <> "include documentation/specification files that may be useful. "
+                  <> "Note that it's possible some existing tests may be wrong; always check the spec to make sure the test is testing for the correct behaviour."
+              , contextRest = []
+              }
+
+          examplePlan = FailingFilesPlan
+            { failingFiles =
+              [ FailingFilePlan
+                  { failingFileName = "main.go"
+                  , failingFileReason          = "Possible syntax error on line 42"
+                  , failingFileDependencies    = ["main_test.go", "utility.go"]
+                  , fixPlan         = "We will correct the syntax and then update the test."
+                  }
+              ]
+            }
+      modify' clearOpenFiles
+      forM_ (journalFileName : relevantFiles) $ \dep ->
+        Tools.openFile dep cfg
+      plan <- Engine.runAiFunc @bs
+                planContext
+                HighIntelligenceRequired
+                readOnlyTools
+                examplePlan
+                validateAlwaysPass
+                (configTaskMaxFailures cfg)
+
+      -- 3) For each failing file, attempt a fix
+      forM_ (plan.failingFiles) $ \fPlan -> do
+        modify' clearOpenFiles
+
+        -- open the failing file + dependencies
+        forM_ (fPlan.failingFileName : fPlan.failingFileDependencies ++ (journalFileName : relevantFiles)) $ \dep ->
+          Tools.openFile dep cfg
+
+        let fixContext =
+              Context
+                { contextBackground = background
+                , contextTask =
+                    "YOUR CURRENT TASK: fixing compilation/test failures. "
+                    <> "File to fix: " <> fPlan.failingFileName
+                    <> "\nReason: " <> fPlan.failingFileReason
+                    <> "\nProposed approach: " <> fPlan.fixPlan
+                    <> "\n\nPlease implement the fix now. Write the approach you take to the journal for future reference, with particular emphasis on any assumptions you're making (to avoid cycles of some test fixes breaking other tests that make different assumptions), and note the spec should be the main source of truth, followed by real integration test behaviour. Don't mention trivial things like code change details/fixes, only mention changes in logic/behaviour or assumptions."
+                , contextRest = []
+                }
+
+            exampleFixConfirmation = SingleFileFixResult
+              { fileFixConfirmed = True
+              , rationale        = "Corrected syntax; test now passes."
+              }
+
+        -- This will be re-called if the file’s errors still appear.
+        putTextLn $ "Attempting to fix " <> fPlan.failingFileName
+        _ <- Engine.runAiFunc @bs
+               fixContext
+               MediumIntelligenceRequired
+               -- Tools for editing/writing code:
+               allTools
+               exampleFixConfirmation
+               (validateSingleFileFix @bs fPlan.failingFileName)
+               (configTaskMaxFailures cfg)
+        return ()
+
+      putTextLn "Done fixing all files that were identified!"

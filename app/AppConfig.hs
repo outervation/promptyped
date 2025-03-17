@@ -33,7 +33,8 @@ data AppConfig = AppConfig
     projectKind :: ProjectKind,
     modelTemperature :: Maybe Float,
     modelMaxInputTokens :: Int,
-    targetedRefactorCfg :: Maybe PC.TargetedRefactorConfig
+    targetedRefactorCfg :: Maybe PC.TargetedRefactorConfig,
+    bigRefactorCfg :: Maybe PC.BigRefactorConfig
   }
   deriving (Generic, Eq, Ord, Show)
 
