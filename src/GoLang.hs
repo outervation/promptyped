@@ -76,7 +76,7 @@ checkFormatGo timeout dir = Dir.withCurrentDirectory dir $ do
   fmtResult <- runProcessWithTimeout timeout "." [] "go" ["fmt"]
   res <- handleExitCode "'go fmt'" fmtResult
   case res of
-    Left err -> pure . Just $ "The change you attempted to make would produce invalid syntax, with go fmt failing with:\n" <> err <> "\nPlease try again, being careful with line numbers (remembering they're inclusive; [startLine, endLine]). An off-by-one error for instance might accidentally delete the closing bracket of a previous function, or fail to replace the final bracket of a function being replaced (leading to duplicate closing brackets)."
+    Left err -> pure . Just $ "The change you attempted to make would produce invalid syntax, with go fmt failing with:\n" <> err <> "\nThe change has been rejected so please try again, being careful with line numbers (remembering they're inclusive; [startLine, endLine]). An off-by-one error for instance might accidentally delete the closing bracket of a previous function, or fail to replace the final bracket of a function being replaced (leading to duplicate closing brackets)."
     Right () -> pure Nothing
 
 buildProjectGo ::

@@ -246,12 +246,13 @@ runAiFuncInner checkContextSize origCtxt intReq tools exampleReturn postProcesso
     handleToolCalls ctxtWithAiMsg callsRaw rawTextBlocks = case Tools.processToolsArgs callsRaw rawTextBlocks of
       Left err -> addErrorAndRecurse ("Error in function calls/return logic: " <> err) ctxtWithAiMsg SyntaxError OtherMsg
       Right calls -> do
+        cfg <- ask
         let ctxtUpdates = flip map calls $ \x innerCtxt -> Tools.runTool @bs rawTextBlocks x innerCtxt
         finalCtxt <- foldlM (\acc f -> f acc) ctxtWithAiMsg ctxtUpdates
-        cfg <- ask
-        case Tools.getReturn calls of
-          Just ret -> postProcessor ret >>= either (handleReturnError finalCtxt) pure
-          Nothing -> recur finalCtxt (configTaskMaxFailures cfg)
+        let numNewErrs = contextNumErrors finalCtxt - contextNumErrors ctxtWithAiMsg
+        case (Tools.getReturn calls, numNewErrs > 0) of
+          (Just ret, False) -> postProcessor ret >>= either (handleReturnError finalCtxt) pure
+          _ -> recur finalCtxt (configTaskMaxFailures cfg)
 
     addErrorAndRecurse errMsg theCtxt errKind msgKind = do
       liftIO $ Logging.logWarn "RunAiFunc" errMsg

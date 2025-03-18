@@ -304,12 +304,16 @@ data MsgKind = CompileFailMsg | TestFailMsg | OtherMsg
 data Context = Context
   { contextBackground :: Text,
     contextTask :: Text,
-    contextRest :: [(MsgKind, Message)]
+    contextRest :: [(MsgKind, Message)],
+    contextNumErrors :: Int
   }
   deriving (Eq, Ord, Show)
 
 addToContext :: Context -> MsgKind -> Message -> Context
 addToContext c kind msg = c {contextRest = contextRest c ++ [(kind, msg)]}
+
+contextRecordError :: Context -> Context
+contextRecordError ctxt = ctxt {contextNumErrors = contextNumErrors ctxt}
 
 updateContextMessages :: Context -> ([(MsgKind, Message)] -> [(MsgKind, Message)]) -> Context
 updateContextMessages ctxt fn = ctxt {contextRest = fn (contextRest ctxt)}
@@ -405,3 +409,9 @@ truncateText n input
         $ V.toList firstNLines
         ++ [skippingMsg]
         ++ V.toList lastNLines
+
+data FileChangeBounds = FileChangeBounds Int Int
+  deriving (Eq, Ord, Show)
+
+sliceList :: Int -> Int -> [a] -> [a]
+sliceList n m xs = take (m - n + 1) (drop n xs)

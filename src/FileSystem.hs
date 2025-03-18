@@ -34,8 +34,8 @@ runAll = foldM step (Right ())
 toFilePath :: Config -> Text -> FilePath
 toFilePath cfg x = configBaseDir cfg FP.</> T.unpack x
 
-tryFileOp :: FilePath -> (FilePath -> IO (Either T.Text ())) -> AppM (Maybe T.Text) -> AppM (Either T.Text ())
-tryFileOp path op checker = do
+tryFileOp :: FilePath -> (FilePath -> IO (Either T.Text ())) -> AppM (Maybe T.Text) -> Maybe FileChangeBounds -> AppM (Either T.Text ())
+tryFileOp path op checker maybeBounds = do
   -- Check if file exists first to fail early
   alreadyExists <- liftIO $ DIR.doesFileExist path
   if not alreadyExists
@@ -80,10 +80,16 @@ tryFileOp path op checker = do
         Nothing -> return $ Right ()
         Just err -> restoreBackup backupPath err
 
+    getRelevantFilePart :: Text -> Text
+    getRelevantFilePart contents = case maybeBounds of
+      Just (FileChangeBounds firstLine lastLine) -> T.unlines $ sliceList firstLine lastLine $ T.lines contents
+      Nothing -> contents
+      
     -- Restore from backup when validation fails
     restoreBackup :: FilePath -> T.Text -> AppM (Either T.Text ())
     restoreBackup backupPath err = do
       modifiedFile <- liftIO $ readFileToText path
+      let modifiedFileRelevantPart = getRelevantFilePart $ addLineNumbersToText modifiedFile
       restoreResult <- liftIO $ tryIOError $ do
         DIR.removeFile path
         DIR.copyFile backupPath path
@@ -98,7 +104,7 @@ tryFileOp path op checker = do
             ++ ". Additionally, failed to restore backup: "
             ++ show restoreErr
         Right _ ->
-          return . Left $ err <> "\n. The file post-modification looked like: " <> addLineNumbersToText modifiedFile
+          return . Left $ err <> "\n. The relevant part of the file post-modification looked like (note that's not the state of the file on disk, as the change was rejected): " <> modifiedFileRelevantPart
 
 readFileToText :: FilePath -> IO Text
 readFileToText path = do

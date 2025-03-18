@@ -675,7 +675,7 @@ mkSuccess :: Context -> MsgKind -> Text -> Context
 mkSuccess ctxt kind = addToContextUser ctxt kind . mappend "Success: "
 
 mkError :: Context -> MsgKind -> Text -> Context
-mkError ctxt kind = addToContextUser ctxt kind . mappend "Error: "
+mkError ctxt kind = addToContextUser (contextRecordError ctxt) kind . mappend "Error: "
 
 reloadLogs :: AppM ()
 reloadLogs = do
@@ -736,9 +736,10 @@ handleFileOperation ::
   RequiresOpenFile ->
   Text ->
   Text ->
+  Maybe FileChangeBounds ->
   Context ->
   AppM Context
-handleFileOperation fileName ioAction requiresOpenFile errorPrefix successMsg ctxt = do
+handleFileOperation fileName ioAction requiresOpenFile errorPrefix successMsg changeBounds ctxt = do
   theState <- get
   cfg <- ask
   liftIO $ Logging.logInfo "FileOperation" $ "Attempting action with success name: " <> successMsg
@@ -760,7 +761,7 @@ handleFileOperation fileName ioAction requiresOpenFile errorPrefix successMsg ct
                   Just err -> do
                     modify' onSyntaxCheckFail
                     pure $ Just err
-              op = FS.tryFileOp filePath ioAction checker'
+              op = FS.tryFileOp filePath ioAction checker' changeBounds
               -- op = liftIO $ ioAction filePath
               onErr :: Text -> AppM Context
               onErr err = do
@@ -835,6 +836,7 @@ runTool rawTexts (ToolCallAppendFile args) origCtxt = do
       RequiresOpenFileFalse
       "cannot append to file that hasn't been opened: "
       ("Appended to file: " <> fileName)
+      Nothing
       ctxt
   foldlM (\acc f -> f acc) initialCtxt ctxtUpdates
 runTool rawTexts (ToolCallReplaceFile args) origCtxt = do
@@ -848,6 +850,7 @@ runTool rawTexts (ToolCallReplaceFile args) origCtxt = do
       RequiresOpenFileFalse
       "cannot replace file that hasn't been opened: "
       ("Replaced file: " <> fileName)
+      Nothing
       ctxt
   foldlM (\acc f -> f acc) initialCtxt ctxtUpdates
 runTool _ (ToolCallInsertInFile args) _ = do
@@ -862,12 +865,14 @@ runTool rawTexts (ToolCallFileLineOp args) origCtxt = do
     Right sortedArgs -> do
       ctxtUpdates <- forM sortedArgs $ \(FileLineOpArg fileName startLineNum endLineNum textName origToolName) -> pure $ \ctxt -> do
         txt <- getRawText rawTexts textName
+        let affectedBounds = Just $ FileChangeBounds (max 0 (startLineNum - 5)) (endLineNum + 5)
         handleFileOperation @bs
           fileName
           (\path -> FS.replaceInFile path startLineNum endLineNum txt)
           RequiresOpenFileTrue
           ("cannot " <> origToolName <> " file that hasn't been opened: ")
           ("Did " <> origToolName <> " on file: " <> fileName)
+          affectedBounds
           ctxt
       foldlM (\acc f -> f acc) initialCtxt ctxtUpdates
 runTool _ (ToolCallRevertFile args) origCtxt = do
@@ -881,6 +886,7 @@ runTool _ (ToolCallRevertFile args) origCtxt = do
       RequiresOpenFileTrue
       "cannot revert file that hasn't been opened: "
       ("Reverted file: " <> fileName)
+      Nothing
       ctxt
   foldlM (\acc f -> f acc) initialCtxt ctxtUpdates
 runTool _ (ToolCallPanic arg) _ = throwError $ "AI panicked due to reason= " <> show arg

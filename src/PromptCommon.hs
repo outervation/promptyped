@@ -167,7 +167,7 @@ validateAlwaysPass x = pure $ Right x
 validateAlwaysPassIfCompileTestsFine :: a -> AppM (Either (MsgKind, Text) a)
 validateAlwaysPassIfCompileTestsFine x = do
   res <- checkCompileTestResults
-  pure $ either Left (Right . const x) res
+  pure $ bimap id (const x) res
 
 data CreatedFile = CreatedFile
   { createdFileName :: Text,
@@ -354,6 +354,7 @@ makeRefactorFileTask background initialDeps fileName desiredChanges refactorUnit
         Engine.runAiFunc @bs ctxt MediumIntelligenceRequired allTools exampleChange validateAlwaysPassIfCompileTestsFine (configTaskMaxFailures cfg)
   modifications <- forM desiredChanges $ \x -> do
     modification <- memoise (configCacheDir cfg) ("file_modifier_" <> fileName) x (\desc -> desc.name) makeChange
+    putTextLn $ "Done task: " <> show x
     return $ "Intended modification: " <> x.summary <> ", with model describing what it did as " <> show modification <> "."
   let modificationsTxt = "The model made the following changes: \n" <> T.unlines modifications
   when (refactorUnitTests == DoAutoRefactorUnitTests)
