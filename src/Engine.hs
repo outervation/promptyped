@@ -24,10 +24,10 @@ shortenedMessageLength :: Int
 shortenedMessageLength = 200
 
 numRecentAiMessagesNotToTruncate :: Int
-numRecentAiMessagesNotToTruncate = 1
+numRecentAiMessagesNotToTruncate = 2
 
 numOldMessagesToKeepInContext :: Int
-numOldMessagesToKeepInContext = 10
+numOldMessagesToKeepInContext = 15
 
 updateStats :: GenerationStats -> UsageData -> Int64 -> AppM ()
 updateStats generation usage timeTaken = do
@@ -174,8 +174,8 @@ instance ToJSON FileClosed
 
 instance FromJSON FileClosed
 
-validateFileClosed :: FileClosed -> AppM (Either (MsgKind, Text) ())
-validateFileClosed (FileClosed fileName) = do
+validateFileClosed :: Context -> FileClosed -> AppM (Either (MsgKind, Text) ())
+validateFileClosed _ (FileClosed fileName) = do
   st <- get
   case fileAlreadyOpen fileName st of
     True -> pure $ Left (OtherMsg, "Error: claimed to have closed file " <> fileName <> " but it's still open.")
@@ -191,7 +191,7 @@ runAiFunc ::
   IntelligenceRequired ->
   [Tools.Tool] ->
   a ->
-  (a -> AppM (Either (MsgKind, Text) b)) ->
+  (Context -> a -> AppM (Either (MsgKind, Text) b)) ->
   RemainingFailureTolerance ->
   AppM b
 runAiFunc = runAiFuncInner @bs DoCheckContextSize
@@ -204,7 +204,7 @@ runAiFuncInner ::
   IntelligenceRequired ->
   [Tools.Tool] ->
   a ->
-  (a -> AppM (Either (MsgKind, Text) b)) ->
+  (Context -> a -> AppM (Either (MsgKind, Text) b)) ->
   RemainingFailureTolerance ->
   AppM b
 runAiFuncInner checkContextSize origCtxt intReq tools exampleReturn postProcessor remainingErrs = do
@@ -253,7 +253,7 @@ runAiFuncInner checkContextSize origCtxt intReq tools exampleReturn postProcesso
           finalCtxt <- foldlM (\acc f -> f acc) ctxtWithAiMsg ctxtUpdates
           let numNewErrs = contextNumErrors finalCtxt - contextNumErrors ctxtWithAiMsg
           case (Tools.getReturn calls, numNewErrs > 0) of
-            (Just ret, False) -> postProcessor ret >>= either (handleReturnError finalCtxt) pure
+            (Just ret, False) -> postProcessor finalCtxt ret >>= either (handleReturnError finalCtxt) pure
             _ -> recur finalCtxt (configTaskMaxFailures cfg)
 
     addErrorAndRecurse errMsg theCtxt errKind msgKind = do

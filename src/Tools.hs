@@ -395,7 +395,7 @@ mkSampleCodeBox name = "\nRAWTEXT[" <> name <> "]=R\"r( someCodeHere()\n someMor
 
 -- Returns arg format json, rawTextBoxExample, description
 toolArgFormatAndDesc :: Tool -> (Text, Text, Text)
-toolArgFormatAndDesc ToolReturn = ("{ }", "", "Return a value; format depends on the task and is described further down below. Note you can only return a single value at a time!")
+toolArgFormatAndDesc ToolReturn = ("{ }", "", "Return a value; format depends on the task and is described further down below. Where the return references a change made to a file, it should only be returned _after_ the change is made. Note you can only return a single value at a time!")
 toolArgFormatAndDesc ToolFileLineOp = (toJ FileLineOpArg {fileName = "somefile.txt", startLineNum = 5, endLineNum = 10, rawTextName = "codeBoxToUse", origToolName = "originalToolName"}, mkSampleCodeBox "codeBoxToUse", "You should panic if you see this; it's an internal tool that insert/edit are transformed into, and you shouldn't call it directly.")
 toolArgFormatAndDesc ToolOpenFile = (toJ OpenFileArg {fileName = "someFile.txt"}, "", "Load a file into the context")
 toolArgFormatAndDesc ToolCloseFile = (toJ CloseFileArg {fileName = "someFile.txt"}, "", "Remove a file from the context")
@@ -413,7 +413,7 @@ mkToolCallSyntax tool argFormat = toolName tool <> "=<[" <> argFormat <> "]>"
 toolToDescription :: Tool -> Text
 toolToDescription x = do
   let (argFormat, rawTextFormat, toolDesc) = toolArgFormatAndDesc x
-  "Syntax: " <> mkToolCallSyntax x argFormat <> rawTextFormat <> "\nDescription: " <> toolDesc
+  "Name:" <> toolName x <> "\nSyntax: " <> mkToolCallSyntax x argFormat <> rawTextFormat <> "\nDescription: " <> toolDesc <> "\n"
 
 returnValueToDescription :: (ToJSON a) => a -> Text
 returnValueToDescription example = do
@@ -898,7 +898,7 @@ handleFileOperation fileName ioAction requiresOpenFile errorPrefix successMsg ch
     onSuccess cfg ctxt' = do
       liftIO $ Logging.logInfo "FileOperation" "File operation succeeded."
       openFile fileName cfg
-      let successCtxt = mkSuccess ctxt' OtherMsg successMsg
+      let successCtxt = mkSuccess ctxt' (FileModifiedMsg fileName) successMsg
       considerBuildAndTest @a fileName >>= \case
         Nothing -> do
           FS.gitAddAndCommit fileName

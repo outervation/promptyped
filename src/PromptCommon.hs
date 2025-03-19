@@ -141,16 +141,16 @@ validatePathNotNested thing =
     then Just $ "Error; nested paths are not allowed, but " <> thing.name <> " is a nested path."
     else Nothing
 
-validateThingsWithDependencies :: ThingsWithDependencies -> AppM (Either (MsgKind, Text) [ThingWithDependencies])
-validateThingsWithDependencies pf = do
+validateThingsWithDependencies :: Context -> ThingsWithDependencies -> AppM (Either (MsgKind, Text) [ThingWithDependencies])
+validateThingsWithDependencies _ pf = do
   st <- get
   return $ either (\x -> Left (OtherMsg, x)) Right $ topologicalSortThingsWithDependencies (stateFiles st) pf
 
-validateFileNamesNoNestedPaths :: ThingsWithDependencies -> AppM (Either (MsgKind, Text) [ThingWithDependencies])
-validateFileNamesNoNestedPaths things = do
+validateFileNamesNoNestedPaths :: Context ->  ThingsWithDependencies -> AppM (Either (MsgKind, Text) [ThingWithDependencies])
+validateFileNamesNoNestedPaths ctxt things = do
   case validatePropertyOfThingsWithDependencies things validatePathNotNested of
     Left err -> pure $ Left err
-    Right things' -> validateThingsWithDependencies things'
+    Right things' -> validateThingsWithDependencies ctxt things'
 
 data ThingWithDescription = ThingWithDescription
   { description :: Text
@@ -161,13 +161,21 @@ instance ToJSON ThingWithDescription
 
 instance FromJSON ThingWithDescription
 
-validateAlwaysPass :: a -> AppM (Either (MsgKind, Text) a)
-validateAlwaysPass x = pure $ Right x
+validateAlwaysPass :: Context -> a -> AppM (Either (MsgKind, Text) a)
+validateAlwaysPass _ x = pure $ Right x
 
-validateAlwaysPassIfCompileTestsFine :: a -> AppM (Either (MsgKind, Text) a)
-validateAlwaysPassIfCompileTestsFine x = do
+validateAlwaysPassIfCompileTestsFine :: Context -> a -> AppM (Either (MsgKind, Text) a)
+validateAlwaysPassIfCompileTestsFine _ x = do
   res <- checkCompileTestResults
   pure $ bimap id (const x) res
+
+validateFileModifiedFine :: Text -> Context -> a -> AppM (Either (MsgKind, Text) a)
+validateFileModifiedFine fileName ctxt x = do
+  case hasFileBeenModified ctxt fileName of
+    False -> pure $ Left (OtherMsg, "Error: no modifications have been made to " <> fileName)
+    True -> do
+      res <- checkCompileTestResults
+      pure $ bimap id (const x) res
 
 data CreatedFile = CreatedFile
   { createdFileName :: Text,
@@ -198,8 +206,8 @@ instance ToJSON ModifiedFile
 
 instance FromJSON ModifiedFile
 
-validateCreatedFiles :: CreatedFiles -> AppM (Either (MsgKind, Text) [CreatedFile])
-validateCreatedFiles cf = do
+validateCreatedFiles :: Context -> CreatedFiles -> AppM (Either (MsgKind, Text) [CreatedFile])
+validateCreatedFiles _ cf = do
   st <- get
   let files = createdFiles cf
   compilationAndTestsOkay <- checkCompileTestResults
@@ -231,8 +239,8 @@ instance ToJSON UnitTests
 
 instance FromJSON UnitTests
 
-validateUnitTests :: UnitTests -> AppM (Either (MsgKind, Text) UnitTests)
-validateUnitTests cf = pure $ Right cf
+validateUnitTests :: Context -> UnitTests -> AppM (Either (MsgKind, Text) UnitTests)
+validateUnitTests _ cf = pure $ Right cf
 
 allTools :: [Tools.Tool]
 allTools = [Tools.ToolOpenFile, Tools.ToolCloseFile, Tools.ToolAppendFile, Tools.ToolInsertInFile, Tools.ToolEditFileByMatch, Tools.ToolPanic, Tools.ToolReturn]
@@ -258,8 +266,8 @@ checkCompileTestResults = do
     (Just compileErr, _) -> Left (CompileFailMsg, "Error, compilation failed, fix it before returning. Note that if you see a 'missing import path' compilation error, it may be because you forgot a closing ')' for the go import list. If you see 'is not a package path' when trying to import a local file you created, remember you should include 'project_name/filename', NOT '/home/username/project_name/filename' or 'username/project_name/filename' The last error was: " <> compileErr)
     (Nothing, Just testErr) -> Left (TestFailMsg, "Error, unit tests didn't all pass (or failed to compile), fix them first. I encourage you to add more logging/printf for debugging if necessary, and to record your current step and planned future steps in the journal.txt . If you see 'is not a package path' when trying to import a local file you created into a test, remember you should include 'project_name/filename', NOT '/home/username/project_name/filename' or 'username/project_name/filename, and put everything in package main. The last error was: " <> testErr)
 
-validateUnitTest :: UnitTestDone -> AppM (Either (MsgKind, Text) ())
-validateUnitTest t = case unitTestPassedSuccessfully t of
+validateUnitTest :: Context -> UnitTestDone -> AppM (Either (MsgKind, Text) ())
+validateUnitTest _ t = case unitTestPassedSuccessfully t of
   False -> pure $ Left (OtherMsg, "Your return value of false indicates it didn't pass successfully")
   True -> checkCompileTestResults
 
@@ -336,7 +344,7 @@ makeRefactorFileTask background initialDeps fileName desiredChanges refactorUnit
   let makeChange description = do
         let ctxt = makeBaseContext background $ "Your task is to refactor the file " <> fileName <> " to make the change: " <> show description
             exampleChange = ModifiedFile "someFile.go" "Update the file to add ... so that it ..."
-        Engine.runAiFunc @bs ctxt MediumIntelligenceRequired allTools exampleChange validateAlwaysPassIfCompileTestsFine (configTaskMaxFailures cfg)
+        Engine.runAiFunc @bs ctxt MediumIntelligenceRequired allTools exampleChange (validateFileModifiedFine fileName) (configTaskMaxFailures cfg)
   modifications <- forM desiredChanges $ \x -> do
     modification <- memoise (configCacheDir cfg) ("file_modifier_" <> fileName) x (\desc -> desc.name) makeChange
     putTextLn $ "Done task: " <> show x
@@ -607,10 +615,11 @@ instance FromJSON SpecSegmentPlans
 validateSpecSegmentPlans ::
   -- | docLength (total number of lines in the spec)
   Int ->
+  Context -> 
   -- | the proposed chunking plan
   SpecSegmentPlans ->
   AppM (Either (MsgKind, Text) SpecSegmentPlans)
-validateSpecSegmentPlans docLength ssp@(SpecSegmentPlans segments) = do
+validateSpecSegmentPlans docLength _ ssp@(SpecSegmentPlans segments) = do
   let errors = concatMap checkSegment segments <> checkNoOverlaps (sortOn (.startLineNum) segments)
 
   if null errors
@@ -920,9 +929,10 @@ validateSingleFileFix ::
   (BS.BuildSystem bs) =>
   -- | The file we’re trying to fix
   Text ->
+  Context -> 
   SingleFileFixResult ->
   AppM (Either (MsgKind, Text) SingleFileFixResult)
-validateSingleFileFix fileName userRes = do
+validateSingleFileFix fileName _ userRes = do
   -- Re-run build and tests (pick a buildable file if you like):
   _ <- Tools.considerBuildAndTest @bs fileName
   st <- get

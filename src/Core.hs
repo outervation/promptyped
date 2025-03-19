@@ -302,7 +302,7 @@ instance FromJSON Message
 renderMessage :: Message -> Text
 renderMessage (Message role text) = "{" <> role <> ": \n" <> text <> "\n}"
 
-data MsgKind = CompileFailMsg | TestFailMsg | OtherMsg
+data MsgKind = CompileFailMsg | TestFailMsg | FileModifiedMsg Text | OtherMsg
   deriving (Eq, Ord, Show)
 
 data Context = Context
@@ -324,6 +324,13 @@ contextRecordError ctxt = ctxt {contextNumErrors = contextNumErrors ctxt}
 
 updateContextMessages :: Context -> ([(MsgKind, Message)] -> [(MsgKind, Message)]) -> Context
 updateContextMessages ctxt fn = ctxt {contextRest = fn (contextRest ctxt)}
+
+hasFileBeenModified :: Context -> Text -> Bool
+hasFileBeenModified context fileName =
+  any isFileModified (contextRest context)
+  where
+    isFileModified (FileModifiedMsg name, _) = name == fileName
+    isFileModified _ = False
 
 data Role = RoleSystem | RoleAssistant | RoleUser
   deriving (Show, Eq, Ord)
