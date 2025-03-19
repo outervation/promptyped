@@ -763,13 +763,28 @@ processToolArgs rawTexts tool@ToolFileLineOp args = ToolCallFileLineOp <$> proce
 processToolArgs rawTexts tool@ToolPanic args = ToolCallPanic <$> processArgOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolReturn args = ToolCallReturn <$> processArgOfType tool rawTexts args
 
-processToolsArgs :: (FromJSON a, Show a) => [(Tool, [AET.Object])] -> RawTexts -> AppM (Either Text [ToolCall a])
-processToolsArgs toolArgs rawTexts = case partitionEithers (map (uncurry (processToolArgs rawTexts)) toolArgs) of
+processToolsArgsNoPartial :: (FromJSON a, Show a) => [(Tool, [AET.Object])] -> RawTexts -> AppM (Either Text [ToolCall a])
+processToolsArgsNoPartial toolArgs rawTexts = case partitionEithers (map (uncurry (processToolArgs rawTexts)) toolArgs) of
   ([], results) -> do
     normalisationResults <- foldAllEithers normaliseLineOpTool results
     let updErr err = "Error processing tool args: " <> err
     pure $ bimap updErr mergeToolCalls normalisationResults
   (errors, _) -> pure $ Left (T.intercalate ", " errors)
+
+processToolsArgs
+  :: (FromJSON a, Show a)
+  => [(Tool, [AET.Object])]
+  -> RawTexts
+  -> AppM ([Text], [ToolCall a])
+processToolsArgs toolArgs rawTexts = do
+    let (parseErrors, parseSuccesses) =
+          partitionEithers (map (uncurry (processToolArgs rawTexts)) toolArgs)
+    normalisedResults <- mapM normaliseLineOpTool parseSuccesses
+    let (normaliseErrors, normaliseSuccesses) = partitionEithers normalisedResults
+        allErrors = parseErrors
+                 <> map ("Error processing tool args: " <>) normaliseErrors
+        merged    = mergeToolCalls normaliseSuccesses
+    pure (allErrors, merged)
 
 normaliseLineOpTool :: ToolCall a -> AppM (Either Text (ToolCall a))
 normaliseLineOpTool (ToolCallEditFile args) = do

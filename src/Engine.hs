@@ -246,12 +246,13 @@ runAiFuncInner checkContextSize origCtxt intReq tools exampleReturn postProcesso
     handleToolCalls :: Context -> [(Tools.Tool, [AET.Object])] -> Tools.RawTexts -> AppM b
     handleToolCalls ctxtWithAiMsg callsRaw rawTextBlocks =
       Tools.processToolsArgs callsRaw rawTextBlocks >>= \case
-        Left err -> addErrorAndRecurse ("Error in function calls/return logic: " <> err) ctxtWithAiMsg SyntaxError OtherMsg
-        Right calls -> do
+        (errs, []) -> addErrorAndRecurse ("Error in function calls/return logic: " <> T.intercalate "," errs) ctxtWithAiMsg SyntaxError OtherMsg
+        (errs, calls) -> do
           cfg <- ask
-          let ctxtUpdates = flip map calls $ \x innerCtxt -> Tools.runTool @bs rawTextBlocks x innerCtxt
-          finalCtxt <- foldlM (\acc f -> f acc) ctxtWithAiMsg ctxtUpdates
-          let numNewErrs = contextNumErrors finalCtxt - contextNumErrors ctxtWithAiMsg
+          let toolProcessingCtxt = foldr (\err innerCtxt -> addErrorToContext innerCtxt err OtherMsg) ctxtWithAiMsg errs
+              ctxtUpdates = flip map calls $ \x innerCtxt -> Tools.runTool @bs rawTextBlocks x innerCtxt
+          finalCtxt <- foldlM (\acc f -> f acc) toolProcessingCtxt ctxtUpdates
+          let numNewErrs = contextNumErrors finalCtxt - contextNumErrors toolProcessingCtxt
           case (Tools.getReturn calls, numNewErrs > 0) of
             (Just ret, False) -> postProcessor finalCtxt ret >>= either (handleReturnError finalCtxt) pure
             _ -> recur finalCtxt (configTaskMaxFailures cfg)
