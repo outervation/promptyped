@@ -175,11 +175,16 @@ instance ToJSON FileClosed
 instance FromJSON FileClosed
 
 validateFileClosed :: Context -> FileClosed -> AppM (Either (MsgKind, Text) ())
-validateFileClosed _ (FileClosed fileName) = do
+validateFileClosed ctxt (FileClosed fileName) = do
+  case hasAnyFileBeenClosed ctxt of
+    True -> pure $ Right ()
+    False -> pure $ Left (OtherMsg, "Error: claimed to have closed file " <> fileName <> " but no file has been closed.")  
+{-
   st <- get
   case fileAlreadyOpen fileName st of
     True -> pure $ Left (OtherMsg, "Error: claimed to have closed file " <> fileName <> " but it's still open.")
     False -> pure $ Right ()
+-}
 
 data CheckContextSize = DoCheckContextSize | DontCheckContextSize
   deriving (Eq, Ord, Show)
@@ -223,13 +228,13 @@ runAiFuncInner checkContextSize origCtxt intReq tools exampleReturn postProcesso
     let msg = "Input context length is now " <> show (prompt_tokens queryStats) <> ", more than the configured max of " <> show (configModelMaxInputTokens cfg) <> ". Please CloseFile the least important open file."
         fileClosedRes = FileClosed "leastImportantFileName.go"
         fileClosedExample = Tools.returnValueToDescription $ fileClosedRes
-        taskExtra = "Your context is now too large, so please CloseFile the least important file (based on the above task) and after calling CloseFile immediately return like " <> fileClosedExample <> ". Please don't use any other tools or return anything else as they're disabled until you return a FileClosed."
-        ctxt' = (addErrorToContext ctxt msg OtherMsg) {contextTask = contextTask ctxt <> "\n" <> taskExtra}
+        taskExtra = "Your context is now too large, so please CloseFile the least important file (based on the below task) and after calling CloseFile immediately return like " <> fileClosedExample <> ". Please don't use any other tools or return anything else as they're disabled until you return a FileClosed."
+        baseCtxt = makeBaseContext (contextBackground ctxt) (taskExtra <> "\nThe task you were working on: \n" <> contextTask ctxt)
+        fileCloseContext = (addErrorToContext baseCtxt msg OtherMsg) 
         maxErrs = configTaskMaxFailures cfg
     liftIO $ Logging.logInfo "ContextReduction" $ "Telling model to reduce context size; msg: " <> msg
-    closedFile <- runAiFuncInner @bs DontCheckContextSize ctxt' MediumIntelligenceRequired [Tools.ToolCloseFile, Tools.ToolReturn] fileClosedRes validateFileClosed maxErrs
+    closedFile <- runAiFuncInner @bs DontCheckContextSize fileCloseContext MediumIntelligenceRequired [Tools.ToolCloseFile, Tools.ToolReturn] fileClosedRes validateFileClosed maxErrs
     liftIO $ Logging.logInfo "ContextReduction" $ "Successfully closed file: " <> show closedFile
-    return ()
   liftIO $ Logging.logInfo "AiResponse" (show res)
   let aiMsg = content res
       mayToolsCalled = Tools.findToolsCalled (content res) tools

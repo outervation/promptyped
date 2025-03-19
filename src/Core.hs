@@ -302,7 +302,7 @@ instance FromJSON Message
 renderMessage :: Message -> Text
 renderMessage (Message role text) = "{" <> role <> ": \n" <> text <> "\n}"
 
-data MsgKind = CompileFailMsg | TestFailMsg | FileModifiedMsg Text | OtherMsg
+data MsgKind = CompileFailMsg | TestFailMsg | FileModifiedMsg Text | FileClosedMsg Text | OtherMsg
   deriving (Eq, Ord, Show)
 
 data Context = Context
@@ -331,6 +331,13 @@ hasFileBeenModified context fileName =
   where
     isFileModified (FileModifiedMsg name, _) = name == fileName
     isFileModified _ = False
+
+hasAnyFileBeenClosed :: Context -> Bool
+hasAnyFileBeenClosed context =
+  any isFileClosed (contextRest context)
+  where
+    isFileClosed (FileClosedMsg _, _) = True
+    isFileClosed _ = False
 
 data Role = RoleSystem | RoleAssistant | RoleUser
   deriving (Show, Eq, Ord)

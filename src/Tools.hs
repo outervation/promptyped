@@ -962,7 +962,7 @@ runTool _ (ToolCallCloseFile args) origCtxt = do
       False -> pure $ \ctxt -> mkError ctxt OtherMsg ("cannot close file that isn't open: " <> fileName)
       True -> do
         modify' (closeOpenFile fileName)
-        pure $ \ctxt -> mkSuccess ctxt OtherMsg ("Closed file: " <> fileName)
+        pure $ \ctxt -> mkSuccess ctxt (FileClosedMsg fileName) ("Closed file: " <> fileName)
   return $ foldl' (\acc f -> f acc) initialCtxt ctxtUpdates
 runTool rawTexts (ToolCallAppendFile args) origCtxt = do
   let initialCtxt = origCtxt
