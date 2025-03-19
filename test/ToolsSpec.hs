@@ -261,12 +261,12 @@ spec2 :: Spec
 spec2 = describe "getLineNumsFromRegex" $ do
   let testContent =
         -- Lines with 1-based numbering:
-        -- 1: foo
-        -- 2: bar
-        -- 3: baz
-        -- 4: foo
-        -- 5: bar
-        -- 6: baz
+        -- 0: foo
+        -- 1: bar
+        -- 2: baz
+        -- 3: foo
+        -- 4: bar
+        -- 5: baz
         "foo\nbar\nbaz\nfoo\nbar\nbaz\n"
 
   it "finds start and end lines correctly with multiple matches" $ do
@@ -275,8 +275,14 @@ spec2 = describe "getLineNumsFromRegex" $ do
     --
     -- Then for end, lines 3 and 6 match "^baz$", and we want
     -- the one closest to line 6 (that is line 6).
-    let result = getLineNumsFromRegex ("^foo$", 2) ("^baz$", 6) testContent
-    result `shouldBe` Right (1, 6)
+    let result = getLineNumsFromRegex ("^foo$", 1) ("^baz$", 6) testContent
+    result `shouldBe` Right (0, 5)
+
+  it "handles space character class" $ do
+    let exampleContent = "         LocalTime:    now,"
+        pat = "^[[:space:]]*LocalTime:[[:space:]]*now,.*$"
+        result = getLineNumsFromRegex (pat, 0) (pat, 0) exampleContent
+    result `shouldBe` Right (0, 0)
 
   it "fails if the start regex is invalid" $ do
     -- We purposely use an invalid pattern, e.g. an unclosed parenthesis.
@@ -297,11 +303,11 @@ spec2 = describe "getLineNumsFromRegex" $ do
     -- "^nothing$" won't match any line in `testContent`.
     let result = getLineNumsFromRegex ("^nothing$", 2) ("^baz$", 6) testContent
     result
-      `shouldBe` Left "No lines matched the start pattern '^nothing$' in the entire text."
+      `shouldBe` Left "No lines matched the start pattern '^nothing$' in the entire text. Note only POSIX character classes are supported."
 
   it "fails if no line matches the end pattern after the start line" $ do
     -- The start pattern matches line 1 (closest to 2).
     -- Then we look for an end pattern that doesn't exist, e.g. "^qqqq$"
-    let result = getLineNumsFromRegex ("^foo$", 2) ("^qqqq$", 6) testContent
+    let result = getLineNumsFromRegex ("^foo$", 1) ("^qqqq$", 6) testContent
     result
-      `shouldBe` Left "No lines matched the end pattern '^qqqq$' at or after line 1."
+      `shouldBe` Left "No lines matched the end pattern '^qqqq$' at or after line 0. Note only POSIX character classes are supported."
