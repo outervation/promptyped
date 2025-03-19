@@ -28,8 +28,8 @@ instance ToJSON OpenFile
 
 instance FromJSON OpenFile
 
-renderOpenFile :: OpenFile -> Text
-renderOpenFile (OpenFile name contents) = "{ openFileName: " <> name <> ", openFileContents:\n" <> contents <> "\n}"
+renderOpenFile :: (Text -> Text) -> OpenFile -> Text
+renderOpenFile modifier (OpenFile name contents) = "{ openFileName: " <> name <> ", openFileContents:\n" <> modifier contents <> "\n}"
 
 data ExistingFile = ExistingFile
   { existingFileName :: Text,
@@ -47,6 +47,10 @@ renderExistingFile (ExistingFile name description) = "{ existingFileName: " <> n
 fileExists :: Text -> AppState -> Bool
 fileExists name theState =
   any (\file -> existingFileName file == name) (stateFiles theState)
+
+getOpenFile :: Text -> AppState -> Maybe OpenFile
+getOpenFile name theState =
+  find (\file -> openFileName file == name) (stateOpenFiles theState)
 
 fileAlreadyOpen :: Text -> AppState -> Bool
 fileAlreadyOpen name theState =
@@ -309,6 +313,9 @@ data Context = Context
   }
   deriving (Eq, Ord, Show)
 
+makeBaseContext :: Text -> Text -> Context
+makeBaseContext background task = Context {contextBackground = background, contextTask = task, contextRest = [], contextNumErrors = 0}
+
 addToContext :: Context -> MsgKind -> Message -> Context
 addToContext c kind msg = c {contextRest = contextRest c ++ [(kind, msg)]}
 
@@ -366,6 +373,13 @@ timeIONano64M action = do
   result <- action
   end <- liftIO getSystemTime
   return (result, getDuration start end)
+
+foldAllEithers :: (a -> AppM (Either Text b)) -> [a] -> AppM (Either Text [b])
+foldAllEithers f as = do
+  results <- traverse f as
+  return $ case partitionEithers results of
+    ([], bs) -> Right bs
+    (errs, _) -> Left (T.intercalate "\n" errs)
 
 foldWithErrors :: (Foldable t, Traversable t) => (a -> IO (Either Text ())) -> t a -> IO (Either Text ())
 foldWithErrors f xs = do

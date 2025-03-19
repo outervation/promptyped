@@ -14,6 +14,7 @@ import Data.ByteString.Lazy qualified as LBS
 import Data.List.Extra (takeEnd)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
+import FileSystem qualified as FS
 import Logging qualified
 import OpenRouterClient as Client
 import Relude
@@ -113,7 +114,7 @@ contextToMessages Context {..} tools theState exampleReturn = do
    in mergeAdjacentRoleMessages $ Message {role = roleName RoleUser, content = T.unlines allTexts} : messages
   where
     toolDesc = Tools.toolsToDescription tools
-    openFilesDesc = "All currently open files: \n " <> unlines (map renderOpenFile $ stateOpenFiles theState)
+    openFilesDesc = "All currently open files: \n " <> unlines (map (renderOpenFile FS.addLineNumbersToText) $ stateOpenFiles theState)
     filesDesc = "All available files: \n " <> unlines (map renderExistingFile $ stateFiles theState)
 
 shortenOldErrorMessages :: [(MsgKind, Message)] -> [(MsgKind, Message)]
@@ -243,16 +244,17 @@ runAiFuncInner checkContextSize origCtxt intReq tools exampleReturn postProcesso
     recur recurCtxt remainingErrs' = runAiFuncInner @bs checkContextSize recurCtxt intReq tools exampleReturn postProcessor remainingErrs'
 
     handleToolCalls :: Context -> [(Tools.Tool, [AET.Object])] -> Tools.RawTexts -> AppM b
-    handleToolCalls ctxtWithAiMsg callsRaw rawTextBlocks = case Tools.processToolsArgs callsRaw rawTextBlocks of
-      Left err -> addErrorAndRecurse ("Error in function calls/return logic: " <> err) ctxtWithAiMsg SyntaxError OtherMsg
-      Right calls -> do
-        cfg <- ask
-        let ctxtUpdates = flip map calls $ \x innerCtxt -> Tools.runTool @bs rawTextBlocks x innerCtxt
-        finalCtxt <- foldlM (\acc f -> f acc) ctxtWithAiMsg ctxtUpdates
-        let numNewErrs = contextNumErrors finalCtxt - contextNumErrors ctxtWithAiMsg
-        case (Tools.getReturn calls, numNewErrs > 0) of
-          (Just ret, False) -> postProcessor ret >>= either (handleReturnError finalCtxt) pure
-          _ -> recur finalCtxt (configTaskMaxFailures cfg)
+    handleToolCalls ctxtWithAiMsg callsRaw rawTextBlocks =
+      Tools.processToolsArgs callsRaw rawTextBlocks >>= \case
+        Left err -> addErrorAndRecurse ("Error in function calls/return logic: " <> err) ctxtWithAiMsg SyntaxError OtherMsg
+        Right calls -> do
+          cfg <- ask
+          let ctxtUpdates = flip map calls $ \x innerCtxt -> Tools.runTool @bs rawTextBlocks x innerCtxt
+          finalCtxt <- foldlM (\acc f -> f acc) ctxtWithAiMsg ctxtUpdates
+          let numNewErrs = contextNumErrors finalCtxt - contextNumErrors ctxtWithAiMsg
+          case (Tools.getReturn calls, numNewErrs > 0) of
+            (Just ret, False) -> postProcessor ret >>= either (handleReturnError finalCtxt) pure
+            _ -> recur finalCtxt (configTaskMaxFailures cfg)
 
     addErrorAndRecurse errMsg theCtxt errKind msgKind = do
       liftIO $ Logging.logWarn "RunAiFunc" errMsg

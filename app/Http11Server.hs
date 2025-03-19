@@ -57,11 +57,12 @@ makeGoHttpServer aCfg = do
       liftIO . putTextLn . show $ stateMetrics finalState
 
 sampleBigRefactorCfg :: BigRefactorConfig
-sampleBigRefactorCfg = BigRefactorConfig{
-  bigRefactorInitialOpenFiles = ["architecture.txt", "docs_summary.json", "files_summary.json"],
-  bigRefactorOverallTask = "YOUR OVERALL OBJECTIVE is to finalize the project; the initial implementation did not implement main.go. You need to find a file that combines everything into a single testable component (or create one if one doesn't exist), and write a bunch (a lot, thank you!) of integration tests for it that start the server locally running on a non-protected port, make http queries to it (e.g. using the Go stdlib) and assert that the results are correct/as expected. Once that's done, main.go should be populated, such that it just loads a json config (please implement an appropriate format) and uses it to start the server.",
-  bigRefactorOverallTaskShortName = "Finalize HTTP1.1 server"
-  }
+sampleBigRefactorCfg =
+  BigRefactorConfig
+    { bigRefactorInitialOpenFiles = ["architecture.txt", "docs_summary.json", "files_summary.json"],
+      bigRefactorOverallTask = "YOUR OVERALL OBJECTIVE is to finalize the project; the initial implementation did not implement main.go. You need to find a file that combines everything into a single testable component (or create one if one doesn't exist), and write a bunch (a lot, thank you!) of integration tests for it that start the server locally running on a non-protected port, make http queries to it (e.g. using the Go stdlib) and assert that the results are correct/as expected. Once that's done, main.go should be populated, such that it just loads a json config (please implement an appropriate format) and uses it to start the server.",
+      bigRefactorOverallTaskShortName = "Finalize HTTP1.1 server"
+    }
 
 architectureDesc :: Text
 architectureDesc =

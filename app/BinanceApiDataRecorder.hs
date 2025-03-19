@@ -67,15 +67,17 @@ makeGoBinanceApiDataRecorder aCfg = do
       liftIO . putTextLn . show $ stateMetrics finalState
 
 sampleBigRefactorCfg :: BigRefactorConfig
-sampleBigRefactorCfg = BigRefactorConfig{
-  bigRefactorInitialOpenFiles = ["binanceApiDetails_CoinMFutures.txt"],
-  bigRefactorOverallTask = "YOUR OBJECTIVE is to refactor the project to add support for Binance CoinM futures market data (it currently only supports Binance spot), as described in binanceApiDetails_CoinMFutures.txt."
+sampleBigRefactorCfg =
+  BigRefactorConfig
+    { bigRefactorInitialOpenFiles = ["binanceApiDetails_CoinMFutures.txt"],
+      bigRefactorOverallTask =
+        "YOUR OBJECTIVE is to refactor the project to add support for Binance CoinM futures market data (it currently only supports Binance spot), as described in binanceApiDetails_CoinMFutures.txt."
           <> "Note that the datatypes may be slightly different than for Binance spot; when this is the case you should create different structs for each, and store them in different parquet tables to the existing types."
           <> "The data should be saved to filenames containing the kind (spot or future), date and instrument, not just the date and instrument."
           <> "The config should be kind,instrument pairs, not just instrument, and depending on kind the code will properly pick and connect to Binance Spot or Futures."
           <> "You need to support aggregate trade streams, individual symbol book ticker streams, partial book depth streams, diff book depth streams, and mark price streams. Remember to implement logic so the data can be used for managing a local orderbook correctly, as already done for Binance Spot; how to do this is described in the doc.",
-  bigRefactorOverallTaskShortName = "Add support for Binance CoinM futures"
-  }
+      bigRefactorOverallTaskShortName = "Add support for Binance CoinM futures"
+    }
 
 projectSummary :: Text -> Text
 projectSummary projectName = projectSummaryGolang projectName <> PromptTexts.approachSummary <> binanceSummary

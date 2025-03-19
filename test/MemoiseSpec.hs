@@ -78,7 +78,9 @@ testWithCache useExistingCache = do
         Config
           { configApiKey = "",
             configApiSite = "openrouter.ai",
-            configModel = "chatgpt3.5",
+            configLowIntModel = "chatgpt3.5",
+            configMediumIntModel = "chatgpt3.5",
+            configHighIntModel = "chatgpt3.5",
             configBaseDir = "./",
             configCacheDir = "./",
             configBuildTimeoutSeconds = 60,
@@ -87,14 +89,16 @@ testWithCache useExistingCache = do
             configGitUserName = "",
             configGitUserEmail = "",
             configTaskMaxFailures = 1,
-            configForbiddenFiles = []
+            configForbiddenFiles = [],
+            configModelTemperature = Nothing,
+            configModelMaxInputTokens = 10000
           }
       initialState =
         AppState
           { stateMetrics = mempty,
             stateOpenFiles = [],
             stateFiles = [],
-            stateCompileTestRes = CompileTestState Nothing Nothing
+            stateCompileTestRes = CompileTestState Nothing Nothing 0
           }
 
   -- First run (always compute)

@@ -84,7 +84,7 @@ tryFileOp path op checker maybeBounds = do
     getRelevantFilePart contents = case maybeBounds of
       Just (FileChangeBounds firstLine lastLine) -> T.unlines $ sliceList firstLine lastLine $ T.lines contents
       Nothing -> contents
-      
+
     -- Restore from backup when validation fails
     restoreBackup :: FilePath -> T.Text -> AppM (Either T.Text ())
     restoreBackup backupPath err = do
@@ -125,7 +125,7 @@ updateOpenedFile fileName = do
         $ liftIO (ensureNoLineNumbers (toFilePath cfg fileName))
         >>= \case
           Left err -> throwError (fmtErr err)
-          Right contents -> modify' (updateOpenFile fileName (addLineNumbersToText contents))
+          Right contents -> modify' (updateOpenFile fileName contents)
 
 reloadOpenFiles :: AppM ()
 reloadOpenFiles = do

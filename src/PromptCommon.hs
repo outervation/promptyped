@@ -24,8 +24,8 @@ import Tools qualified
 journalFileName :: Text
 journalFileName = "journal.txt"
 
-data ProjectTexts = ProjectTexts {
-  projectSummaryText :: Text
+data ProjectTexts = ProjectTexts
+  { projectSummaryText :: Text
   }
   deriving (Generic, Eq, Ord, Show)
 
@@ -75,9 +75,9 @@ instance FromJSON FilesProposedChanges
 compilationAndTestsPass :: AppM Bool
 compilationAndTestsPass = do
   st <- get
-  let res  = stateCompileTestRes st
+  let res = stateCompileTestRes st
       cErr = compileRes res
-      tErr = testRes    res
+      tErr = testRes res
   return $ case (cErr, tErr) of
     (Nothing, Nothing) -> True
     _ -> False
@@ -235,7 +235,7 @@ validateUnitTests :: UnitTests -> AppM (Either (MsgKind, Text) UnitTests)
 validateUnitTests cf = pure $ Right cf
 
 allTools :: [Tools.Tool]
-allTools = [Tools.ToolOpenFile, Tools.ToolCloseFile, Tools.ToolAppendFile, Tools.ToolInsertInFile, Tools.ToolEditFile, Tools.ToolPanic, Tools.ToolReturn]
+allTools = [Tools.ToolOpenFile, Tools.ToolCloseFile, Tools.ToolAppendFile, Tools.ToolInsertInFile, Tools.ToolEditFileByMatch, Tools.ToolPanic, Tools.ToolReturn]
 
 readOnlyTools :: [Tools.Tool]
 readOnlyTools = [Tools.ToolOpenFile, Tools.ToolCloseFile, Tools.ToolPanic, Tools.ToolReturn]
@@ -273,13 +273,8 @@ makeUnitTestsInner background fileName makeTestPrompt = do
   cfg <- ask
   let unitTestExampleFileName = T.replace fileName " .go" "_test.go"
   Tools.openFile fileName cfg
-  let makeCtxt task =
-        Context
-          { contextBackground = background,
-            contextTask = task,
-            contextRest = []
-          }
-  let exampleUnitTests =
+  let makeCtxt task = makeBaseContext background task
+      exampleUnitTests =
         UnitTests
           { unitTestFileName = unitTestExampleFileName,
             unitTests =
@@ -287,7 +282,7 @@ makeUnitTestsInner background fileName makeTestPrompt = do
                 UnitTest "testsSomethingelseWorks" "Should test that ..."
               ]
           }
-  let runner fileName' = Engine.runAiFunc @bs (makeCtxt $ makeTestPrompt fileName') MediumIntelligenceRequired allTools exampleUnitTests validateUnitTests (configTaskMaxFailures cfg)
+      runner fileName' = Engine.runAiFunc @bs (makeCtxt $ makeTestPrompt fileName') MediumIntelligenceRequired allTools exampleUnitTests validateUnitTests (configTaskMaxFailures cfg)
   planRes <- memoise (configCacheDir cfg) "test_planner" fileName id runner
   let testFileName = unitTestFileName planRes
   Tools.openFile testFileName cfg
@@ -313,13 +308,8 @@ makeFile background extraFiles pf = do
   modify' clearOpenFiles
   let dependencies = [pf.name, journalFileName] ++ pf.dependencies ++ extraFiles
   forM_ dependencies $ \x -> Tools.openFile x cfg
-  let makeCtxt fileName =
-        Context
-          { contextBackground = background,
-            contextTask = makeSourcefilePrompt fileName pf.summary,
-            contextRest = []
-          }
-  let exampleCreatedFiles =
+  let makeCtxt fileName = makeBaseContext background $ makeSourcefilePrompt fileName pf.summary
+      exampleCreatedFiles =
         CreatedFiles
           { createdFiles =
               [ CreatedFile "someCode.go" "Code that ...",
@@ -344,12 +334,7 @@ makeRefactorFileTask background initialDeps fileName desiredChanges refactorUnit
   let dependencies = [fileName, journalFileName] ++ map (\x -> x.existingFileName) initialDeps
   forM_ dependencies $ \x -> Tools.openFile x cfg
   let makeChange description = do
-        let ctxt =
-              Context
-                { contextBackground = background,
-                  contextTask = "Your task is to refactor the file " <> fileName <> " to make the change: " <> show description,
-                  contextRest = []
-                }
+        let ctxt = makeBaseContext background $ "Your task is to refactor the file " <> fileName <> " to make the change: " <> show description
             exampleChange = ModifiedFile "someFile.go" "Update the file to add ... so that it ..."
         Engine.runAiFunc @bs ctxt MediumIntelligenceRequired allTools exampleChange validateAlwaysPassIfCompileTestsFine (configTaskMaxFailures cfg)
   modifications <- forM desiredChanges $ \x -> do
@@ -361,13 +346,15 @@ makeRefactorFileTask background initialDeps fileName desiredChanges refactorUnit
     $ makeUnitTestsInner @bs background fileName
     $ makeUnitTestsForSpecificChangePrompt modificationsTxt
 
-data BigRefactorConfig = BigRefactorConfig{
-  bigRefactorInitialOpenFiles :: [Text],
-  bigRefactorOverallTask :: Text,
-  bigRefactorOverallTaskShortName :: Text
+data BigRefactorConfig = BigRefactorConfig
+  { bigRefactorInitialOpenFiles :: [Text],
+    bigRefactorOverallTask :: Text,
+    bigRefactorOverallTaskShortName :: Text
   }
   deriving (Generic, Eq, Ord, Show)
+
 instance ToJSON BigRefactorConfig
+
 instance FromJSON BigRefactorConfig
 
 makeRefactorFilesProject :: forall bs. (BS.BuildSystem bs) => ProjectTexts -> BigRefactorConfig -> AppM ()
@@ -395,36 +382,28 @@ makeRefactorFilesProject projectTexts refactorCfg = do
       exampleProposedChanges = ThingsWithDependencies exampleThingsWithDependencies
       getChangesTask fileName = do
         let ctxt =
-              Context
-                { contextBackground = background,
-                  contextTask =
-                    "Please return a list of tasks that must be done (if any; there may be none) to refactor "
-                      <> fileName
-                      <> " to achieve the above objective ("
-                      <> objectiveShortName
-                      <> ")."
-                      <> "Each task should list other task dependencies if any, and there should be no circular dependencies."
-                      <> "If there's something relevant for later that you can't encode well in the return value, please AppendFile=<[{\"fileName\": \"journal.txt\", \"rawTextName\": \"journalUpdateTextBoxName\"}]> it to the journal.",
-                  contextRest = []
-                }
+              makeBaseContext background
+                $ "Please return a list of tasks that must be done (if any; there may be none) to refactor "
+                <> fileName
+                <> " to achieve the above objective ("
+                <> objectiveShortName
+                <> ")."
+                <> "Each task should list other task dependencies if any, and there should be no circular dependencies."
+                <> "If there's something relevant for later that you can't encode well in the return value, please AppendFile=<[{\"fileName\": \"journal.txt\", \"rawTextName\": \"journalUpdateTextBoxName\"}]> it to the journal."
         setupOpenFiles fileName
         Engine.runAiFunc @bs ctxt MediumIntelligenceRequired (Tools.ToolAppendFile : readOnlyTools) exampleProposedChanges validateThingsWithDependencies (configTaskMaxFailures cfg)
   plannedTasks <- forM_ sourceFileNames $ \fileName -> do
     fileTasks <- memoise (configCacheDir cfg) "file_dependencies" fileName id getChangesTask
     return $ FileProposedChanges fileName fileTasks
   let combineCtxt =
-        Context
-          { contextBackground = background,
-            contextTask =
-              "You've previously just produced a list per file of tasks that must be done to refactor each file to achieve the above objective ("
-                <> objectiveShortName
-                <> ")."
-                <> "Now please edit/update these where necessary to account for you now having vision of all tasks (previously you created each file's tasks independently), to e.g. remove duplication and make the overall plan coherent, and return the updated list of tasks."
-                <> "If there's something relevant for later that you can't encode well in the return value, please AppendFile=<[{\"fileName\": \"journal.txt\", \"rawTextName\": \"journalUpdateTextBoxName\"}]> it to the journal."
-                <> "The previously created tasks are: \n"
-                <> Tools.toJ plannedTasks,
-            contextRest = []
-          }
+        makeBaseContext background
+          $ "You've previously just produced a list per file of tasks that must be done to refactor each file to achieve the above objective ("
+          <> objectiveShortName
+          <> ")."
+          <> "Now please edit/update these where necessary to account for you now having vision of all tasks (previously you created each file's tasks independently), to e.g. remove duplication and make the overall plan coherent, and return the updated list of tasks."
+          <> "If there's something relevant for later that you can't encode well in the return value, please AppendFile=<[{\"fileName\": \"journal.txt\", \"rawTextName\": \"journalUpdateTextBoxName\"}]> it to the journal."
+          <> "The previously created tasks are: \n"
+          <> Tools.toJ plannedTasks
       combineExample =
         FilesProposedChanges
           [ FileProposedChanges "someFile.go" exampleThingsWithDependencies,
@@ -436,17 +415,13 @@ makeRefactorFilesProject projectTexts refactorCfg = do
   plannedTasksRefined <- memoise (configCacheDir cfg) "all_file_dependencies" () (const "") refineChangesTask
 
   let extraFilesCtxt =
-        Context
-          { contextBackground = background,
-            contextTask =
-              "You've previously just produced a list per file of tasks that must be done to refactor each file to achieve the above objective ("
-                <> objectiveShortName
-                <> ")."
-                <> "Now please think carefully about if there's any new files that will need to be created, due to some changes not fitting well into existing files, and return a list of such files along with detailed descriptions of each, and their dependencies if any."
-                <> "The previously created tasks are: \n"
-                <> Tools.toJ plannedTasks,
-            contextRest = []
-          }
+        makeBaseContext background
+          $ "You've previously just produced a list per file of tasks that must be done to refactor each file to achieve the above objective ("
+          <> objectiveShortName
+          <> ")."
+          <> "Now please think carefully about if there's any new files that will need to be created, due to some changes not fitting well into existing files, and return a list of such files along with detailed descriptions of each, and their dependencies if any."
+          <> "The previously created tasks are: \n"
+          <> Tools.toJ plannedTasks
       exampleExtraFiles =
         ThingsWithDependencies
           { items =
@@ -472,22 +447,12 @@ makeCreateFilesProject projectTexts projectCfg = do
   modify' (updateExistingFiles existingFileNames)
   let background = projectTexts.projectSummaryText
       archPrompt = makeArchitectureDesignPrompt
-      archCtxt =
-        Context
-          { contextBackground = background,
-            contextTask = archPrompt,
-            contextRest = []
-          }
+      archCtxt = makeBaseContext background archPrompt
       exampleArch = ThingWithDescription "The architecture of the project will be as follows: ..."
       archRunner () = Engine.runAiFunc @bs archCtxt HighIntelligenceRequired readOnlyTools exampleArch validateAlwaysPass (configTaskMaxFailures cfg)
   plannedArch <- memoise (configCacheDir cfg) "architecture" () (const "") archRunner
 
-  let ctxt =
-        Context
-          { contextBackground = background <> "\n The architecture will be as follows: \n" <> plannedArch.description,
-            contextTask = makeFilenamesPrompt,
-            contextRest = []
-          }
+  let ctxt = makeBaseContext (background <> "\n The architecture will be as follows: \n" <> plannedArch.description) makeFilenamesPrompt
       examplePlannedFiles =
         ThingsWithDependencies
           { items =
@@ -521,7 +486,7 @@ instance ToJSON TargetedRefactorConfig
 
 instance FromJSON TargetedRefactorConfig
 
-makeTargetedRefactorProject :: forall bs. (BS.BuildSystem bs) =>  ProjectTexts -> TargetedRefactorConfig -> AppM ()
+makeTargetedRefactorProject :: forall bs. (BS.BuildSystem bs) => ProjectTexts -> TargetedRefactorConfig -> AppM ()
 makeTargetedRefactorProject projectTexts refactorCfg = do
   cfg <- ask
   ignoredDirs <- BS.getIgnoredDirs @bs
@@ -544,18 +509,14 @@ makeTargetedRefactorProject projectTexts refactorCfg = do
             relFiles = rCfg.refactorFile : rCfg.refactorFileDependencies
             autoRefactorUnitTests = if rCfg.refactorUpdateTests then DoAutoRefactorUnitTests else DontAutoRefactorUnitTests
             mkCtxt fileName =
-              Context
-                { contextBackground = background,
-                  contextTask =
-                    "Please return a list of tasks that must be done to refactor "
-                      <> fileName
-                      <> " to achieve the objective: "
-                      <> rCfg.refactorTask
-                      <> "."
-                      <> "Each task should list other task dependencies if any, and there should be no circular dependencies."
-                      <> "If there's something relevant for later that you can't encode well in the return value, please AppendFile=<[{\"fileName\": \"journal.txt\", \"rawTextName\": \"journalUpdateTextBoxName\"}]> it to the journal.",
-                  contextRest = []
-                }
+              makeBaseContext background
+                $ "Please return a list of tasks that must be done to refactor "
+                <> fileName
+                <> " to achieve the objective: "
+                <> rCfg.refactorTask
+                <> "."
+                <> "Each task should list other task dependencies if any, and there should be no circular dependencies."
+                <> "If there's something relevant for later that you can't encode well in the return value, please AppendFile=<[{\"fileName\": \"journal.txt\", \"rawTextName\": \"journalUpdateTextBoxName\"}]> it to the journal."
             taskBackground = background <> "\nYour task for this file is: " <> rCfg.refactorTask
             getChangesTask fileName = Engine.runAiFunc @bs (mkCtxt fileName) HighIntelligenceRequired (Tools.ToolAppendFile : readOnlyTools) exampleTasks validateThingsWithDependencies (configTaskMaxFailures cfg)
         setupOpenFiles relFiles
@@ -594,14 +555,10 @@ makeFileAnalysisProject projectTexts = do
       getSummary :: Text -> AppM (Text, FileAnalysisResult)
       getSummary fileName = do
         let mkCtxt name =
-              Context
-                { contextBackground = background,
-                  contextTask =
-                    "Please check if "
-                      <> name
-                      <> " matches the specification, and return any ways it fails to satisfy it. Please also return detailed notes on its behaviour, for reference when checking other files.",
-                  contextRest = []
-                }
+              makeBaseContext background
+                $ "Please check if "
+                <> name
+                <> " matches the specification, and return any ways it fails to satisfy it. Please also return detailed notes on its behaviour, for reference when checking other files."
             exampleRes = FileAnalysisResult (fileName <> "doesn't meet the spec completely because it's supposed to ..., but it doesn't, and ...") "The file fulfills the following spec-relevant behaviours:"
             getChangesTask name = Engine.runAiFunc @bs (mkCtxt name) MediumIntelligenceRequired readOnlyTools exampleRes validateAlwaysPass (configTaskMaxFailures cfg)
         setupOpenFile fileName
@@ -610,11 +567,9 @@ makeFileAnalysisProject projectTexts = do
   summaries <- forM sourceFileNames getSummary
   let summariesCat = T.unlines $ map (\(name, res) -> name <> ":\n" <> renderFileAnalysisResult res) summaries
       combinedSummaryCtxt =
-        Context
-          { contextBackground = background,
-            contextTask = "You previously analysed files in the project to identify any way they failed to match the spec. Now, based on the result of your analysis (which was per-file), can you see any other ways in which overall the project fails to match the spec? The analysis was:\n" <> summariesCat,
-            contextRest = []
-          }
+        makeBaseContext background
+          $ "You previously analysed files in the project to identify any way they failed to match the spec. Now, based on the result of your analysis (which was per-file), can you see any other ways in which overall the project fails to match the spec? The analysis was:\n"
+          <> summariesCat
       exampleCombinedRes = ThingWithDescription "Overall the project doesn't have any files that fulfil the ... requirement completely because ..."
       getCombinedSummary () = Engine.runAiFunc @bs combinedSummaryCtxt HighIntelligenceRequired readOnlyTools exampleCombinedRes validateAlwaysPass (configTaskMaxFailures cfg)
   modify' clearOpenFiles
@@ -629,14 +584,15 @@ makeFileAnalysisProject projectTexts = do
     Right () -> putTextLn $ "Wrote result to " <> T.pack summaryFilePath
 
 data SpecSegmentPlan = SpecSegmentPlan
-  { segmentFileName :: Text
-  , segmentTitle    :: Text
-  , startLineNum    :: Int
-  , endLineNum      :: Int
+  { segmentFileName :: Text,
+    segmentTitle :: Text,
+    startLineNum :: Int,
+    endLineNum :: Int
   }
   deriving (Generic, Eq, Ord, Show)
 
 instance ToJSON SpecSegmentPlan
+
 instance FromJSON SpecSegmentPlan
 
 data SpecSegmentPlans = SpecSegmentPlans
@@ -645,137 +601,155 @@ data SpecSegmentPlans = SpecSegmentPlans
   deriving (Generic, Eq, Ord, Show)
 
 instance ToJSON SpecSegmentPlans
+
 instance FromJSON SpecSegmentPlans
 
-validateSpecSegmentPlans 
-  :: Int                   -- ^ docLength (total number of lines in the spec)
-  -> SpecSegmentPlans      -- ^ the proposed chunking plan
-  -> AppM (Either (MsgKind, Text) SpecSegmentPlans)
+validateSpecSegmentPlans ::
+  -- | docLength (total number of lines in the spec)
+  Int ->
+  -- | the proposed chunking plan
+  SpecSegmentPlans ->
+  AppM (Either (MsgKind, Text) SpecSegmentPlans)
 validateSpecSegmentPlans docLength ssp@(SpecSegmentPlans segments) = do
   let errors = concatMap checkSegment segments <> checkNoOverlaps (sortOn (.startLineNum) segments)
 
   if null errors
     then pure $ Right ssp
     else pure $ Left (OtherMsg, T.unlines errors)
- where
-  -- | Validate an individual segment
-  checkSegment :: SpecSegmentPlan -> [Text]
-  checkSegment SpecSegmentPlan{..} =
-    let errs =
-          [ "startLineNum must be >= 1, but got: " <> show startLineNum
+  where
+    -- \| Validate an individual segment
+    checkSegment :: SpecSegmentPlan -> [Text]
+    checkSegment SpecSegmentPlan {..} =
+      let errs =
+            [ "startLineNum must be >= 1, but got: " <> show startLineNum
             | startLineNum < 1
-          ]
-          <> [ "endLineNum must be >= 1, but got: " <> show endLineNum
-             | endLineNum < 1
-             ]
-          <> [ "endLineNum (" <> show endLineNum <> ") cannot exceed docLength (" <> show docLength <> ")"
-             | endLineNum > docLength
-             ]
-          <> [ "startLineNum (" <> show startLineNum <> ") cannot exceed endLineNum (" <> show endLineNum <> ")"
-             | startLineNum > endLineNum
-             ]
-    in errs
-
-  -- | Ensure no overlapping segments when sorted by startLineNum.
-  --   Because ranges are inclusive, we require that:
-  --      next.startLineNum > current.endLineNum
-  checkNoOverlaps :: [SpecSegmentPlan] -> [Text]
-  checkNoOverlaps []     = []
-  checkNoOverlaps [_]    = []
-  checkNoOverlaps (x:y:rest) =
-    let e = 
-          if y.startLineNum <= x.endLineNum
-            then [ "Overlapping segments detected: ("
-                   <> x.segmentFileName <> " has range "
-                   <> show (x.startLineNum, x.endLineNum) <> ") overlaps with ("
-                   <> y.segmentFileName <> " has range "
-                   <> show (y.startLineNum, y.endLineNum) <> ")"
+            ]
+              <> [ "endLineNum must be >= 1, but got: " <> show endLineNum
+                 | endLineNum < 1
                  ]
-            else []
-    in e <> checkNoOverlaps (y:rest)
+              <> [ "endLineNum (" <> show endLineNum <> ") cannot exceed docLength (" <> show docLength <> ")"
+                 | endLineNum > docLength
+                 ]
+              <> [ "startLineNum (" <> show startLineNum <> ") cannot exceed endLineNum (" <> show endLineNum <> ")"
+                 | startLineNum > endLineNum
+                 ]
+       in errs
+
+    -- \| Ensure no overlapping segments when sorted by startLineNum.
+    --   Because ranges are inclusive, we require that:
+    --      next.startLineNum > current.endLineNum
+    checkNoOverlaps :: [SpecSegmentPlan] -> [Text]
+    checkNoOverlaps [] = []
+    checkNoOverlaps [_] = []
+    checkNoOverlaps (x : y : rest) =
+      let e =
+            if y.startLineNum <= x.endLineNum
+              then
+                [ "Overlapping segments detected: ("
+                    <> x.segmentFileName
+                    <> " has range "
+                    <> show (x.startLineNum, x.endLineNum)
+                    <> ") overlaps with ("
+                    <> y.segmentFileName
+                    <> " has range "
+                    <> show (y.startLineNum, y.endLineNum)
+                    <> ")"
+                ]
+              else []
+       in e <> checkNoOverlaps (y : rest)
 
 --------------------------------------------------------------------------------
 
-makeCreateBasedOnSpecProject
-  :: forall bs. (BS.BuildSystem bs)
-  => ProjectTexts
-  -> Text          -- ^ path or filename of the spec
-  -> ProjectConfig
-  -> AppM ()
+makeCreateBasedOnSpecProject ::
+  forall bs.
+  (BS.BuildSystem bs) =>
+  ProjectTexts ->
+  -- | path or filename of the spec
+  Text ->
+  ProjectConfig ->
+  AppM ()
 makeCreateBasedOnSpecProject projectTexts specFileName projectCfg = do
   cfg <- ask
   liftIO $ DIR.createDirectoryIfMissing True (configBaseDir cfg)
   setupRes <- BS.setupProject @bs cfg projectCfg
-  when (isJust setupRes) $
-    throwError $ "Error setting up base project dir: " <> show setupRes
+  when (isJust setupRes)
+    $ throwError
+    $ "Error setting up base project dir: "
+    <> show setupRes
 
   -- 1) Read entire spec
   let specPathOnDisk = FS.toFilePath cfg specFileName
   specExists <- liftIO $ FS.fileExistsOnDisk specPathOnDisk
-  unless specExists $
-    throwError $ "Spec file does not exist: " <> T.pack specPathOnDisk
+  unless specExists
+    $ throwError
+    $ "Spec file does not exist: "
+    <> T.pack specPathOnDisk
 
   allSpecText <- liftIO $ FS.readFileToText specPathOnDisk
   let allSpecLines = T.lines allSpecText
 
   -- 2) Prompt for chunking plan
-  let lineCount   = length allSpecLines
-      chunkCtxt = Context
-        { contextBackground =
-            projectTexts.projectSummaryText
-        , contextTask =
-            "We have a specification in "
-            <> specFileName
-            <> " from lines 1.."
-            <> show lineCount
-            <> ". Please split it into multiple doc files, each covering a coherent subset. This allows the LLM to only load the relevant parts of the spec into context while working on each section.\n"
-            <> "For each doc file, return:\n"
-            <> "- segmentFileName\n"
-            <> "- segmentTitle\n"
-            <> "- startLineNum\n"
-            <> "- endLineNum\n\n"
-            <> "Return JSON describing the chunking plan for the spec."
-        , contextRest = []
-        }
-      exampleSegments = SpecSegmentPlans
-        { segmentPlans =
-            [ SpecSegmentPlan "http_spec_part1.txt" "HTTP Request-Line and Headers" 1 100
-            , SpecSegmentPlan "http_spec_part2.txt" "HTTP Response Formats" 101 200
-            ]
-        }
+  let lineCount = length allSpecLines
+      chunkCtxt =
+        makeBaseContext projectTexts.projectSummaryText
+          $ "We have a specification in "
+          <> specFileName
+          <> " from lines 1.."
+          <> show lineCount
+          <> ". Please split it into multiple doc files, each covering a coherent subset. This allows the LLM to only load the relevant parts of the spec into context while working on each section.\n"
+          <> "For each doc file, return:\n"
+          <> "- segmentFileName\n"
+          <> "- segmentTitle\n"
+          <> "- startLineNum\n"
+          <> "- endLineNum\n\n"
+          <> "Return JSON describing the chunking plan for the spec."
+      exampleSegments =
+        SpecSegmentPlans
+          { segmentPlans =
+              [ SpecSegmentPlan "http_spec_part1.txt" "HTTP Request-Line and Headers" 1 100,
+                SpecSegmentPlan "http_spec_part2.txt" "HTTP Response Formats" 101 200
+              ]
+          }
 
       -- If you want to allow journaling while chunking the spec,
       -- you can add `Tools.ToolAppendFile` to readOnlyTools:
       chunkingTools = Tools.ToolAppendFile : readOnlyTools
 
-      getSegmentPlans () = Engine.runAiFunc @bs
-         chunkCtxt
-         HighIntelligenceRequired
-         chunkingTools
-         exampleSegments
-         (validateSpecSegmentPlans lineCount)
-         (configTaskMaxFailures cfg)
+      getSegmentPlans () =
+        Engine.runAiFunc @bs
+          chunkCtxt
+          HighIntelligenceRequired
+          chunkingTools
+          exampleSegments
+          (validateSpecSegmentPlans lineCount)
+          (configTaskMaxFailures cfg)
 
   segmentPlansResult <- memoise (configCacheDir cfg) "split_spec_into_docs" () (const "") getSegmentPlans
 
   -- 3) Write out doc files
-  forM_ (segmentPlansResult.segmentPlans) $ \SpecSegmentPlan{..} -> do
+  forM_ (segmentPlansResult.segmentPlans) $ \SpecSegmentPlan {..} -> do
     let docFileFp = FS.toFilePath cfg segmentFileName
-        startIdx  = max 1 startLineNum
-        endIdx    = min lineCount endLineNum
+        startIdx = max 1 startLineNum
+        endIdx = min lineCount endLineNum
     if startIdx <= endIdx
       then do
-        let segmentText = T.unlines $ take (endIdx - startIdx + 1) $
-                                      drop (startIdx - 1) allSpecLines
+        let segmentText =
+              T.unlines
+                $ take (endIdx - startIdx + 1)
+                $ drop (startIdx - 1) allSpecLines
         liftIO $ FS.clearFileOnDisk docFileFp
         appendRes <- liftIO $ FS.appendToFile docFileFp segmentText
         case appendRes of
-          Left err -> throwError $
-            "Error writing doc segment " <> segmentFileName <> ": " <> err
+          Left err ->
+            throwError
+              $ "Error writing doc segment "
+              <> segmentFileName
+              <> ": "
+              <> err
           Right () -> pure ()
       else do
-        putTextLn $
-          "Warning: Invalid line range for "
+        putTextLn
+          $ "Warning: Invalid line range for "
           <> segmentFileName
           <> " ("
           <> show startLineNum
@@ -783,11 +757,18 @@ makeCreateBasedOnSpecProject projectTexts specFileName projectCfg = do
           <> show endLineNum
           <> ")"
         liftIO $ FS.clearFileOnDisk docFileFp
-        appendRes <- liftIO $ FS.appendToFile docFileFp $
-          "[No lines, invalid start/end range]\n" <> segmentTitle
+        appendRes <-
+          liftIO
+            $ FS.appendToFile docFileFp
+            $ "[No lines, invalid start/end range]\n"
+            <> segmentTitle
         case appendRes of
-          Left err -> throwError $
-            "Error writing doc segment " <> segmentFileName <> ": " <> err
+          Left err ->
+            throwError
+              $ "Error writing doc segment "
+              <> segmentFileName
+              <> ": "
+              <> err
           Right () -> pure ()
 
   -- 4) Gather doc files + existing files
@@ -797,59 +778,58 @@ makeCreateBasedOnSpecProject projectTexts specFileName projectCfg = do
 
   -- 5) Architecture design
   let archPrompt = makeArchitectureDesignPrompt <> " Your architecture should ideally break it into relatively independent components corresponding to the different sub-sections of the spec to minimise the amount of spec that needs to be included in the context."
-      archCtxt   = Context
-        { contextBackground =
-            projectTexts.projectSummaryText
-            <> "\nWe have these doc files describing different parts of the spec:\n"
-            <> Tools.toJ (segmentPlansResult.segmentPlans)
-        , contextTask = archPrompt
-        , contextRest = []
-        }
-      exampleArch = ThingWithDescription
-        "Overall architecture referencing sub-spec doc files..."
-      archRunner () = Engine.runAiFunc @bs
-        archCtxt
-        HighIntelligenceRequired
-        readOnlyTools
-        exampleArch
-        validateAlwaysPass
-        (configTaskMaxFailures cfg)
+      archCtxt =
+        makeBaseContext
+          ( projectTexts.projectSummaryText
+              <> "\nWe have these doc files describing different parts of the spec:\n"
+              <> Tools.toJ (segmentPlansResult.segmentPlans)
+          )
+          archPrompt
+      exampleArch =
+        ThingWithDescription
+          "Overall architecture referencing sub-spec doc files..."
+      archRunner () =
+        Engine.runAiFunc @bs
+          archCtxt
+          HighIntelligenceRequired
+          readOnlyTools
+          exampleArch
+          validateAlwaysPass
+          (configTaskMaxFailures cfg)
 
   plannedArch <- memoise (configCacheDir cfg) "architecture" () (const "") archRunner
 
   -- 6) Code file planning
   let background =
         projectTexts.projectSummaryText
-        <> "\nThe architecture will be as follows:\n"
-        <> plannedArch.description
-        <> "\nWe have these doc files for reference:\n"
-        <> Tools.toJ (segmentPlansResult.segmentPlans)
+          <> "\nThe architecture will be as follows:\n"
+          <> plannedArch.description
+          <> "\nWe have these doc files for reference:\n"
+          <> Tools.toJ (segmentPlansResult.segmentPlans)
 
-      filePlanCtxt = Context
-        { contextBackground = background
-        , contextTask       = makeFilenamesPrompt
-        , contextRest       = []
-        }
-      examplePlannedFiles = ThingsWithDependencies
-        { items =
-            [ ThingWithDependencies
-                "someFile.go"
-                "Handles lines 1..100 from http_spec_part1.txt"
-                ["http_spec_part1.txt"]
-            , ThingWithDependencies
-                "someOtherFile.go"
-                "Handles lines 101..200 from http_spec_part2.txt"
-                ["http_spec_part2.txt"]
-            ]
-        }
+      filePlanCtxt = makeBaseContext background makeFilenamesPrompt
+      examplePlannedFiles =
+        ThingsWithDependencies
+          { items =
+              [ ThingWithDependencies
+                  "someFile.go"
+                  "Handles lines 1..100 from http_spec_part1.txt"
+                  ["http_spec_part1.txt"],
+                ThingWithDependencies
+                  "someOtherFile.go"
+                  "Handles lines 101..200 from http_spec_part2.txt"
+                  ["http_spec_part2.txt"]
+              ]
+          }
 
-      runner () = Engine.runAiFunc @bs
-        filePlanCtxt
-        HighIntelligenceRequired
-        readOnlyTools
-        examplePlannedFiles
-        validateFileNamesNoNestedPaths
-        (configTaskMaxFailures cfg)
+      runner () =
+        Engine.runAiFunc @bs
+          filePlanCtxt
+          HighIntelligenceRequired
+          readOnlyTools
+          examplePlannedFiles
+          validateFileNamesNoNestedPaths
+          (configTaskMaxFailures cfg)
 
   plannedFiles <- memoise (configCacheDir cfg) "file_planner" () (const "") runner
 
@@ -858,23 +838,24 @@ makeCreateBasedOnSpecProject projectTexts specFileName projectCfg = do
 
   putTextLn "Finished creating project based on spec!"
 
-fixFailedTestsAndCompilationSimple
-  :: forall bs. (BS.BuildSystem bs)
-  => Text
-  -> AppM ()
+fixFailedTestsAndCompilationSimple ::
+  forall bs.
+  (BS.BuildSystem bs) =>
+  Text ->
+  AppM ()
 fixFailedTestsAndCompilationSimple background = do
   cfg <- ask
   origSt <- get
   sourceFileNames <- filterM (BS.isBuildableFile @bs) $ map existingFileName origSt.stateFiles
   case sourceFileNames of
     [] -> return ()
-    (someSourceFile:_) -> do
+    (someSourceFile : _) -> do
       _ <- Tools.considerBuildAndTest @bs someSourceFile
       st <- get
       let res = stateCompileTestRes st
           mayTask = case (compileRes res, testRes res) of
             (Nothing, Nothing) -> Nothing
-            (Just compileErr, _) -> Just $ "The project fails to build, please fix it. The error: \n" <> compileErr 
+            (Just compileErr, _) -> Just $ "The project fails to build, please fix it. The error: \n" <> compileErr
             (Nothing, Just testErr) -> Just $ "Fix the error that occurred building or running the tests. At each step please append to the journal.txt what you're currently doing and what you plan to do next. The error: \n" <> testErr
       case mayTask of
         Nothing -> do
@@ -882,27 +863,25 @@ fixFailedTestsAndCompilationSimple background = do
           return ()
         Just task -> do
           let exampleUnitTestDone = UnitTestDone True
-              ctxt = Context
-                { contextBackground = background, contextTask = "YOUR CURRENT TASK: "<> task, contextRest = []
-                }
+              ctxt = makeBaseContext background ("YOUR CURRENT TASK: " <> task)
           putTextLn $ "Running test fix: " <> task
           Engine.runAiFunc @bs ctxt MediumIntelligenceRequired allTools exampleUnitTestDone validateUnitTest (configTaskMaxFailures cfg)
           return ()
-      
 
 -- | A plan of how to fix each file that is failing compilation/tests
 data FailingFilePlan = FailingFilePlan
-  { failingFileName :: Text
-  , failingFileReason          :: Text
-    -- ^ Why it fails (taken from or inferred from compile/test messages)
-  , failingFileDependencies    :: [Text]
-    -- ^ Other files that may need to be opened/fixed
-  , fixPlan         :: Text
-    -- ^ A textual plan or summary of how the fix should proceed
+  { failingFileName :: Text,
+    -- | Why it fails (taken from or inferred from compile/test messages)
+    failingFileReason :: Text,
+    -- | Other files that may need to be opened/fixed
+    failingFileDependencies :: [Text],
+    -- | A textual plan or summary of how the fix should proceed
+    fixPlan :: Text
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON FailingFilePlan
+
 instance FromJSON FailingFilePlan
 
 -- | The top-level JSON structure listing all failing files
@@ -912,18 +891,20 @@ data FailingFilesPlan = FailingFilesPlan
   deriving (Show, Eq, Generic)
 
 instance ToJSON FailingFilesPlan
+
 instance FromJSON FailingFilesPlan
 
 -- | When we ask the LLM to fix a single file, it returns yes/no plus a rationale.
 --   We'll use a validator that checks the real compile/test results to see if
 --   references to that file remain.
 data SingleFileFixResult = SingleFileFixResult
-  { fileFixConfirmed :: Bool
-  , rationale        :: Text
+  { fileFixConfirmed :: Bool,
+    rationale :: Text
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON SingleFileFixResult
+
 instance FromJSON SingleFileFixResult
 
 --------------------------------------------------------------------------------
@@ -934,17 +915,19 @@ instance FromJSON SingleFileFixResult
 --   checks whether the error logs still mention @fileName@.
 --   If yes, we fail => the LLM gets re-prompted to fix the file.
 --   If no, we pass => continue to the next failing file.
-validateSingleFileFix
-  :: forall bs. (BS.BuildSystem bs)
-  => Text                   -- ^ The file we’re trying to fix
-  -> SingleFileFixResult
-  -> AppM (Either (MsgKind, Text) SingleFileFixResult)
+validateSingleFileFix ::
+  forall bs.
+  (BS.BuildSystem bs) =>
+  -- | The file we’re trying to fix
+  Text ->
+  SingleFileFixResult ->
+  AppM (Either (MsgKind, Text) SingleFileFixResult)
 validateSingleFileFix fileName userRes = do
   -- Re-run build and tests (pick a buildable file if you like):
   _ <- Tools.considerBuildAndTest @bs fileName
   st <- get
   let cErr = compileRes (stateCompileTestRes st)
-      tErr = testRes    (stateCompileTestRes st)
+      tErr = testRes (stateCompileTestRes st)
   case (cErr, tErr) of
     (Nothing, Nothing) ->
       -- No errors at all => definitely no mention of 'fileName'.
@@ -952,23 +935,29 @@ validateSingleFileFix fileName userRes = do
     (Just err, _) -> pure $ Left (OtherMsg, "Compilation is still failing; error is: " <> err)
     _ ->
       let allErr = fromMaybe "" cErr <> "\n" <> fromMaybe "" tErr
-      in if T.isInfixOf (" " <> fileName) allErr
-           then pure $ Left
-              ( OtherMsg
-              , "Still seeing an error referencing " <> fileName
-                <> ". The build/test errors are:\n"
-                <> allErr
-              )
-           else
+       in if T.isInfixOf (" " <> fileName) allErr
+            then
+              pure
+                $ Left
+                  ( OtherMsg,
+                    "Still seeing an error referencing "
+                      <> fileName
+                      <> ". The build/test errors are:\n"
+                      <> allErr
+                  )
+            else
               -- Some other file is still failing, but *this* file isn't
               -- mentioned => we consider this file "fixed."
               pure $ Right userRes
 
-fixFailedTestsAndCompilation
-  :: forall bs. (BS.BuildSystem bs)
-  => Text      -- ^ Some background or context that the LLM should always see
-  -> [Text]    -- ^ Relevant dependencies
-  -> AppM ()
+fixFailedTestsAndCompilation ::
+  forall bs.
+  (BS.BuildSystem bs) =>
+  -- | Some background or context that the LLM should always see
+  Text ->
+  -- | Relevant dependencies
+  [Text] ->
+  AppM ()
 fixFailedTestsAndCompilation background relevantFiles = do
   cfg <- ask
 
@@ -976,60 +965,59 @@ fixFailedTestsAndCompilation background relevantFiles = do
   --    (pick any buildable file or an existing main file, etc.)
   _ <- Tools.considerBuildAndTest @bs "main.go"
   st <- get
-  let res  = stateCompileTestRes st
+  let res = stateCompileTestRes st
       cErr = compileRes res
-      tErr = testRes    res
+      tErr = testRes res
 
   case (cErr, tErr) of
     (Nothing, Nothing) -> do
       putTextLn "Compilation and all tests are already passing. Nothing to fix."
       pure ()
-
     _ -> do
       let errorsCombined =
-            "Compilation error:\n" <> fromMaybe "" cErr
-            <> "\nTest error:\n"   <> fromMaybe "" tErr
+            "Compilation error:\n"
+              <> fromMaybe "" cErr
+              <> "\nTest error:\n"
+              <> fromMaybe "" tErr
 
       -- 2) Ask the LLM to produce a plan listing the failing files
       let planContext =
-            Context
-              { contextBackground = background
-              , contextTask =
-                  "YOUR CURRENT TASK: fixing compilation/test failures. "
-                  <> "We have the following errors:\n"
-                  <> errorsCombined
-                  <> "\n\nPlease identify which files are failing (don't compile, or have a unit test that fails to pass)."
-                  <> "For each failing file, list:\n"
-                  <> "- failingFileName\n"
-                  <> "- failingFileReason (how or why it fails)\n"
-                  <> "- failingFileDependencies (other files we may need to open to fix it)\n"
-                  <> "- fixPlan (the approach to fix that file)\n\n"
-                  <> "Return them as JSON in the required format. For dependencies, remember to "
-                  <> "include documentation/specification files that may be useful. "
-                  <> "Note that it's possible some existing tests may be wrong; always check the spec to make sure the test is testing for the correct behaviour."
-              , contextRest = []
-              }
+            makeBaseContext background
+              $ "YOUR CURRENT TASK: fixing compilation/test failures. "
+              <> "We have the following errors:\n"
+              <> errorsCombined
+              <> "\n\nPlease identify which files are failing (don't compile, or have a unit test that fails to pass)."
+              <> "For each failing file, list:\n"
+              <> "- failingFileName\n"
+              <> "- failingFileReason (how or why it fails)\n"
+              <> "- failingFileDependencies (other files we may need to open to fix it)\n"
+              <> "- fixPlan (the approach to fix that file)\n\n"
+              <> "Return them as JSON in the required format. For dependencies, remember to "
+              <> "include documentation/specification files that may be useful. "
+              <> "Note that it's possible some existing tests may be wrong; always check the spec to make sure the test is testing for the correct behaviour."
 
-          examplePlan = FailingFilesPlan
-            { failingFiles =
-              [ FailingFilePlan
-                  { failingFileName = "main.go"
-                  , failingFileReason          = "Possible syntax error on line 42"
-                  , failingFileDependencies    = ["main_test.go", "utility.go"]
-                  , fixPlan         = "We will correct the syntax and then update the test."
-                  }
-              ]
-            }
+          examplePlan =
+            FailingFilesPlan
+              { failingFiles =
+                  [ FailingFilePlan
+                      { failingFileName = "main.go",
+                        failingFileReason = "Possible syntax error on line 42",
+                        failingFileDependencies = ["main_test.go", "utility.go"],
+                        fixPlan = "We will correct the syntax and then update the test."
+                      }
+                  ]
+              }
       modify' clearOpenFiles
       forM_ (journalFileName : relevantFiles) $ \dep ->
         Tools.openFile dep cfg
-      plan <- Engine.runAiFunc @bs
-                planContext
-                HighIntelligenceRequired
-                readOnlyTools
-                examplePlan
-                validateAlwaysPass
-                (configTaskMaxFailures cfg)
+      plan <-
+        Engine.runAiFunc @bs
+          planContext
+          HighIntelligenceRequired
+          readOnlyTools
+          examplePlan
+          validateAlwaysPass
+          (configTaskMaxFailures cfg)
 
       -- 3) For each failing file, attempt a fix
       forM_ (plan.failingFiles) $ \fPlan -> do
@@ -1040,32 +1028,33 @@ fixFailedTestsAndCompilation background relevantFiles = do
           Tools.openFile dep cfg
 
         let fixContext =
-              Context
-                { contextBackground = background
-                , contextTask =
-                    "YOUR CURRENT TASK: fixing compilation/test failures. "
-                    <> "File to fix: " <> fPlan.failingFileName
-                    <> "\nReason: " <> fPlan.failingFileReason
-                    <> "\nProposed approach: " <> fPlan.fixPlan
-                    <> "\n\nPlease implement the fix now. Write the approach you take to the journal for future reference, with particular emphasis on any assumptions you're making (to avoid cycles of some test fixes breaking other tests that make different assumptions), and note the spec should be the main source of truth, followed by real integration test behaviour. Don't mention trivial things like code change details/fixes, only mention changes in logic/behaviour or assumptions."
-                , contextRest = []
-                }
+              makeBaseContext background
+                $ "YOUR CURRENT TASK: fixing compilation/test failures. "
+                <> "File to fix: "
+                <> fPlan.failingFileName
+                <> "\nReason: "
+                <> fPlan.failingFileReason
+                <> "\nProposed approach: "
+                <> fPlan.fixPlan
+                <> "\n\nPlease implement the fix now. Write the approach you take to the journal for future reference, with particular emphasis on any assumptions you're making (to avoid cycles of some test fixes breaking other tests that make different assumptions), and note the spec should be the main source of truth, followed by real integration test behaviour. Don't mention trivial things like code change details/fixes, only mention changes in logic/behaviour or assumptions."
 
-            exampleFixConfirmation = SingleFileFixResult
-              { fileFixConfirmed = True
-              , rationale        = "Corrected syntax; test now passes."
-              }
+            exampleFixConfirmation =
+              SingleFileFixResult
+                { fileFixConfirmed = True,
+                  rationale = "Corrected syntax; test now passes."
+                }
 
         -- This will be re-called if the file’s errors still appear.
         putTextLn $ "Attempting to fix " <> fPlan.failingFileName
-        _ <- Engine.runAiFunc @bs
-               fixContext
-               MediumIntelligenceRequired
-               -- Tools for editing/writing code:
-               allTools
-               exampleFixConfirmation
-               (validateSingleFileFix @bs fPlan.failingFileName)
-               (configTaskMaxFailures cfg)
+        _ <-
+          Engine.runAiFunc @bs
+            fixContext
+            MediumIntelligenceRequired
+            -- Tools for editing/writing code:
+            allTools
+            exampleFixConfirmation
+            (validateSingleFileFix @bs fPlan.failingFileName)
+            (configTaskMaxFailures cfg)
         return ()
 
       putTextLn "Done fixing all files that were identified!"

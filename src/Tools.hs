@@ -21,11 +21,13 @@ import FileSystem qualified as FS
 import Logging qualified
 import Relude
 import ShapeChecker (checkShapesMatch)
+import Text.Regex.Base (makeRegexM)
+import Text.Regex.TDFA (Regex, match)
 
-data Tool = ToolOpenFile | ToolCloseFile | ToolAppendFile | ToolReplaceFile | ToolInsertInFile | ToolEditFile | ToolRevertFile | ToolFileLineOp | ToolPanic | ToolReturn
+data Tool = ToolOpenFile | ToolCloseFile | ToolAppendFile | ToolReplaceFile | ToolInsertInFile | ToolEditFile | ToolEditFileByMatch | ToolRevertFile | ToolFileLineOp | ToolPanic | ToolReturn
   deriving (Eq, Ord, Show)
 
-data ToolCall a = ToolCallOpenFile [OpenFileArg] | ToolCallCloseFile [CloseFileArg] | ToolCallAppendFile [AppendFileArg] | ToolCallReplaceFile [AppendFileArg] | ToolCallEditFile [EditFileArg] | ToolCallRevertFile [RevertFileArg] | ToolCallInsertInFile [InsertInFileArg] | ToolCallFileLineOp [FileLineOpArg] | ToolCallPanic PanicArg | ToolCallReturn a
+data ToolCall a = ToolCallOpenFile [OpenFileArg] | ToolCallCloseFile [CloseFileArg] | ToolCallAppendFile [AppendFileArg] | ToolCallReplaceFile [AppendFileArg] | ToolCallEditFile [EditFileArg] | ToolCallEditFileByMatch [EditFileByMatchArg] | ToolCallRevertFile [RevertFileArg] | ToolCallInsertInFile [InsertInFileArg] | ToolCallFileLineOp [FileLineOpArg] | ToolCallPanic PanicArg | ToolCallReturn a
   deriving (Generic, Eq, Ord, Show)
 
 instance (ToJSON a) => ToJSON (ToolCall a)
@@ -38,6 +40,7 @@ toolCallTool (ToolCallCloseFile _) = ToolCloseFile
 toolCallTool (ToolCallAppendFile _) = ToolAppendFile
 toolCallTool (ToolCallReplaceFile _) = ToolReplaceFile
 toolCallTool (ToolCallEditFile _) = ToolEditFile
+toolCallTool (ToolCallEditFileByMatch _) = ToolEditFileByMatch
 toolCallTool (ToolCallInsertInFile _) = ToolInsertInFile
 toolCallTool (ToolCallRevertFile _) = ToolRevertFile
 toolCallTool (ToolCallPanic _) = ToolPanic
@@ -82,6 +85,10 @@ mergeToolCalls =
         ToolCallEditFile _ ->
           [ ToolCallEditFile
               (concat [as | ToolCallEditFile as <- grp])
+          ]
+        ToolCallEditFileByMatch _ ->
+          [ ToolCallEditFileByMatch
+              (concat [as | ToolCallEditFileByMatch as <- grp])
           ]
         ToolCallRevertFile _ ->
           [ ToolCallRevertFile
@@ -134,6 +141,20 @@ data EditFileArg = EditFileArg
 instance ToJSON EditFileArg
 
 instance FromJSON EditFileArg
+
+data EditFileByMatchArg = EditFileByMatchArg
+  { fileName :: Text,
+    startLineMatchesRegex :: Text,
+    startClosestToLineNum :: Int,
+    endLineMatchesRegex :: Text,
+    endClosestToLineNum :: Int,
+    rawTextName :: Text
+  }
+  deriving (Generic, Show, Eq, Ord)
+
+instance ToJSON EditFileByMatchArg
+
+instance FromJSON EditFileByMatchArg
 
 data InsertInFileArg = InsertInFileArg
   { fileName :: Text,
@@ -264,6 +285,89 @@ toolName x = T.drop 4 $ show x
 toolSummary :: Text
 toolSummary = "You have the following tools available to you, that you may call with JSON args. Line numbers are included for your OpenFiles to simplify your task, but are not present in the files on disk (so don't explicitly write line numbers to disk!). For tools that modify files, after modification the file will be compiled if a source file, and run if it's a unit test file. \n IMPORTANT NOTE: for Append/Edit/InsertIn file, you don't provide the text as part of the json, instead you set \"rawTextName\": \"someRawTextBox\", and then afterwards include the raw string literal in C++ style RAWTEXT[someRawTextBox]=R\"r( ...the actual text... )r\". This is to avoid the need for JSON-escaping the code/text; you instead directly include the unescaped text in between the R\"r( and )r\". It allows allows multiple commands to refer to the same raw text box where necessary (e.g. if inserting the same code in multiple places). Note that LINE NUMBERS START AT ZERO, and appear at the START of the line, not the end."
 
+-- | Compile a Text regex with error reporting using regex-tdfa.
+compileRegex :: Text -> Either Text Regex
+compileRegex pat =
+  first
+    ( \errStr ->
+        "Invalid regex '" <> pat <> "': " <> errStr
+    )
+    $ makeRegexM (T.unpack pat)
+
+-- | Check if a Text line matches a compiled Regex.
+lineMatches :: Regex -> Text -> Bool
+lineMatches r txt = match r txt
+
+-- | Find the integer in a non-empty list closest to the target.
+--   If there's a tie, it will choose the smaller line number.
+closestTo :: Int -> [Int] -> Maybe Int
+closestTo target xs = viaNonEmpty Relude.head $ sortOn (\n -> (abs (n - target), n)) xs
+
+-------------------------------------------------------------------------------
+
+-- | The main function.
+--   Takes (startRegex, startClosestLine) and (endRegex, endClosestLine), plus the file/text content.
+--   Returns either an error or (startLineNum, endLineNum).
+
+-------------------------------------------------------------------------------
+getLineNumsFromRegex ::
+  -- | (startLineNumRegex, startLineNumClosestTo)
+  (Text, Int) ->
+  -- | (endLineNumRegex,   endLineNumClosestTo)
+  (Text, Int) ->
+  -- | The text to scan
+  Text ->
+  Either Text (Int, Int)
+getLineNumsFromRegex
+  (startLineNumRegex, startLineNumClosestTo)
+  (endLineNumRegex, endLineNumClosestTo)
+  txt = do
+    -- 1. Compile both regexes, or fail with descriptive error
+    startRegex <- compileRegex startLineNumRegex
+    endRegex <- compileRegex endLineNumRegex
+
+    let linesList = T.lines txt
+        -- Attach 1-based line numbers
+        numberedLines = zip [1 ..] linesList
+
+        -- 2. All lines matching the start pattern
+        matchedStartLines =
+          [ i
+          | (i, lineText) <- numberedLines,
+            lineMatches startRegex lineText
+          ]
+
+    -- 3. Pick the match closest to startLineNumClosestTo (if none, error)
+    startLineNum <-
+      maybeToRight
+        ( "No lines matched the start pattern '"
+            <> startLineNumRegex
+            <> "' in the entire text."
+        )
+        (closestTo startLineNumClosestTo matchedStartLines)
+
+    -- 4. Among lines >= startLineNum, match the end pattern
+    let matchedEndLines =
+          [ i
+          | (i, lineText) <- numberedLines,
+            i >= startLineNum,
+            lineMatches endRegex lineText
+          ]
+
+    -- 5. Pick the match closest to endLineNumClosestTo (if none, error)
+    endLineNum <-
+      maybeToRight
+        ( "No lines matched the end pattern '"
+            <> endLineNumRegex
+            <> "' at or after line "
+            <> show startLineNum
+            <> "."
+        )
+        (closestTo endLineNumClosestTo matchedEndLines)
+
+    -- 6. Return success
+    pure (startLineNum, endLineNum)
+
 toJObj :: AET.Object -> Text
 toJObj = TE.decodeUtf8Lenient . LBS.toStrict . AE.encode
 
@@ -298,6 +402,7 @@ toolArgFormatAndDesc ToolCloseFile = (toJ CloseFileArg {fileName = "someFile.txt
 toolArgFormatAndDesc ToolAppendFile = (toJ AppendFileArg {fileName = "somefile.txt", rawTextName = "codeToAppendBox"}, mkSampleCodeBox "codeToAppendBox", "Append code/text to the bottom of a file. Can be used to create a new file if the file exists.")
 toolArgFormatAndDesc ToolReplaceFile = (toJ AppendFileArg {fileName = "somefile.txt", rawTextName = "codeToReplaceBox"}, mkSampleCodeBox "codeToReplaceBox", "Replace a file with the provided code/text to a file. Can be used to create a new file. Prefer this over editing when the file is small.")
 toolArgFormatAndDesc ToolEditFile = (toJ EditFileArg {fileName = "somefile.txt", startLineNum = 5, endLineNum = 10, rawTextName = "codeBoxToReplaceWith"}, mkSampleCodeBox "codeBoxToReplaceWith", "Replace text in [startLineNum, endLineNum] with the text you provide. Note if making multiple edits to the same file, the start/end line numbers of different edits cannot overlap. IMPORTANT: if you insert more lines than you're replacing, the rest will be inserted, not replaced. So inserting 2 lines at at startLineNum=15 endLineNum=15 will only replace the existing line 15 in the file, and add the second provided line after that, it won't replace lines 15 and 16. Note too that the line-numbers are provided to you at the START of the line in every file. Remember line numbers start at zero.")
+toolArgFormatAndDesc ToolEditFileByMatch = (toJ EditFileByMatchArg {fileName = "somefile.txt", startLineMatchesRegex = "int some_func(.*){", startClosestToLineNum = 5, endLineMatchesRegex = "^}", endClosestToLineNum = 20, rawTextName = "codeBoxToReplaceWith"}, mkSampleCodeBox "codeBoxToReplaceWith", "Finds lines matching the startLineNumMatchesRegex and endLineMatchesRegex, and replaces them and the lines between them with with the text you provide. Where multiple matches are present, the match closest to startCloestToLineNum/endClosestToLineNum will be used. Note if making multiple edits to the same file, the regions edited cannot overlap. Note also the regex is simple DFA, and does not support fancy PCRE features. Finally, note that the /* lineNum */ comments are purely to assist you and not present on disk, so your regex shouldn't assume they exist.")
 toolArgFormatAndDesc ToolInsertInFile = (toJ InsertInFileArg {fileName = "somefile.txt", lineNum = 17, rawTextName = "codeToInsertBox"}, mkSampleCodeBox "codeToInsertBox", "Insert the provided text into the file at lineNum, not replacing/overwriting the content on that line (instead it's moved to below the inserted text).")
 toolArgFormatAndDesc ToolRevertFile = (toJ RevertFileArg {fileName = "someFile.txt"}, "", "Revert un-added changes in an open file; changes are committed when compilation and unit tests succeed, so will revert to the last version of the file before compilation or unit tests failed. Use this if you get the file in a state you can't recover it from.")
 toolArgFormatAndDesc ToolPanic = (toJ PanicArg {reason = "This task is impossible for me to do because ..."}, "", "Call this if you can't complete the task due to it being impossible or not having enough information")
@@ -651,25 +756,43 @@ processToolArgs rawTexts tool@ToolCloseFile args = ToolCallCloseFile <$> process
 processToolArgs rawTexts tool@ToolAppendFile args = ToolCallAppendFile <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolReplaceFile args = ToolCallReplaceFile <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolEditFile args = ToolCallEditFile <$> processArgsOfType tool rawTexts args
+processToolArgs rawTexts tool@ToolEditFileByMatch args = ToolCallEditFileByMatch <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolInsertInFile args = ToolCallInsertInFile <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolRevertFile args = ToolCallRevertFile <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolFileLineOp args = ToolCallFileLineOp <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolPanic args = ToolCallPanic <$> processArgOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolReturn args = ToolCallReturn <$> processArgOfType tool rawTexts args
 
-processToolsArgs :: (FromJSON a, Show a) => [(Tool, [AET.Object])] -> RawTexts -> Either Text [ToolCall a]
+processToolsArgs :: (FromJSON a, Show a) => [(Tool, [AET.Object])] -> RawTexts -> AppM (Either Text [ToolCall a])
 processToolsArgs toolArgs rawTexts = case partitionEithers (map (uncurry (processToolArgs rawTexts)) toolArgs) of
-  ([], results) -> Right . mergeToolCalls $ map normaliseLineOpTool results
-  (errors, _) -> Left (T.intercalate ", " errors)
+  ([], results) -> do
+    normalisationResults <- foldAllEithers normaliseLineOpTool results
+    let updErr err = "Error processing tool args: " <> err
+    pure $ bimap updErr mergeToolCalls normalisationResults
+  (errors, _) -> pure $ Left (T.intercalate ", " errors)
 
-normaliseLineOpTool :: ToolCall a -> ToolCall a
+normaliseLineOpTool :: ToolCall a -> AppM (Either Text (ToolCall a))
 normaliseLineOpTool (ToolCallEditFile args) = do
   let modifyArg (EditFileArg fileName start end textBoxName) = FileLineOpArg fileName start (end + 1) textBoxName (toolName ToolEditFile)
-  ToolCallFileLineOp $ map modifyArg args
+  pure . Right . ToolCallFileLineOp $ map modifyArg args
 normaliseLineOpTool (ToolCallInsertInFile args) = do
   let modifyArg (InsertInFileArg fileName lineNum textBoxName) = FileLineOpArg fileName lineNum lineNum textBoxName (toolName ToolInsertInFile)
-  ToolCallFileLineOp $ map modifyArg args
-normaliseLineOpTool x = x
+  pure . Right . ToolCallFileLineOp $ map modifyArg args
+normaliseLineOpTool (ToolCallEditFileByMatch args) = do
+  st <- get
+  let modifyArg :: EditFileByMatchArg -> AppM (Either Text FileLineOpArg)
+      modifyArg (EditFileByMatchArg fileName startRegex startNearNum endRegex endNearNum textBoxName) =
+        case getOpenFile fileName st of
+          Nothing -> pure . Left $ "Cannot edit file that's not open: " <> fileName
+          (Just oFile) -> do
+            let contents = openFileContents oFile
+                mayLineNums = getLineNumsFromRegex (startRegex, startNearNum) (endRegex, endNearNum) contents
+                updErr err = "Error attempting to find line nums for EditFileByMatch tool: " <> err
+                toLineOp (startNum, endNum) = FileLineOpArg fileName startNum (endNum + 1) textBoxName (toolName ToolEditFileByMatch)
+            pure $ bimap updErr toLineOp mayLineNums
+  mayNewArgs <- foldAllEithers modifyArg args
+  pure $ second ToolCallFileLineOp mayNewArgs
+normaliseLineOpTool x = pure $ Right x
 
 mkSuccess :: Context -> MsgKind -> Text -> Context
 mkSuccess ctxt kind = addToContextUser ctxt kind . mappend "Success: "
@@ -857,6 +980,8 @@ runTool _ (ToolCallInsertInFile args) _ = do
   throwError $ "runTool saw raw ToolCallInsertInFile " <> show args
 runTool _ (ToolCallEditFile args) _ = do
   throwError $ "runTool saw raw ToolCallEditFile " <> show args
+runTool _ (ToolCallEditFileByMatch args) _ = do
+  throwError $ "runTool saw raw ToolCallEditFileByMatch " <> show args
 runTool rawTexts (ToolCallFileLineOp args) origCtxt = do
   let initialCtxt = origCtxt
       sortedArgAttempt = validateAndSortFileLineArgs args
@@ -911,6 +1036,7 @@ instance ToJSON MockCreatedFiles
 
 instance FromJSON MockCreatedFiles
 
+{-
 main :: IO ()
 main = do
   let tools = [ToolOpenFile, ToolCloseFile, ToolAppendFile, ToolEditFile, ToolReplaceFile, ToolPanic, ToolReturn]
@@ -918,4 +1044,6 @@ main = do
     Left err -> putStrLn $ "Error: " <> T.unpack err
     Right results -> do
       putStrLn "Successfully parsed tools:"
-      mapM_ print (processToolsArgs @MockCreatedFiles results [])
+      res <- processToolsArgs @MockCreatedFiles results []
+      mapM_ print res
+-}
