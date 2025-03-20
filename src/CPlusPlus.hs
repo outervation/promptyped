@@ -5,6 +5,7 @@ module CPlusPlus where
 
 import BuildSystem (BuildSystem (..))
 import Control.Exception (IOException, try)
+import Control.Monad.Except
 import Core
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
@@ -171,6 +172,9 @@ instance BuildSystem CPlusPlusLang where
   getFormatChecker _ = do
     let alwaysPass = pure Nothing :: IO (Maybe Text)
     pure alwaysPass
+
+  minimiseFile _ = do
+    throwError "File minimisation not supported for C++ yet"
 
 sampleTestFile :: Text
 sampleTestFile =

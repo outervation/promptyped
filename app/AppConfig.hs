@@ -31,6 +31,7 @@ data AppConfig = AppConfig
     gitUserEmail :: Text,
     taskMaxFailures :: Int,
     projectKind :: ProjectKind,
+    maxNumFocusedFiles :: Int,
     modelTemperature :: Maybe Float,
     modelMaxInputTokens :: Int,
     targetedRefactorCfg :: Maybe PC.TargetedRefactorConfig,
@@ -54,6 +55,7 @@ appConfigToConfig aCfg =
           configGitUserName = gitUserName aCfg,
           configGitUserEmail = gitUserEmail aCfg,
           configEnvVars = [],
+          configMaxNumFocusedFiles = maxNumFocusedFiles aCfg,
           configTaskMaxFailures = RemainingFailureTolerance (taskMaxFailures aCfg),
           configForbiddenFiles =
             [ ForbiddenFile "go.mod" cannotModifyDepReason,

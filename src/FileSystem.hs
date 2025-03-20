@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module FileSystem (replaceInFile, readFileToText, readFileToTextAndOpen, appendToFile, ensureLineNumbers, toFilePath, getFileNames, fileExistsOnDisk, clearFileOnDisk, runProcessWithTimeout, getFileNamesRecursive, handleExitCode, runAll, gitInit, gitAddAndCommit, ensureNoLineNumbers, addLineNumbersToText, updateOpenedFile, reloadOpenFiles, gitSetupUser, gitRevertFile, tryFileOp) where
+module FileSystem (replaceInFile, readFileToText, readFileToTextAndOpen, appendToFile, ensureLineNumbers, toFilePath, getFileNames, fileExistsOnDisk, clearFileOnDisk, runProcessWithTimeout, getFileNamesRecursive, handleExitCode, runAll, gitInit, gitAddAndCommit, ensureNoLineNumbers, addLineNumbersToText, updateOpenedFile, reloadOpenFiles, gitSetupUser, gitRevertFile, tryFileOp, checkBinaryOnPath) where
 
 import Control.Concurrent.Async (concurrently)
 import Control.Exception (IOException, bracket, try)
@@ -10,6 +10,7 @@ import Control.Monad.Except (throwError)
 import Core
 import Data.ByteString qualified as BS
 import Data.Char (isDigit)
+import Data.List as L
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Data.Text.IO qualified as TIO
@@ -307,7 +308,7 @@ getFileNamesRecursive foldersToIgnore baseDir = do
   let fullPaths = map (baseDir FP.</>) entries
   files <- filterM DIR.doesFileExist fullPaths
   dirs <- filterM DIR.doesDirectoryExist fullPaths
-  let allowedDirs = filter ((`notElem` foldersToIgnore) . toText . FP.takeFileName) dirs
+  let allowedDirs = filter ((`Relude.notElem` foldersToIgnore) . toText . FP.takeFileName) dirs
 
   -- Get relative paths for current directory files
   let relativeFiles = map (toText . FP.makeRelative baseDir) files
@@ -454,3 +455,38 @@ gitRevertFile :: FilePath -> FilePath -> IO (Either Text ())
 gitRevertFile basePath name = DIR.withCurrentDirectory basePath $ do
   res <- runProcessWithTimeout 10 "." [] "git" ["restore", name]
   handleExitCode ("'git restore " <> T.pack name <> "'") res
+
+-- | Check if a binary is present on PATH using findExecutable
+checkBinaryOnPath :: Text -> [(String, String)] -> IO Bool
+checkBinaryOnPath binaryTxt envVars = do
+  -- Get the current environment
+  currentEnv <- Env.getEnvironment
+
+  -- Merge current environment with the new variables
+  let env = currentEnv ++ envVars
+      binary = T.unpack binaryTxt
+
+  -- Extract PATH from the merged environment
+  case L.lookup "PATH" env of
+    Nothing ->
+      -- If no PATH in environment, just use findExecutable with default PATH
+      DIR.findExecutable binary >>= return . isJust
+    Just pathValue ->
+      -- Use bracket to ensure PATH is properly restored even if an exception occurs
+      bracket
+        ( do
+            -- Setup: save current PATH and set new one
+            oldPath <- Env.lookupEnv "PATH"
+            Env.setEnv "PATH" pathValue
+            return oldPath
+        )
+        ( \oldPath -> do
+            -- Cleanup: restore original PATH
+            case oldPath of
+              Nothing -> Env.unsetEnv "PATH"
+              Just path -> Env.setEnv "PATH" path
+        )
+        ( \_ -> do
+            -- Action: check for executable with new PATH
+            DIR.findExecutable binary >>= return . isJust
+        )

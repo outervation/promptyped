@@ -4,13 +4,15 @@
 module GoLang where
 
 import BuildSystem
+import Control.Monad.Except
 import Core
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
 import Data.Time.Clock (NominalDiffTime, secondsToNominalDiffTime)
-import FileSystem (gitInit, gitSetupUser, handleExitCode, runAll, runProcessWithTimeout)
+import FileSystem (checkBinaryOnPath, gitInit, gitSetupUser, handleExitCode, runAll, runProcessWithTimeout, toFilePath)
 import Relude
 import System.Directory qualified as Dir
+import System.Exit qualified as Exit
 import System.FilePath qualified as FP
 
 eitherToMaybe :: Either Text () -> Maybe Text
@@ -110,8 +112,43 @@ runTestsGo timeout dir newEnv = Dir.withCurrentDirectory dir $ do
   testResult <- runProcessWithTimeout timeout "." newEnv "go" ["test", "-timeout", "30s", "./..."]
   eitherToMaybe <$> handleExitCode "'go test'" testResult
 
-isCPlusPlusFileExtension :: Text -> Bool
-isCPlusPlusFileExtension fileName = ".go" `T.isSuffixOf` fileName
+isGoFileExtension :: Text -> Bool
+isGoFileExtension fileName = ".go" `T.isSuffixOf` fileName
+
+minimiseGoFileIO :: FilePath -> FilePath -> [(String, String)] -> IO (Either Text Text)
+minimiseGoFileIO baseDir path env = Dir.withCurrentDirectory baseDir $ do
+  let timeout = 5
+  res <- runProcessWithTimeout timeout "." env "gofile_summariser" [path]
+  case res of
+    Left err -> pure . Left $ "Error minimising Go file " <> (T.pack path) <> ": " <> err
+    Right (exitCode, stdoutRes, stderrRes) ->
+      case exitCode of
+        Exit.ExitSuccess -> pure $ Right stdoutRes
+        Exit.ExitFailure code ->
+          pure
+            . Left
+            $ "Failed to minimise go file "
+            <> (T.pack path)
+            <> " with exit code "
+            <> show code
+            <> "\nstdout:\n"
+            <> truncateText 30 stdoutRes
+            <> "\nstderr:\n"
+            <> truncateText 30 stderrRes
+
+minimiseGoFile :: Text -> AppM Text
+minimiseGoFile path = do
+  cfg <- ask
+  envVars <- getEnvVars
+  unless (isGoFileExtension path) $ throwError $ "Error: can only minimise Go source files, not " <> path
+  minimiserExists <- liftIO $ checkBinaryOnPath "gofile_summariser" envVars
+  unless minimiserExists $ throwError $ "Error: missing gofile_summariser binary on path; need to go install https://github.com/outervation/gofile_summariser"
+  let baseDir = configBaseDir cfg
+      filePath = toFilePath cfg path
+  res <- liftIO $ minimiseGoFileIO baseDir filePath envVars
+  case res of
+    Left err -> throwError $ "Error minimising go file: " <> err
+    Right txt -> pure txt
 
 data GoLang = GoLang
 
@@ -130,7 +167,7 @@ instance BuildSystem GoLang where
 
   setupProject cfg projectCfg = liftIO $ setupDirectoryGo cfg projectCfg
 
-  isBuildableFile fileName = pure $ isCPlusPlusFileExtension fileName
+  isBuildableFile fileName = pure $ isGoFileExtension fileName
 
   getIgnoredDirs = pure ["build", ".git", "contrib"]
 
@@ -138,3 +175,5 @@ instance BuildSystem GoLang where
     let baseDir = configBaseDir cfg
     let timeout = secondsToNominalDiffTime . fromIntegral $ configBuildTimeoutSeconds cfg
     return $ checkFormatGo timeout baseDir
+
+  minimiseFile = minimiseGoFile

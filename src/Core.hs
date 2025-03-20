@@ -9,18 +9,26 @@ import Data.Aeson
 import Data.Group (Group, invert)
 import Data.List qualified as L
 import Data.Text qualified as T
+import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
 import Data.Time.Clock.System (SystemTime, getSystemTime, systemToTAITime)
 import Data.Time.Clock.TAI (diffAbsoluteTime)
 import Data.Typeable ()
 import Data.Vector qualified as V
 import Relude
 
+-- Get current time as POSIXTime (seconds since Unix epoch)
+getCurrentPOSIXTime :: IO POSIXTime
+getCurrentPOSIXTime = getPOSIXTime
+
 newtype RemainingFailureTolerance = RemainingFailureTolerance Int
   deriving (Eq, Ord, Show, Num)
 
 data OpenFile = OpenFile
   { openFileName :: Text,
-    openFileContents :: Text
+    openFileContents :: Text,
+    openFileUnfocusedContents :: Text,
+    openFileFocused :: Bool,
+    openFileLastModified :: POSIXTime
   }
   deriving (Generic, Eq, Ord, Show)
 
@@ -28,8 +36,13 @@ instance ToJSON OpenFile
 
 instance FromJSON OpenFile
 
-renderOpenFile :: (Text -> Text) -> OpenFile -> Text
-renderOpenFile modifier (OpenFile name contents) = "{ openFileName: " <> name <> ", openFileContents:\n" <> modifier contents <> "\n}"
+data FileFocused = FileFocusedTrue | FileFocusedFalse
+  deriving (Eq, Ord, Show)
+
+renderOpenFile :: (FileFocused -> Text -> AppM Text) -> OpenFile -> AppM Text
+renderOpenFile modifier (OpenFile name contents unfocusedContents focused _) = do
+  modified <- modifier (if focused then FileFocusedTrue else FileFocusedFalse) (if focused then contents else unfocusedContents)
+  pure $ "{ openFileName: " <> name <> "focused: " <> show focused <> ", openFileContents:\n" <> modified <> "\n}"
 
 data ExistingFile = ExistingFile
   { existingFileName :: Text,
@@ -76,20 +89,20 @@ getExistingFiles filesToGet st =
     errors = lefts results
     matches = rights results
 
-addOpenFile :: Text -> Text -> AppState -> AppState
-addOpenFile name contents theState =
-  theState {stateOpenFiles = OpenFile name contents : stateOpenFiles theState}
+addOpenFile :: Text -> Text -> Text -> AppState -> AppState
+addOpenFile name contents unfocusedContents theState =
+  theState {stateOpenFiles = OpenFile name contents unfocusedContents False 0 : stateOpenFiles theState}
 
 updateOpenFile :: Text -> Text -> AppState -> AppState
 updateOpenFile name contents theState =
   let upd x = x {openFileContents = contents}
    in theState {stateOpenFiles = map (\x -> if openFileName x /= name then x else upd x) (stateOpenFiles theState)}
 
-ensureOpenFile :: Text -> Text -> AppState -> AppState
-ensureOpenFile name contents theState =
+ensureOpenFile :: Text -> Text -> Text -> AppState -> AppState
+ensureOpenFile name contents unfocusedContents theState =
   if any (\x -> openFileName x == name) (stateOpenFiles theState)
     then updateOpenFile name contents theState
-    else addOpenFile name contents theState
+    else addOpenFile name contents unfocusedContents theState
 
 closeOpenFile :: Text -> AppState -> AppState
 closeOpenFile name theState =
@@ -118,6 +131,18 @@ updateFileDesc name desc st = st {stateFiles = updatedFiles}
         ]
       Nothing -> stateFiles st ++ [ExistingFile name desc]
 
+updateFileLastModified :: Text -> POSIXTime -> AppState -> AppState
+updateFileLastModified fileName newTimestamp st =
+  let updatedOpenFiles =
+        map
+          ( \file ->
+              if openFileName file == fileName
+                then file {openFileLastModified = newTimestamp}
+                else file
+          )
+          (stateOpenFiles st)
+   in st {stateOpenFiles = updatedOpenFiles}
+
 data ForbiddenFile = ForbiddenFile
   { forbiddenFileName :: Text,
     forbiddenFileReason :: Text
@@ -139,6 +164,7 @@ data Config = Config
     configGitUserEmail :: Text,
     configTaskMaxFailures :: RemainingFailureTolerance,
     configForbiddenFiles :: [ForbiddenFile],
+    configMaxNumFocusedFiles :: Int,
     configModelTemperature :: Maybe Float,
     configModelMaxInputTokens :: Int
   }
@@ -356,6 +382,66 @@ addToContextUser ctxt kind txt = addToContext ctxt kind Message {role = roleUser
 
 addToContextAi :: Context -> MsgKind -> Text -> Context
 addToContextAi ctxt kind txt = addToContext ctxt kind Message {role = roleAssistant, content = txt}
+
+focusFileInner :: Text -> Int -> AppState -> AppState
+focusFileInner fileName maxNumOpenFiles st =
+  let -- Check if the specified file exists in the open files
+      fileAlreadyExists = any (\file -> openFileName file == fileName) (stateOpenFiles st)
+
+      -- Only proceed with changes if the file exists
+      updatedOpenFiles =
+        if fileAlreadyExists
+          then
+            -- Update the focus state for the specified file
+            map
+              ( \file ->
+                  if openFileName file == fileName
+                    then file {openFileFocused = True}
+                    else file
+              )
+              (stateOpenFiles st)
+          else
+            -- Return unchanged if the file doesn't exist
+            stateOpenFiles st
+
+      -- Count how many files are focused after the initial update
+      numFocused = length $ filter openFileFocused updatedOpenFiles
+
+      -- Only consider unfocusing if we actually made changes and exceeded the limit
+      finalOpenFiles =
+        if fileAlreadyExists && numFocused > maxNumOpenFiles
+          then unfocusOldestFile updatedOpenFiles
+          else updatedOpenFiles
+   in st {stateOpenFiles = finalOpenFiles}
+
+-- Helper function to unfocus the oldest file among the focused ones
+unfocusOldestFile :: [OpenFile] -> [OpenFile]
+unfocusOldestFile files =
+  let -- Get only the focused files
+      focusedFiles = filter openFileFocused files
+
+      -- Find the file with the oldest lastModified timestamp among focused files
+      -- Use safe pattern matching in case the list is empty (shouldn't happen based on our logic)
+      oldestFile = case focusedFiles of
+        [] -> error "No focused files found" -- This shouldn't occur given our checks
+        _ -> L.minimumBy (comparing openFileLastModified) focusedFiles
+   in -- Update the list, setting openFileFocused to False for the oldest file
+      map
+        ( \file ->
+            if openFileName file == openFileName oldestFile
+              then file {openFileFocused = False}
+              else file
+        )
+        files
+
+focusFile :: Text -> AppM ()
+focusFile fileName = do
+  cfg <- ask
+  modify' $ focusFileInner fileName (configMaxNumFocusedFiles cfg)
+
+fileFocused :: Text -> AppState -> Bool
+fileFocused fileName st =
+  any (\file -> openFileName file == fileName && openFileFocused file) (stateOpenFiles st)
 
 data TimeOverflowException = TimeOverflowException
   deriving (Show, Typeable)

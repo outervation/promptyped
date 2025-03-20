@@ -12,3 +12,4 @@ class BuildSystem (a :: Type) where
   isBuildableFile :: Text -> AppM Bool
   getIgnoredDirs :: AppM [Text]
   getFormatChecker :: Config -> AppM (IO (Maybe Text))
+  minimiseFile :: Text -> AppM Text

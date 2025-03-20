@@ -97,24 +97,35 @@ mergeAdjacentRoleMessages (msg1 : msg2 : rest)
        in mergeAdjacentRoleMessages (mergedMsg : rest)
   | otherwise = msg1 : mergeAdjacentRoleMessages (msg2 : rest)
 
-getTask :: AppState -> Text -> Text
-getTask st mainTask = do
+getTask :: AppState -> IsCloseFileTask -> Text -> Text
+getTask st isCloseFileTask mainTask = do
   let res = stateCompileTestRes st
-  "YOUR CURRENT TASK: " <> case (compileRes res, testRes res) of
-    (Nothing, Nothing) -> mainTask
-    (Just compileErr, _) -> "Fix the project build error. The error: \n" <> compileErr <> "\n. The task you were working on when compilation failed:  " <> mainTask
-    (Nothing, Just testErr) -> "Fix the error that occurred building or running the tests. The error: \n" <> testErr <> "\n. The task you were working on when compilation failed:  " <> mainTask
+  "YOUR CURRENT TASK: " <> case (compileRes res, testRes res, isCloseFileTask) of
+    (_, _, IsCloseFileTaskTrue) -> "Please close the least important open file, to free up space in the context. The task you were working on when the context got too large is as follows; you should close the file least relevant to it: " <> mainTask
+    (Nothing, Nothing, IsCloseFileTaskFalse) -> mainTask
+    (Just compileErr, _, IsCloseFileTaskFalse) -> "Fix the project build error. The error: \n" <> compileErr <> "\n. The task you were working on when compilation failed:  " <> mainTask
+    (Nothing, Just testErr, IsCloseFileTaskFalse) -> "Fix the error that occurred building or running the tests. The error: \n" <> testErr <> "\n. The task you were working on when compilation failed: " <> mainTask
 
-contextToMessages :: (ToJSON a) => Context -> [Tools.Tool] -> AppState -> a -> [Message]
-contextToMessages Context {..} tools theState exampleReturn = do
+contextToMessages :: forall bs a. (BS.BuildSystem bs, ToJSON a) => Context -> [Tools.Tool] -> AppState -> IsCloseFileTask -> a -> AppM [Message]
+contextToMessages Context {..} tools theState isCloseFileTask exampleReturn = do
+  openFilesDesc <- getOpenFilesDesc
   let messages = map snd contextRest
-      taskDesc = getTask theState contextTask
+      taskDesc = getTask theState isCloseFileTask contextTask
       returnValueDesc = Tools.returnValueToDescription exampleReturn
       allTexts = [contextBackground, filesDesc, openFilesDesc, toolDesc, returnValueDesc, taskDesc]
-   in mergeAdjacentRoleMessages $ Message {role = roleName RoleUser, content = T.unlines allTexts} : messages
+   in pure $ mergeAdjacentRoleMessages $ Message {role = roleName RoleUser, content = T.unlines allTexts} : messages
   where
     toolDesc = Tools.toolsToDescription tools
-    openFilesDesc = "All currently open files: \n " <> unlines (map (renderOpenFile FS.addLineNumbersToText) $ stateOpenFiles theState)
+    render :: FileFocused -> Text -> AppM Text
+    render isFocused file = do
+      isSourceFile <- isBuildableFile @bs file
+      if (not isSourceFile) || isFocused == FileFocusedTrue
+        then pure $ (FS.addLineNumbersToText file)
+        else pure file
+    getOpenFilesDesc :: AppM Text
+    getOpenFilesDesc = do
+      renderedFiles <- mapM (renderOpenFile render) $ stateOpenFiles theState
+      pure $ "All currently open files: \n " <> unlines renderedFiles
     filesDesc = "All available files: \n " <> unlines (map renderExistingFile $ stateFiles theState)
 
 shortenOldErrorMessages :: [(MsgKind, Message)] -> [(MsgKind, Message)]
@@ -174,19 +185,17 @@ instance ToJSON FileClosed
 
 instance FromJSON FileClosed
 
-validateFileClosed :: Context -> FileClosed -> AppM (Either (MsgKind, Text) ())
-validateFileClosed ctxt (FileClosed fileName) = do
+validateFileClosed :: Context -> FileClosed -> AppM (Either (MsgKind, Text) FileClosed)
+validateFileClosed ctxt fc@(FileClosed fileName) = do
   case hasAnyFileBeenClosed ctxt of
-    True -> pure $ Right ()
-    False -> pure $ Left (OtherMsg, "Error: claimed to have closed file " <> fileName <> " but no file has been closed.")  
-{-
-  st <- get
-  case fileAlreadyOpen fileName st of
-    True -> pure $ Left (OtherMsg, "Error: claimed to have closed file " <> fileName <> " but it's still open.")
-    False -> pure $ Right ()
--}
+    True -> pure $ Right fc
+    False -> do
+      st <- get
+      case fileAlreadyOpen fileName st of
+        False -> pure $ Right fc
+        True -> pure $ Left (OtherMsg, "Error: claimed to have closed file " <> fileName <> " but no file has been closed.")
 
-data CheckContextSize = DoCheckContextSize | DontCheckContextSize
+data IsCloseFileTask = IsCloseFileTaskTrue | IsCloseFileTaskFalse
   deriving (Eq, Ord, Show)
 
 runAiFunc ::
@@ -199,12 +208,12 @@ runAiFunc ::
   (Context -> a -> AppM (Either (MsgKind, Text) b)) ->
   RemainingFailureTolerance ->
   AppM b
-runAiFunc = runAiFuncInner @bs DoCheckContextSize
+runAiFunc = runAiFuncInner @bs IsCloseFileTaskFalse
 
 runAiFuncInner ::
   forall bs a b.
   (FromJSON a, ToJSON a, Show a, BS.BuildSystem bs) =>
-  CheckContextSize ->
+  IsCloseFileTask ->
   Context ->
   IntelligenceRequired ->
   [Tools.Tool] ->
@@ -212,7 +221,7 @@ runAiFuncInner ::
   (Context -> a -> AppM (Either (MsgKind, Text) b)) ->
   RemainingFailureTolerance ->
   AppM b
-runAiFuncInner checkContextSize origCtxt intReq tools exampleReturn postProcessor remainingErrs = do
+runAiFuncInner isCloseFileTask origCtxt intReq tools exampleReturn postProcessor remainingErrs = do
   when (remainingErrs <= 0) $ throwError "Aborting as reached max number of errors"
   cfg <- ask
   theState <- get
@@ -222,18 +231,21 @@ runAiFuncInner checkContextSize origCtxt intReq tools exampleReturn postProcesso
       aiTruncatedCtxt = updateContextMessages origCtxt truncateOldAiMessages
       shortenedOldErrCtxt = updateContextMessages aiTruncatedCtxt shortenOldErrorMessages
       ctxt = updateContextMessages shortenedOldErrCtxt (takeEnd (numOldMessagesToKeepInContext + 1))
-      messages = contextToMessages ctxt tools theState exampleReturn
+  messages <- contextToMessages @bs ctxt tools theState isCloseFileTask exampleReturn
   (res, queryStats) <- runPromptWithSyntaxErrorCorrection intReq tools exampleReturn messages
-  when (prompt_tokens queryStats > configModelMaxInputTokens cfg && checkContextSize == DoCheckContextSize) $ do
+  when (prompt_tokens queryStats > configModelMaxInputTokens cfg && isCloseFileTask == IsCloseFileTaskFalse) $ do
+    st <- get
     let msg = "Input context length is now " <> show (prompt_tokens queryStats) <> ", more than the configured max of " <> show (configModelMaxInputTokens cfg) <> ". Please CloseFile the least important open file."
         fileClosedRes = FileClosed "leastImportantFileName.go"
         fileClosedExample = Tools.returnValueToDescription $ fileClosedRes
-        taskExtra = "Your context is now too large, so please CloseFile the least important file (based on the below task) and after calling CloseFile immediately return like " <> fileClosedExample <> ". Please don't use any other tools or return anything else as they're disabled until you return a FileClosed."
+        openFileNames :: [Text]
+        openFileNames = map (show . openFileName) $ stateOpenFiles st
+        taskExtra = "Your context is now too large, so please CloseFile the least important file (based on the below task) and after calling CloseFile immediately return like " <> fileClosedExample <> ". Please don't use any other tools or return anything else as they're disabled until you return a FileClosed. The open files (which you may close) are: " <> (T.intercalate ", " openFileNames)
         baseCtxt = makeBaseContext (contextBackground ctxt) (taskExtra <> "\nThe task you were working on: \n" <> contextTask ctxt)
-        fileCloseContext = (addErrorToContext baseCtxt msg OtherMsg) 
+        fileCloseContext = (addErrorToContext baseCtxt msg OtherMsg)
         maxErrs = configTaskMaxFailures cfg
     liftIO $ Logging.logInfo "ContextReduction" $ "Telling model to reduce context size; msg: " <> msg
-    closedFile <- runAiFuncInner @bs DontCheckContextSize fileCloseContext MediumIntelligenceRequired [Tools.ToolCloseFile, Tools.ToolReturn] fileClosedRes validateFileClosed maxErrs
+    closedFile <- runAiFuncInner @bs IsCloseFileTaskTrue fileCloseContext MediumIntelligenceRequired [Tools.ToolCloseFile, Tools.ToolReturn] fileClosedRes validateFileClosed maxErrs
     liftIO $ Logging.logInfo "ContextReduction" $ "Successfully closed file: " <> show closedFile
   liftIO $ Logging.logInfo "AiResponse" (show res)
   let aiMsg = content res
@@ -246,7 +258,7 @@ runAiFuncInner checkContextSize origCtxt intReq tools exampleReturn postProcesso
     (_, Left err) -> addErrorAndRecurse ("Error in raw text syntax: " <> err) ctxtWithAiMsg SyntaxError OtherMsg
     (Right callsRaw, Right rawTextBlocks) -> handleToolCalls ctxtWithAiMsg callsRaw rawTextBlocks
   where
-    recur recurCtxt remainingErrs' = runAiFuncInner @bs checkContextSize recurCtxt intReq tools exampleReturn postProcessor remainingErrs'
+    recur recurCtxt remainingErrs' = runAiFuncInner @bs isCloseFileTask recurCtxt intReq tools exampleReturn postProcessor remainingErrs'
 
     handleToolCalls :: Context -> [(Tools.Tool, [AET.Object])] -> Tools.RawTexts -> AppM b
     handleToolCalls ctxtWithAiMsg callsRaw rawTextBlocks =

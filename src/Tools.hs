@@ -24,10 +24,10 @@ import ShapeChecker (checkShapesMatch)
 import Text.Regex.Base (makeRegexM)
 import Text.Regex.TDFA (Regex, match)
 
-data Tool = ToolOpenFile | ToolCloseFile | ToolAppendFile | ToolReplaceFile | ToolInsertInFile | ToolEditFile | ToolEditFileByMatch | ToolRevertFile | ToolFileLineOp | ToolPanic | ToolReturn
+data Tool = ToolOpenFile | ToolFocusFile | ToolCloseFile | ToolAppendFile | ToolReplaceFile | ToolInsertInFile | ToolEditFile | ToolEditFileByMatch | ToolRevertFile | ToolFileLineOp | ToolPanic | ToolReturn
   deriving (Eq, Ord, Show)
 
-data ToolCall a = ToolCallOpenFile [OpenFileArg] | ToolCallCloseFile [CloseFileArg] | ToolCallAppendFile [AppendFileArg] | ToolCallReplaceFile [AppendFileArg] | ToolCallEditFile [EditFileArg] | ToolCallEditFileByMatch [EditFileByMatchArg] | ToolCallRevertFile [RevertFileArg] | ToolCallInsertInFile [InsertInFileArg] | ToolCallFileLineOp [FileLineOpArg] | ToolCallPanic PanicArg | ToolCallReturn a
+data ToolCall a = ToolCallOpenFile [OpenFileArg] | ToolCallFocusFile [FocusFileArg] | ToolCallCloseFile [CloseFileArg] | ToolCallAppendFile [AppendFileArg] | ToolCallReplaceFile [AppendFileArg] | ToolCallEditFile [EditFileArg] | ToolCallEditFileByMatch [EditFileByMatchArg] | ToolCallRevertFile [RevertFileArg] | ToolCallInsertInFile [InsertInFileArg] | ToolCallFileLineOp [FileLineOpArg] | ToolCallPanic PanicArg | ToolCallReturn a
   deriving (Generic, Eq, Ord, Show)
 
 instance (ToJSON a) => ToJSON (ToolCall a)
@@ -36,6 +36,7 @@ instance (FromJSON a) => FromJSON (ToolCall a)
 
 toolCallTool :: ToolCall a -> Tool
 toolCallTool (ToolCallOpenFile _) = ToolOpenFile
+toolCallTool (ToolCallFocusFile _) = ToolFocusFile
 toolCallTool (ToolCallCloseFile _) = ToolCloseFile
 toolCallTool (ToolCallAppendFile _) = ToolAppendFile
 toolCallTool (ToolCallReplaceFile _) = ToolReplaceFile
@@ -65,6 +66,11 @@ mergeToolCalls =
           -- Flatten all the [OpenFileArg]s into one list.
           [ ToolCallOpenFile
               (concat [as | ToolCallOpenFile as <- grp])
+          ]
+        ToolCallFocusFile _ ->
+          -- Flatten all the [OpenFileArg]s into one list.
+          [ ToolCallFocusFile
+              (concat [as | ToolCallFocusFile as <- grp])
           ]
         ToolCallCloseFile _ ->
           [ ToolCallCloseFile
@@ -110,6 +116,15 @@ data OpenFileArg = OpenFileArg
 instance ToJSON OpenFileArg
 
 instance FromJSON OpenFileArg
+
+data FocusFileArg = FocusFileArg
+  { fileName :: Text
+  }
+  deriving (Generic, Show, Eq, Ord)
+
+instance ToJSON FocusFileArg
+
+instance FromJSON FocusFileArg
 
 data CloseFileArg = CloseFileArg
   { fileName :: Text
@@ -283,7 +298,7 @@ toolName :: Tool -> Text
 toolName x = T.drop 4 $ show x
 
 toolSummary :: Text
-toolSummary = "You have the following tools available to you, that you may call with JSON args. Line numbers are included for your OpenFiles to simplify your task, but are not present in the files on disk (so don't explicitly write line numbers to disk!). For tools that modify files, after modification the file will be compiled if a source file, and run if it's a unit test file. \n IMPORTANT NOTE: for Append/Edit/InsertIn file, you don't provide the text as part of the json, instead you set \"rawTextName\": \"someRawTextBox\", and then afterwards include the raw string literal in C++ style RAWTEXT[someRawTextBox]=R\"r( ...the actual text... )r\". This is to avoid the need for JSON-escaping the code/text; you instead directly include the unescaped text in between the R\"r( and )r\". It allows allows multiple commands to refer to the same raw text box where necessary (e.g. if inserting the same code in multiple places). Note that LINE NUMBERS START AT ZERO, and appear at the START of the line, not the end."
+toolSummary = "You have the following tools available to you, that you may call with JSON args. Line numbers are included for your focused OpenFiles to simplify your task, but are not present in the files on disk (so don't explicitly write line numbers to disk!). Only a limited number of source files can be 'focused' (shown in full detail) at a time; to avoid overwhelming the context, the rest will only show function types and struct definitions. You may append to an open file that's not focused, but not do any line-number-based edits (as you can't see function bodies in an unfocused file). For tools that modify files, after modification the file will be compiled if a source file, and run if it's a unit test file. \n IMPORTANT NOTE: for Append/Edit/InsertIn file, you don't provide the text as part of the json, instead you set \"rawTextName\": \"someRawTextBox\", and then afterwards include the raw string literal in C++ style RAWTEXT[someRawTextBox]=R\"r( ...the actual text... )r\". This is to avoid the need for JSON-escaping the code/text; you instead directly include the unescaped text in between the R\"r( and )r\". It allows allows multiple commands to refer to the same raw text box where necessary (e.g. if inserting the same code in multiple places). Note that LINE NUMBERS START AT ZERO, and appear at the START of the line, not the end."
 
 -- | Compile a Text regex with error reporting using regex-tdfa.
 compileRegex :: Text -> Either Text Regex
@@ -398,8 +413,9 @@ toolArgFormatAndDesc :: Tool -> (Text, Text, Text)
 toolArgFormatAndDesc ToolReturn = ("{ }", "", "Return a value; format depends on the task and is described further down below. Where the return references a change made to a file, it should only be returned _after_ the change is made. Note you can only return a single value at a time!")
 toolArgFormatAndDesc ToolFileLineOp = (toJ FileLineOpArg {fileName = "somefile.txt", startLineNum = 5, endLineNum = 10, rawTextName = "codeBoxToUse", origToolName = "originalToolName"}, mkSampleCodeBox "codeBoxToUse", "You should panic if you see this; it's an internal tool that insert/edit are transformed into, and you shouldn't call it directly.")
 toolArgFormatAndDesc ToolOpenFile = (toJ OpenFileArg {fileName = "someFile.txt"}, "", "Load a file into the context")
+toolArgFormatAndDesc ToolFocusFile = (toJ FocusFileArg {fileName = "someFile.txt"}, "", "Focus on an unfocused source file in the context, showing in full detail (as opposed to just struct defs and function headers). This is necessary for editing a file by line. Note that if already at the max number of focused files, this will cause the least recently modified focused file to be unfocused. Does nothing for non-code files.")
 toolArgFormatAndDesc ToolCloseFile = (toJ CloseFileArg {fileName = "someFile.txt"}, "", "Remove a file from the context")
-toolArgFormatAndDesc ToolAppendFile = (toJ AppendFileArg {fileName = "somefile.txt", rawTextName = "codeToAppendBox"}, mkSampleCodeBox "codeToAppendBox", "Append code/text to the bottom of a file. Can be used to create a new file if the file exists.")
+toolArgFormatAndDesc ToolAppendFile = (toJ AppendFileArg {fileName = "somefile.txt", rawTextName = "codeToAppendBox"}, mkSampleCodeBox "codeToAppendBox", "Append code/text to the bottom of a file. Can be used to create a new file if the file doesn't exist, and can be done to a non-focused file.")
 toolArgFormatAndDesc ToolReplaceFile = (toJ AppendFileArg {fileName = "somefile.txt", rawTextName = "codeToReplaceBox"}, mkSampleCodeBox "codeToReplaceBox", "Replace a file with the provided code/text to a file. Can be used to create a new file. Prefer this over editing when the file is small.")
 toolArgFormatAndDesc ToolEditFile = (toJ EditFileArg {fileName = "somefile.txt", startLineNum = 5, endLineNum = 10, rawTextName = "codeBoxToReplaceWith"}, mkSampleCodeBox "codeBoxToReplaceWith", "Replace text in [startLineNum, endLineNum] with the text you provide. Note if making multiple edits to the same file, the start/end line numbers of different edits cannot overlap. IMPORTANT: if you insert more lines than you're replacing, the rest will be inserted, not replaced. So inserting 2 lines at at startLineNum=15 endLineNum=15 will only replace the existing line 15 in the file, and add the second provided line after that, it won't replace lines 15 and 16. Note too that the line-numbers are provided to you at the START of the line in every file. Remember line numbers start at zero.")
 toolArgFormatAndDesc ToolEditFileByMatch = (toJ EditFileByMatchArg {fileName = "somefile.txt", startLineMatchesRegex = "int[[:space:]]*some_func(.*){", startClosestToLineNum = 5, endLineMatchesRegex = "^}", endClosestToLineNum = 20, rawTextName = "codeBoxToReplaceWith"}, mkSampleCodeBox "codeBoxToReplaceWith", "Finds lines matching the startLineNumMatchesRegex and endLineMatchesRegex, and replaces them and the lines between them with with the text you provide. Where multiple matches are present, the match closest to startCloestToLineNum/endClosestToLineNum will be used. Note if making multiple edits to the same file, the regions edited cannot overlap. Note also the regex is simple DFA, and does not support fancy PCRE features, or character classes like \\s, only posix classes like [:space:] are supported. Finally, note that the /* lineNum */ comments are purely to assist you and not present on disk, so your regex shouldn't assume they exist.")
@@ -752,6 +768,7 @@ processArgOfType tool rawTexts args = case processArgsOfType tool rawTexts args 
 
 processToolArgs :: (FromJSON a, Show a) => RawTexts -> Tool -> [AET.Object] -> Either Text (ToolCall a)
 processToolArgs rawTexts tool@ToolOpenFile args = ToolCallOpenFile <$> processArgsOfType tool rawTexts args
+processToolArgs rawTexts tool@ToolFocusFile args = ToolCallFocusFile <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolCloseFile args = ToolCallCloseFile <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolAppendFile args = ToolCallAppendFile <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolReplaceFile args = ToolCallReplaceFile <$> processArgsOfType tool rawTexts args
@@ -771,20 +788,21 @@ processToolsArgsNoPartial toolArgs rawTexts = case partitionEithers (map (uncurr
     pure $ bimap updErr mergeToolCalls normalisationResults
   (errors, _) -> pure $ Left (T.intercalate ", " errors)
 
-processToolsArgs
-  :: (FromJSON a, Show a)
-  => [(Tool, [AET.Object])]
-  -> RawTexts
-  -> AppM ([Text], [ToolCall a])
+processToolsArgs ::
+  (FromJSON a, Show a) =>
+  [(Tool, [AET.Object])] ->
+  RawTexts ->
+  AppM ([Text], [ToolCall a])
 processToolsArgs toolArgs rawTexts = do
-    let (parseErrors, parseSuccesses) =
-          partitionEithers (map (uncurry (processToolArgs rawTexts)) toolArgs)
-    normalisedResults <- mapM normaliseLineOpTool parseSuccesses
-    let (normaliseErrors, normaliseSuccesses) = partitionEithers normalisedResults
-        allErrors = parseErrors
-                 <> map ("Error processing tool args: " <>) normaliseErrors
-        merged    = mergeToolCalls normaliseSuccesses
-    pure (allErrors, merged)
+  let (parseErrors, parseSuccesses) =
+        partitionEithers (map (uncurry (processToolArgs rawTexts)) toolArgs)
+  normalisedResults <- mapM normaliseLineOpTool parseSuccesses
+  let (normaliseErrors, normaliseSuccesses) = partitionEithers normalisedResults
+      allErrors =
+        parseErrors
+          <> map ("Error processing tool args: " <>) normaliseErrors
+      merged = mergeToolCalls normaliseSuccesses
+  pure (allErrors, merged)
 
 normaliseLineOpTool :: ToolCall a -> AppM (Either Text (ToolCall a))
 normaliseLineOpTool (ToolCallEditFile args) = do
@@ -822,7 +840,7 @@ reloadLogs = do
   put $ st {stateOpenFiles = updatedFiles}
   where
     updateFile :: OpenFile -> AppM OpenFile
-    updateFile f@(OpenFile fileName _) =
+    updateFile f@(OpenFile fileName _ _ _ _) =
       if ".log" `T.isSuffixOf` fileName
         then do
           cfg <- ask
@@ -866,28 +884,36 @@ considerBuildAndTest fileName = do
 data RequiresOpenFile = RequiresOpenFileTrue | RequiresOpenFileFalse
   deriving (Eq, Ord, Show)
 
+data RequiresFocusedFile = RequiresFocusedFileTrue | RequiresFocusedFileFalse
+  deriving (Eq, Ord, Show)
+
 handleFileOperation ::
   forall a.
   (BS.BuildSystem a) =>
   Text ->
   (FilePath -> IO (Either Text ())) ->
   RequiresOpenFile ->
-  Text ->
+  RequiresFocusedFile ->
   Text ->
   Maybe FileChangeBounds ->
   Context ->
   AppM Context
-handleFileOperation fileName ioAction requiresOpenFile errorPrefix successMsg changeBounds ctxt = do
+handleFileOperation fileName ioAction requiresOpenFile requiresFocusedFile opName changeBounds ctxt = do
   theState <- get
   cfg <- ask
-  liftIO $ Logging.logInfo "FileOperation" $ "Attempting action with success name: " <> successMsg
+  liftIO $ Logging.logInfo "FileOperation" $ "Attempting action: " <> opName
   let filePath = FS.toFilePath cfg fileName
   case isFileForbidden cfg fileName of
     Just err -> pure $ mkError ctxt OtherMsg $ "Error: cannot modify forbidden file. " <> err
     Nothing -> do
       let alreadyOpen = fileAlreadyOpen fileName theState
-      if alreadyOpen || requiresOpenFile == RequiresOpenFileFalse
-        then do
+          alreadyFocused = fileFocused fileName theState
+          openOkay = alreadyOpen || requiresOpenFile == RequiresOpenFileFalse
+          focusedOkay = alreadyFocused || requiresFocusedFile == RequiresFocusedFileFalse
+      case (openOkay, focusedOkay) of
+        (False, _) -> pure $ mkError ctxt OtherMsg ("Error: cannot " <> opName <> " file that isn't open: " <> fileName)
+        (_, False) -> pure $ mkError ctxt OtherMsg ("Error: cannot " <> opName <> " file that isn't focused: " <> fileName)
+        (True, True) -> do
           checker <- BS.getFormatChecker @a cfg
           let checker' :: AppM (Maybe Text)
               checker' = do
@@ -904,33 +930,41 @@ handleFileOperation fileName ioAction requiresOpenFile errorPrefix successMsg ch
               onErr :: Text -> AppM Context
               onErr err = do
                 liftIO $ Logging.logInfo "FileOperation" $ "File operation failed due to: " <> err
-                updateFileIfExistsOnDisk fileName cfg
+                updateFileIfExistsOnDisk @a fileName cfg
                 pure $ mkError ctxt OtherMsg err
           res <- op
           either onErr (const $ onSuccess cfg ctxt) res
-        else pure $ mkError ctxt OtherMsg (errorPrefix <> fileName)
   where
     onSuccess cfg ctxt' = do
       liftIO $ Logging.logInfo "FileOperation" "File operation succeeded."
-      openFile fileName cfg
-      let successCtxt = mkSuccess ctxt' (FileModifiedMsg fileName) successMsg
+      openFile @a fileName cfg
+      ts <-
+        liftIO getCurrentPOSIXTime
+      modify' $ updateFileLastModified fileName ts
+      focusFile fileName
+      let successMsg = "Succesfully did " <> opName <> " to file " <> fileName
+          successCtxt = mkSuccess ctxt' (FileModifiedMsg fileName) successMsg
       considerBuildAndTest @a fileName >>= \case
         Nothing -> do
           FS.gitAddAndCommit fileName
           pure successCtxt
         Just (msgKind, err) -> pure $ mkError successCtxt msgKind (show msgKind <> ": " <> err)
 
-updateFileIfExistsOnDisk :: Text -> Config -> AppM ()
+updateFileIfExistsOnDisk :: forall bs. (BS.BuildSystem bs) => Text -> Config -> AppM ()
 updateFileIfExistsOnDisk fileName cfg = do
   let filePath = FS.toFilePath cfg fileName
   exists <- liftIO $ FS.fileExistsOnDisk filePath
-  when exists $ openFile fileName cfg
+  when exists $ openFile @bs fileName cfg
 
-openFile :: Text -> Config -> AppM ()
+openFile :: forall bs. (BS.BuildSystem bs) => Text -> Config -> AppM ()
 openFile fileName cfg = do
   st <- get
   contents <- liftIO $ FS.readFileToTextAndOpen (FS.toFilePath cfg fileName)
-  modify' (ensureOpenFile fileName contents)
+  let getContentsMinimised = do
+        isSourceFile <- BS.isBuildableFile @bs fileName
+        if isSourceFile then BS.minimiseFile @bs fileName else pure contents
+  contentsMinimised <- getContentsMinimised
+  modify' (ensureOpenFile fileName contents contentsMinimised)
   FS.updateOpenedFile fileName
   unless (fileExists fileName st) $ modify' (addExistingFile fileName "")
   liftIO $ Logging.logInfo "OpenFile" $ "Opened file " <> fileName <> "."
@@ -946,19 +980,29 @@ runTool _ (ToolCallOpenFile args) origCtxt = do
   cfg <- ask
   let initialCtxt = origCtxt
   ctxtUpdates <- forM args $ \(OpenFileArg fileName) -> do
-    let alreadyOpen = fileAlreadyOpen fileName theState
-    case alreadyOpen of
+    case fileAlreadyOpen fileName theState of
       True -> pure $ \ctxt -> mkError ctxt OtherMsg ("file already open: " <> fileName)
       False -> do
-        openFile fileName cfg
+        openFile @bs fileName cfg
         pure $ \ctxt -> mkSuccess ctxt OtherMsg ("Opened file: " <> fileName)
   return $ foldl' (\acc f -> f acc) initialCtxt ctxtUpdates
+runTool _ (ToolCallFocusFile args) origCtxt = do
+  cfg <- ask
+  let initialCtxt = origCtxt
+  ctxtUpdates <- forM args $ \(FocusFileArg fileName) -> do
+    theState <- get
+    case fileExists fileName theState of
+      False -> pure $ \ctxt -> mkError ctxt OtherMsg ("Cannot focus file that doesn't exist: " <> fileName)
+      True -> do
+        unless (fileAlreadyOpen fileName theState) $ openFile @bs fileName cfg
+        focusFile fileName
+        pure $ \ctxt -> mkSuccess ctxt OtherMsg ("Focused file: " <> fileName)
+  return $ foldl' (\acc f -> f acc) initialCtxt ctxtUpdates
 runTool _ (ToolCallCloseFile args) origCtxt = do
-  theState <- get
   let initialCtxt = origCtxt
   ctxtUpdates <- forM args $ \(CloseFileArg fileName) -> do
-    let alreadyOpen = fileAlreadyOpen fileName theState
-    case alreadyOpen of
+    theState <- get
+    case fileAlreadyOpen fileName theState of
       False -> pure $ \ctxt -> mkError ctxt OtherMsg ("cannot close file that isn't open: " <> fileName)
       True -> do
         modify' (closeOpenFile fileName)
@@ -972,8 +1016,8 @@ runTool rawTexts (ToolCallAppendFile args) origCtxt = do
       fileName
       (`FS.appendToFile` txt)
       RequiresOpenFileFalse
-      "cannot append to file that hasn't been opened: "
-      ("Appended to file: " <> fileName)
+      RequiresFocusedFileFalse
+      "append"
       Nothing
       ctxt
   foldlM (\acc f -> f acc) initialCtxt ctxtUpdates
@@ -986,8 +1030,8 @@ runTool rawTexts (ToolCallReplaceFile args) origCtxt = do
       fileName
       (replaceFile txt)
       RequiresOpenFileFalse
-      "cannot replace file that hasn't been opened: "
-      ("Replaced file: " <> fileName)
+      RequiresFocusedFileTrue
+      "replace"
       Nothing
       ctxt
   foldlM (\acc f -> f acc) initialCtxt ctxtUpdates
@@ -1010,8 +1054,8 @@ runTool rawTexts (ToolCallFileLineOp args) origCtxt = do
           fileName
           (\path -> FS.replaceInFile path startLineNum endLineNum txt)
           RequiresOpenFileTrue
-          ("cannot " <> origToolName <> " file that hasn't been opened: ")
-          ("Did " <> origToolName <> " on file: " <> fileName)
+          RequiresFocusedFileTrue
+          (origToolName)
           affectedBounds
           ctxt
       foldlM (\acc f -> f acc) initialCtxt ctxtUpdates
@@ -1024,8 +1068,8 @@ runTool _ (ToolCallRevertFile args) origCtxt = do
       fileName
       (FS.gitRevertFile baseDir)
       RequiresOpenFileTrue
-      "cannot revert file that hasn't been opened: "
-      ("Reverted file: " <> fileName)
+      RequiresFocusedFileTrue
+      "revert"
       Nothing
       ctxt
   foldlM (\acc f -> f acc) initialCtxt ctxtUpdates
