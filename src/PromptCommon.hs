@@ -96,9 +96,9 @@ topologicalSortThingsWithDependencies existingFiles (ThingsWithDependencies file
         $ Left
         $ "Error: File "
         <> pf.name
-        <> " depends on non-mentioned file: "
+        <> " depends on non-existing item: "
         <> dep
-        <> ". Note that only files we create need to be mentioned, not external libs like Boost etc."
+        <> ". Note that only items we create need to be mentioned, not external items/libs like Boost etc."
 
   -- 3. Prepare triples for graphFromEdges:
   --      (the actual node, this node's key, this node's adjacent keys)
@@ -243,7 +243,7 @@ validateUnitTests :: Context -> UnitTests -> AppM (Either (MsgKind, Text) UnitTe
 validateUnitTests _ cf = pure $ Right cf
 
 allTools :: [Tools.Tool]
-allTools = [Tools.ToolOpenFile, Tools.ToolCloseFile, Tools.ToolAppendFile, Tools.ToolInsertInFile, Tools.ToolEditFileByMatch, Tools.ToolPanic, Tools.ToolReturn]
+allTools = [Tools.ToolOpenFile, Tools.ToolFocusFile, Tools.ToolCloseFile, Tools.ToolAppendFile, Tools.ToolInsertInFile, Tools.ToolEditFileByMatch, Tools.ToolPanic, Tools.ToolReturn]
 
 readOnlyTools :: [Tools.Tool]
 readOnlyTools = [Tools.ToolOpenFile, Tools.ToolCloseFile, Tools.ToolPanic, Tools.ToolReturn]
@@ -441,7 +441,7 @@ makeRefactorFilesProject projectTexts refactorCfg = do
   extraFilesNeeded <- memoise (configCacheDir cfg) "all_extra_files" () (const "") getExtraFilesTask
   let makeFileBackground = background <> "\n You are currently working on adding some extra files that are necessary as part of the refactoring."
   forM_ extraFilesNeeded (makeFile @bs makeFileBackground refactorCfg.bigRefactorInitialOpenFiles)
-  let docDeps = map (\x -> ExistingFile x "" 0) refactorCfg.bigRefactorInitialOpenFiles
+  let docDeps = map (\x -> ExistingFile x "") refactorCfg.bigRefactorInitialOpenFiles
   forM_ plannedTasksRefined.filesProposedChanges $ \x -> makeRefactorFileTask @bs background docDeps x.fileName x.proposedChanges DoAutoRefactorUnitTests
 
 makeCreateFilesProject :: forall bs. (BS.BuildSystem bs) => ProjectTexts -> ProjectConfig -> AppM ()
@@ -945,7 +945,7 @@ validateSingleFileFix fileName _ userRes = do
     (Just err, _) -> pure $ Left (OtherMsg, "Compilation is still failing; error is: " <> err)
     _ ->
       let allErr = fromMaybe "" cErr <> "\n" <> fromMaybe "" tErr
-       in if T.isInfixOf (" " <> fileName) allErr
+       in if T.isInfixOf (" " <> fileName) allErr || T.isInfixOf ("/" <> fileName) allErr
             then
               pure
                 $ Left

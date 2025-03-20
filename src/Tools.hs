@@ -438,7 +438,7 @@ returnValueToDescription example = do
   fmt <> " \n You must either return a value or call a tool. Because you're part of an automated process, you cannot prompt the user for information, so panic if you don't know how to proceed."
 
 toolsToDescription :: [Tool] -> Text
-toolsToDescription tools = toolSummary <> "\nAll available tools: \n" <> T.unlines (map toolToDescription tools) <> "\n Multiple tool calls are supported, you can either do ToolName<[{jsonArgs}]>, ToolName<[{otherJsonArgs}]>, or ToolName<[{jsonArgs}, {otherJsonArgs}]>; both are supported."
+toolsToDescription tools = toolSummary <> "\nAll available tools: \n" <> T.unlines (map toolToDescription tools) <> "\n Multiple tool calls are supported, you can either do ToolName=<[{jsonArgs}]>, ToolName=<[{otherJsonArgs}]>, or ToolName=<[{jsonArgs}, {otherJsonArgs}]>; both are supported. (Replace ToolName here with the actual name of a tool; ToolName itself is not a tool!)"
 
 tmp :: Text
 tmp = "AppendFile<[{\"fileName\":\"websocket_client.h\",\"text\":\"#pragma once\\n\\n#include <libwebsockets.h>\\n#include \\\"config.h\\\"\\n#include \\\"simdjson.h\\\"\\n#include \\\"book_data.h\\\"\\n#include \\\"trade_data.h\\\"\\n#include <spdlog/spdlog.h>\\n#include <functional>\\n\\nnamespace websocket {\\n\\nstruct Handler {\\n    virtual void on_trade(const trade_data::TradeEvent& trade) = 0;\\n    virtual void on_agg_trade(const trade_data::AggTradeEvent& agg_trade) = 0;\\n    virtual void on_book_update(const book_data::BookUpdate& update) = 0;\\n    virtual void on_best_bid_ask(const book_data::BestBidAsk& update) = 0;\\n    virtual void request_snapshot(const std::string& symbol) = 0;\\n    virtual ~Handler() = default;\\n};\\n\\nnamespace core {\\n    bool check_sequence_gap(uint64_t last_update_id, const book_data::BookUpdate& update);\\n    void process_message(simdjson::ondemand::document& doc, Handler& handler);\\n}\\n\\nclass WebSocketClient {\\npublic:\\n    WebSocketClient(config::BinanceConfig config, Handler& handler);\\n    ~WebSocketClient();\\n\\n    void connect();\\n    void poll(int timeout_ms = 0);\\n\\nprivate:\\n    static int lws_callback(lws* wsi, lws_callback_reasons reason, void* user, void* in, size_t len);\\n    int handle_callback(lws* wsi, lws_callback_reasons reason, void* in, size_t len);\\n\\n    lws_context* context = nullptr;\\n    lws* wsi = nullptr;\\n    config::BinanceConfig config;\\n    Handler& handler;\\n    simdjson::ondemand::parser json_parser;\\n};\\n\\n} // namespace websocket\\n\"}]>\nOpenFile=<[{\"fileName\":\"websocket_client.h\"}]>\n\nReturn=<[{\"createdFiles\":[{\"createdFileName\":\"websocket_client.h\",\"createdFileSummary\":\"Libwebsockets wrapper for Binance with message processing core. Handles WS connection lifecycle, message parsing using simdjson, sequence gap detection, and event dispatch to handler interfaces. Separates pure message validation (check_sequence_gap) from IO-bound WS ops. Uses config::BinanceConfig for endpoints and symbols. Pure core logic in namespace allows testing without live connection.\"}]}]>"
@@ -712,8 +712,17 @@ findToolsCalled txt tools =
           -- We do have at least one success. If any had errors, produce a
           -- combined error. Otherwise return all successes.
           if null parseErrors
-            then Right parsedOK
+            then second (const parsedOK) (findErroneousToolNameCall txt)
             else Left (T.intercalate ", " parseErrors)
+
+findErroneousToolNameCall :: Text -> Either Text ()
+findErroneousToolNameCall txt =
+  if T.isInfixOf "ToolName=<[" txt
+    then mkErr "ToolName=<["
+    else if T.isInfixOf "ToolName<[" txt then mkErr "ToolName<[" else Right ()
+  where
+    mkErr fmt =
+      Left $ "Error: found " <> fmt <> " in your response, but ToolName is not a tool! Use one of the provided tool names please."
 
 checkRawTextPresent :: RawTexts -> AET.Object -> Either Text ()
 checkRawTextPresent rawTexts obj = do
@@ -876,9 +885,9 @@ considerBuildAndTest fileName = do
           FS.reloadOpenFiles
           modify' $ updateLastTestState result
           when (isJust result) $ modify $ updateStateMetrics (mempty {metricsNumTestFails = 1, metricsCompileTime = compileNanos, metricsTestTime = testNanos})
-          case result of
-            Just err -> liftIO $ putTextLn $ "Test error: " <> err
-            Nothing -> return ()
+          {-          case result of
+                      Just err -> liftIO $ putTextLn $ "Test error: " <> err
+                      Nothing -> return () -}
           return $ fmap (TestFailMsg,) result
 
 data RequiresOpenFile = RequiresOpenFileTrue | RequiresOpenFileFalse
@@ -984,6 +993,8 @@ runTool _ (ToolCallOpenFile args) origCtxt = do
       True -> pure $ \ctxt -> mkError ctxt OtherMsg ("file already open: " <> fileName)
       False -> do
         openFile @bs fileName cfg
+        isSourceFile <- BS.isBuildableFile @bs fileName
+        when isSourceFile $ focusFile fileName
         pure $ \ctxt -> mkSuccess ctxt OtherMsg ("Opened file: " <> fileName)
   return $ foldl' (\acc f -> f acc) initialCtxt ctxtUpdates
 runTool _ (ToolCallFocusFile args) origCtxt = do
