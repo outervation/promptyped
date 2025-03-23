@@ -26,9 +26,10 @@ writeFileIfDoesntExist fName fContents = do
   cfg <- ask
   let fPath = FS.toFilePath cfg fName
   alreadyExistsOnDisk <- liftIO $ FS.fileExistsOnDisk fPath
-  unless alreadyExistsOnDisk $
-    (liftIO $ FS.appendToFile fPath fContents) >>= \case
-      Left err -> throwError $ "Error writing to " <> (T.pack fPath) <> ": " <> err
+  unless alreadyExistsOnDisk
+    $ liftIO (FS.appendToFile fPath fContents)
+    >>= \case
+      Left err -> throwError $ "Error writing to " <> T.pack fPath <> ": " <> err
       _ -> return ()
 
 journalFileName :: Text
@@ -141,7 +142,7 @@ topologicalSortThingsWithDependencies existingFiles (ThingsWithDependencies file
 
 validatePropertyOfThingsWithDependencies :: ThingsWithDependencies -> (ThingWithDependencies -> Maybe Text) -> Either (MsgKind, Text) ThingsWithDependencies
 validatePropertyOfThingsWithDependencies (ThingsWithDependencies things) validator =
-  case catMaybes (map validator things) of
+  case mapMaybe validator things of
     [] -> Right $ ThingsWithDependencies things
     errors -> Left (OtherMsg, T.intercalate ", " errors)
 
@@ -175,17 +176,13 @@ validateAlwaysPass :: Context -> a -> AppM (Either (MsgKind, Text) a)
 validateAlwaysPass _ x = pure $ Right x
 
 validateAlwaysPassIfCompileTestsFine :: Context -> a -> AppM (Either (MsgKind, Text) a)
-validateAlwaysPassIfCompileTestsFine _ x = do
-  res <- checkCompileTestResults
-  pure $ bimap id (const x) res
+validateAlwaysPassIfCompileTestsFine _ x = second (const x) <$> checkCompileTestResults
 
 validateFileModifiedFine :: Text -> Context -> a -> AppM (Either (MsgKind, Text) a)
 validateFileModifiedFine fileName ctxt x = do
   case hasFileBeenModified ctxt fileName of
     False -> pure $ Left (OtherMsg, "Error: no modifications have been made to " <> fileName <> ". If you're very confident the desired change is already present in the file, then just make a small edit to the file to add a comment, and this validation will pass.")
-    True -> do
-      res <- checkCompileTestResults
-      pure $ bimap id (const x) res
+    True -> second (const x) <$> checkCompileTestResults
 
 data CreatedFile = CreatedFile
   { createdFileName :: Text,
@@ -454,7 +451,7 @@ makeRefactorFilesProject projectTexts refactorCfg = do
   extraFilesNeeded <- memoise (configCacheDir cfg) "all_extra_files" () (const "") getExtraFilesTask
   let makeFileBackground = background <> "\n You are currently working on adding some extra files that are necessary as part of the refactoring."
   forM_ extraFilesNeeded (makeFile @bs makeFileBackground refactorCfg.bigRefactorInitialOpenFiles)
-  let docDeps = map (\x -> ExistingFile x "") refactorCfg.bigRefactorInitialOpenFiles
+  let docDeps = map (`ExistingFile` "") refactorCfg.bigRefactorInitialOpenFiles
   forM_ plannedTasksRefined.filesProposedChanges $ \x -> makeRefactorFileTask @bs background docDeps x.fileName x.proposedChanges DoAutoRefactorUnitTests
 
 makeCreateFilesProject :: forall bs. (BS.BuildSystem bs) => ProjectTexts -> ProjectConfig -> AppM ()
@@ -524,7 +521,7 @@ makeTargetedRefactorProject projectTexts refactorCfg = do
         let background = projectTexts.projectSummaryText <> "\n" <> summary
             exampleTasks =
               ThingsWithDependencies
-                $ [ ThingWithDependencies "addNewClassX" "Class X, which does ..., must be added to support ..." [],
+                  [ ThingWithDependencies "addNewClassX" "Class X, which does ..., must be added to support ..." [],
                     ThingWithDependencies "addNewFuncY" "Function Y, which does ..., must be added to support ..." ["addNewClassX"]
                   ]
             relFiles = rCfg.refactorFile : rCfg.refactorFileDependencies
@@ -749,7 +746,7 @@ makeCreateBasedOnSpecProject projectTexts specFileName projectCfg = do
   segmentPlansResult <- memoise (configCacheDir cfg) "split_spec_into_docs" () (const "") getSegmentPlans
 
   -- 3) Write out doc files
-  forM_ (segmentPlansResult.segmentPlans) $ \SpecSegmentPlan {..} -> do
+  forM_ segmentPlansResult.segmentPlans $ \SpecSegmentPlan {..} -> do
     let docFileFp = FS.toFilePath cfg segmentFileName
         startIdx = max 1 startLineNum
         endIdx = min lineCount endLineNum
@@ -804,7 +801,7 @@ makeCreateBasedOnSpecProject projectTexts specFileName projectCfg = do
         makeBaseContext
           ( projectTexts.projectSummaryText
               <> "\nWe have these doc files describing different parts of the spec:\n"
-              <> Tools.toJ (segmentPlansResult.segmentPlans)
+              <> Tools.toJ segmentPlansResult.segmentPlans
           )
           archPrompt
       exampleArch =
@@ -819,7 +816,7 @@ makeCreateBasedOnSpecProject projectTexts specFileName projectCfg = do
           validateAlwaysPass
           (configTaskMaxFailures cfg)
 
-  plannedArch <- memoise (configCacheDir cfg) "architecture" () (const "") archRunner  
+  plannedArch <- memoise (configCacheDir cfg) "architecture" () (const "") archRunner
 
   -- 6) Code file planning
   let background =
@@ -827,7 +824,7 @@ makeCreateBasedOnSpecProject projectTexts specFileName projectCfg = do
           <> "\nThe architecture will be as follows:\n"
           <> plannedArch.description
           <> "\nWe have these doc files for reference:\n"
-          <> Tools.toJ (segmentPlansResult.segmentPlans)
+          <> Tools.toJ segmentPlansResult.segmentPlans
 
       filePlanCtxt = makeBaseContext background makeFilenamesPrompt
       examplePlannedFiles =
@@ -885,7 +882,7 @@ fixFailedTestsAndCompilationSimple background = do
             (Nothing, Just testErr) -> Just $ "Fix the error that occurred building or running the tests. At each step please append to the journal.txt what you're currently doing and what you plan to do next. The error: \n" <> testErr
       case mayTask of
         Nothing -> do
-          putTextLn $ "Tests and compilation are fine, no need to fix"
+          putTextLn "Tests and compilation are fine, no need to fix"
           return ()
         Just task -> do
           let exampleUnitTestDone = UnitTestDone True
@@ -1047,7 +1044,7 @@ fixFailedTestsAndCompilation background relevantFiles = do
           (configTaskMaxFailures cfg)
 
       -- 3) For each failing file, attempt a fix
-      forM_ (plan.failingFiles) $ \fPlan -> do
+      forM_ plan.failingFiles $ \fPlan -> do
         modify' clearOpenFiles
 
         -- open the failing file + dependencies

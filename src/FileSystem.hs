@@ -268,12 +268,12 @@ addTenthLineNumbers = V.imap addTenthComment
 
 addTenthComment :: Int -> Text -> Text
 addTenthComment idx originalLine =
-    if idx `mod` 10 == 0
+  if idx `mod` 10 == 0
     then
       let comment = "/* " <> T.pack (show idx) <> " */"
-      in if T.null originalLine
-         then comment
-         else comment <> " " <> originalLine
+       in if T.null originalLine
+            then comment
+            else comment <> " " <> originalLine
     else originalLine
 
 ensureNoLineNumbers :: FilePath -> IO (Either Text Text)

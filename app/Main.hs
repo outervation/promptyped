@@ -5,7 +5,8 @@ module Main where
 import AppConfig (loadConfig)
 import BinanceApiDataRecorder (makeGoBinanceApiDataRecorder)
 import Data.Text qualified as T
-import Http11Server (makeGoHttpServer)
+import Http11Server qualified
+import Http20Server qualified
 import Relude
 
 main :: IO ()
@@ -18,7 +19,8 @@ main = do
         Right cfg ->
           case kind of
             "binancedownloader" -> makeGoBinanceApiDataRecorder cfg
-            "httpserver" -> makeGoHttpServer cfg
+            "http11server" -> Http11Server.makeGoHttpServer cfg
+            "http20server" -> Http20Server.makeGoHttpServer cfg
             _ -> do
               putTextLn $ "Invalid kind: " <> T.pack kind
               exitFailure

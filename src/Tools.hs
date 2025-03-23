@@ -312,7 +312,7 @@ compileRegex pat =
 
 -- | Check if a Text line matches a compiled Regex.
 lineMatches :: Regex -> Text -> Bool
-lineMatches r txt = match r txt
+lineMatches = match
 
 -- | Find the integer in a non-empty list closest to the target.
 --   If there's a tie, it will choose the smaller line number.
@@ -359,7 +359,8 @@ getLineNumsFromRegex
       maybeToRight
         ( "No lines matched the start pattern '"
             <> startLineNumRegex
-            <> "' in the entire text. " <> errEnd 
+            <> "' in the entire text. "
+            <> errEnd
         )
         (closestTo startLineNumClosestTo matchedStartLines)
 
@@ -378,7 +379,8 @@ getLineNumsFromRegex
             <> endLineNumRegex
             <> "' at or after line "
             <> show startLineNum
-            <> ". " <> errEnd
+            <> ". "
+            <> errEnd
         )
         (closestTo endLineNumClosestTo matchedEndLines)
 
@@ -717,16 +719,22 @@ findToolsCalled txt tools =
             then second (const parsedOK) (findErroneousToolNameCall txt)
             else Left (T.intercalate ", " parseErrors)
 
-data TmppRet = TmppRet{
-  fileFixConfirmed :: Bool,
-  rationale :: Text
-  }deriving (Generic, Eq, Ord, Show)
+data TmppRet = TmppRet
+  { fileFixConfirmed :: Bool,
+    rationale :: Text
+  }
+  deriving (Generic, Eq, Ord, Show)
+
 instance ToJSON TmppRet
+
 instance FromJSON TmppRet
 
 tmppTools = Either.fromRight [] $ findToolsCalled tmpp [ToolReturn, ToolEditFileByMatch]
+
 tmppRawTexts = Either.fromRight [] $ extractRawStrings tmpp
+
 tmppToolArgs = processToolsArgs @TmppRet tmppTools tmppRawTexts
+
 tmppToolArgsRan = runApp mempty mempty $ do
   let contents = "cat\nman\ndog"
   let contentsUf = "uf cat\nman\ndog"
@@ -734,10 +742,10 @@ tmppToolArgsRan = runApp mempty mempty $ do
   tmppToolArgs
 
 findErroneousToolNameCall :: Text -> Either Text ()
-findErroneousToolNameCall txt =
-  if T.isInfixOf "ToolName=<[" txt
-    then mkErr "ToolName=<["
-    else if T.isInfixOf "ToolName<[" txt then mkErr "ToolName<[" else Right ()
+findErroneousToolNameCall txt 
+   | T.isInfixOf "ToolName=<[" txt = mkErr "ToolName=<["
+   | T.isInfixOf "ToolName<[" txt = mkErr "ToolName<["
+   | otherwise = Right ()
   where
     mkErr fmt =
       Left $ "Error: found " <> fmt <> " in your response, but ToolName is not a tool! Use one of the provided tool names please."
@@ -1104,7 +1112,7 @@ runTool rawTexts (ToolCallFileLineOp args) origCtxt = do
           (\path -> FS.replaceInFile path startLineNum endLineNum txt)
           RequiresOpenFileTrue
           RequiresFocusedFileTrue
-          (origToolName)
+          origToolName
           affectedBounds
           ctxt
       foldlM (\acc f -> f acc) initialCtxt ctxtUpdates

@@ -77,8 +77,8 @@ runPromptWithSyntaxErrorCorrection intReq tools example messages = do
       mayRawTextBlocks = Tools.extractRawStrings (content res)
   case (mayToolsCalled, mayRawTextBlocks, T.length (content res) == 0) of
     (_, _, True) -> pure (res, queryStats)
-    (Right [(Tools.ToolReturn, _)], Right (_:_), False) -> handleErr "Raw text block seen but no tool call using it" res queryStats
-    (Right [], Right (_:_), False) -> handleErr "Raw text block seen but no tool calls that could use it" res queryStats
+    (Right [(Tools.ToolReturn, _)], Right (_ : _), False) -> handleErr "Raw text block seen but no tool call using it" res queryStats
+    (Right [], Right (_ : _), False) -> handleErr "Raw text block seen but no tool calls that could use it" res queryStats
     (Right _, Right _, False) -> pure (res, queryStats)
     (Left err, _, False) -> handleErr err res queryStats
     (_, Left err, False) -> handleErr err res queryStats
@@ -232,7 +232,7 @@ runAiFuncInner isCloseFileTask origCtxt intReq tools exampleReturn postProcessor
   cfg <- ask
   theState <- get
   let (RemainingFailureTolerance failureToleranceInt) = configTaskMaxFailures cfg
-  --when (theState.stateCompileTestRes.numConsecutiveSyntaxCheckFails > failureToleranceInt) $ throwError "Aborting as reached max number of errors attempting to write syntactically correct code"
+      -- when (theState.stateCompileTestRes.numConsecutiveSyntaxCheckFails > failureToleranceInt) $ throwError "Aborting as reached max number of errors attempting to write syntactically correct code"
       shouldClearMessages = theState.stateCompileTestRes.numConsecutiveSyntaxCheckFails > failureToleranceInt
       origCtxt' = if shouldClearMessages then updateContextMessages origCtxt (const []) else origCtxt
       truncateOldAiMessages = truncateOldMessages "assistant" numRecentAiMessagesNotToTruncate shortenedMessageLength
