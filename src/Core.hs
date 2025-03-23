@@ -23,6 +23,12 @@ getCurrentPOSIXTime = getPOSIXTime
 newtype RemainingFailureTolerance = RemainingFailureTolerance Int
   deriving (Eq, Ord, Show, Num)
 
+instance Semigroup RemainingFailureTolerance where
+    (<>) = (+)
+
+instance Monoid RemainingFailureTolerance where
+  mempty = RemainingFailureTolerance 0
+
 data OpenFile = OpenFile
   { openFileName :: Text,
     openFileContents :: Text,
@@ -42,7 +48,7 @@ data FileFocused = FileFocusedTrue | FileFocusedFalse
 renderOpenFile :: (FileFocused -> Text -> AppM Text) -> OpenFile -> AppM Text
 renderOpenFile modifier (OpenFile name contents unfocusedContents focused _) = do
   modified <- modifier (if focused then FileFocusedTrue else FileFocusedFalse) (if focused then contents else unfocusedContents)
-  pure $ "{ openFileName: " <> name <> "focused: " <> show focused <> ", openFileContents:\n" <> modified <> "\n}"
+  pure $ "{ openFileName: " <> name <> ", focused: " <> show focused <> ", openFileContents:\n" <> modified <> "\n}"
 
 data ExistingFile = ExistingFile
   { existingFileName :: Text,
@@ -170,6 +176,48 @@ data Config = Config
   }
   deriving (Eq, Ord, Show)
 
+instance Semigroup Config where
+    a <> b = Config
+        { configApiKey = configApiKey b <> configApiKey a,
+          configApiSite = configApiSite b <> configApiSite a,
+          configLowIntModel = configLowIntModel b <> configLowIntModel a,
+          configMediumIntModel = configMediumIntModel b <> configMediumIntModel a,
+          configHighIntModel = configHighIntModel b <> configHighIntModel a,
+          configBaseDir = configBaseDir b <> configBaseDir a,
+          configCacheDir = configCacheDir b <> configCacheDir a,
+          configBuildTimeoutSeconds = configBuildTimeoutSeconds b,
+          configBuildNumJobs = configBuildNumJobs b,
+          configEnvVars = configEnvVars a <> configEnvVars b,
+          configGitUserName = configGitUserName b <> configGitUserName a,
+          configGitUserEmail = configGitUserEmail b <> configGitUserEmail a,
+          configTaskMaxFailures = configTaskMaxFailures a <> configTaskMaxFailures b,
+          configForbiddenFiles = configForbiddenFiles a <> configForbiddenFiles b,
+          configMaxNumFocusedFiles = configMaxNumFocusedFiles b,
+          configModelTemperature = configModelTemperature b <|> configModelTemperature a,
+          configModelMaxInputTokens = configModelMaxInputTokens b
+        }
+
+instance Monoid Config where
+  mempty = Config
+           { configApiKey = T.empty,
+             configApiSite = T.empty,
+             configLowIntModel = T.empty,
+             configMediumIntModel = T.empty,
+             configHighIntModel = T.empty,
+             configBaseDir = "",
+             configCacheDir = "",
+             configBuildTimeoutSeconds = 0,
+             configBuildNumJobs = 0,
+             configEnvVars = [],
+             configGitUserName = T.empty,
+             configGitUserEmail = T.empty,
+             configTaskMaxFailures = mempty,
+             configForbiddenFiles = [],
+             configMaxNumFocusedFiles = 0,
+             configModelTemperature = Nothing,
+             configModelMaxInputTokens = 0
+        }
+
 data ProjectConfig = ProjectConfig
   { projectDependencyNames :: [Text],
     projectInitialFiles :: [(FilePath, Text)]
@@ -250,6 +298,14 @@ instance FromJSON CompileTestState
 
 instance ToJSON CompileTestState
 
+instance Semigroup CompileTestState where
+  a <> b = CompileTestState
+    (compileRes a <|> compileRes b)
+    (testRes a <|> testRes b)
+    (numConsecutiveSyntaxCheckFails a + numConsecutiveSyntaxCheckFails b)
+instance Monoid CompileTestState where
+  mempty = CompileTestState Nothing Nothing 0
+
 data AppState = AppState
   { stateMetrics :: Metrics,
     stateOpenFiles :: [OpenFile],
@@ -257,6 +313,15 @@ data AppState = AppState
     stateCompileTestRes :: CompileTestState
   }
   deriving (Eq, Ord, Show)
+
+instance Semigroup AppState where
+    a <> b = AppState
+      (stateMetrics a <> stateMetrics b)
+      (stateOpenFiles a <> stateOpenFiles b)
+      (stateFiles a <> stateFiles b)
+      (stateCompileTestRes a <> stateCompileTestRes b)
+instance Monoid AppState where
+  mempty = AppState mempty [] [] mempty
 
 updateStateMetrics :: Metrics -> AppState -> AppState
 updateStateMetrics metrics st = st {stateMetrics = stateMetrics st <> metrics}

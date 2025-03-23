@@ -27,7 +27,10 @@ numRecentAiMessagesNotToTruncate :: Int
 numRecentAiMessagesNotToTruncate = 2
 
 numOldMessagesToKeepInContext :: Int
-numOldMessagesToKeepInContext = 15
+numOldMessagesToKeepInContext = 10
+
+numSyntaxRejectsToCauseContextReset :: Int
+numSyntaxRejectsToCauseContextReset = 5
 
 updateStats :: GenerationStats -> UsageData -> Int64 -> AppM ()
 updateStats generation usage timeTaken = do
@@ -74,6 +77,8 @@ runPromptWithSyntaxErrorCorrection intReq tools example messages = do
       mayRawTextBlocks = Tools.extractRawStrings (content res)
   case (mayToolsCalled, mayRawTextBlocks, T.length (content res) == 0) of
     (_, _, True) -> pure (res, queryStats)
+    (Right [(Tools.ToolReturn, _)], Right (_:_), False) -> handleErr "Raw text block seen but no tool call using it" res queryStats
+    (Right [], Right (_:_), False) -> handleErr "Raw text block seen but no tool calls that could use it" res queryStats
     (Right _, Right _, False) -> pure (res, queryStats)
     (Left err, _, False) -> handleErr err res queryStats
     (_, Left err, False) -> handleErr err res queryStats
@@ -109,7 +114,8 @@ getTask st isCloseFileTask mainTask = do
 contextToMessages :: forall bs a. (BS.BuildSystem bs, ToJSON a) => Context -> [Tools.Tool] -> AppState -> IsCloseFileTask -> a -> AppM [Message]
 contextToMessages Context {..} tools theState isCloseFileTask exampleReturn = do
   openFilesDesc <- getOpenFilesDesc
-  let messages = map snd contextRest
+  let messagesToUse = takeEnd (numOldMessagesToKeepInContext + 1) contextRest
+      messages = map snd messagesToUse
       taskDesc = getTask theState isCloseFileTask contextTask
       returnValueDesc = Tools.returnValueToDescription exampleReturn
       allTexts = [contextBackground, filesDesc, openFilesDesc, toolDesc, returnValueDesc, taskDesc]
@@ -120,7 +126,7 @@ contextToMessages Context {..} tools theState isCloseFileTask exampleReturn = do
     render isFocused file = do
       isSourceFile <- isBuildableFile @bs file
       if (not isSourceFile) || isFocused == FileFocusedTrue
-        then pure $ (FS.addLineNumbersToText file)
+        then pure $ (FS.addTenthLineNumbersToText file)
         else pure file
     getOpenFilesDesc :: AppM Text
     getOpenFilesDesc = do
@@ -226,11 +232,12 @@ runAiFuncInner isCloseFileTask origCtxt intReq tools exampleReturn postProcessor
   cfg <- ask
   theState <- get
   let (RemainingFailureTolerance failureToleranceInt) = configTaskMaxFailures cfg
-  when (theState.stateCompileTestRes.numConsecutiveSyntaxCheckFails > failureToleranceInt) $ throwError "Aborting as reached max number of errors attempting to write syntactically correct code"
-  let truncateOldAiMessages = truncateOldMessages "assistant" numRecentAiMessagesNotToTruncate shortenedMessageLength
-      aiTruncatedCtxt = updateContextMessages origCtxt truncateOldAiMessages
-      shortenedOldErrCtxt = updateContextMessages aiTruncatedCtxt shortenOldErrorMessages
-      ctxt = updateContextMessages shortenedOldErrCtxt (takeEnd (numOldMessagesToKeepInContext + 1))
+  --when (theState.stateCompileTestRes.numConsecutiveSyntaxCheckFails > failureToleranceInt) $ throwError "Aborting as reached max number of errors attempting to write syntactically correct code"
+      shouldClearMessages = theState.stateCompileTestRes.numConsecutiveSyntaxCheckFails > failureToleranceInt
+      origCtxt' = if shouldClearMessages then updateContextMessages origCtxt (const []) else origCtxt
+      truncateOldAiMessages = truncateOldMessages "assistant" numRecentAiMessagesNotToTruncate shortenedMessageLength
+      aiTruncatedCtxt = updateContextMessages origCtxt' truncateOldAiMessages
+      ctxt = updateContextMessages aiTruncatedCtxt shortenOldErrorMessages
   messages <- contextToMessages @bs ctxt tools theState isCloseFileTask exampleReturn
   (res, queryStats) <- runPromptWithSyntaxErrorCorrection intReq tools exampleReturn messages
   when (prompt_tokens queryStats > configModelMaxInputTokens cfg && isCloseFileTask == IsCloseFileTaskFalse) $ do
@@ -265,12 +272,13 @@ runAiFuncInner isCloseFileTask origCtxt intReq tools exampleReturn postProcessor
       Tools.processToolsArgs callsRaw rawTextBlocks >>= \case
         (errs, []) -> addErrorAndRecurse ("Error in function calls/return logic: " <> T.intercalate "," errs) ctxtWithAiMsg SyntaxError OtherMsg
         (errs, calls) -> do
+          liftIO $ Logging.logInfo "RunAiFunc" $ "Got " <> (show $ length errs) <> " errors, and func calls: " <> (T.intercalate ", " $ map (Tools.toolName . Tools.toolCallTool) calls)
           cfg <- ask
           let toolProcessingCtxt = foldr (\err innerCtxt -> addErrorToContext innerCtxt err OtherMsg) ctxtWithAiMsg errs
               ctxtUpdates = flip map calls $ \x innerCtxt -> Tools.runTool @bs rawTextBlocks x innerCtxt
           finalCtxt <- foldlM (\acc f -> f acc) toolProcessingCtxt ctxtUpdates
           let numNewErrs = contextNumErrors finalCtxt - contextNumErrors toolProcessingCtxt
-          case (Tools.getReturn calls, numNewErrs > 0) of
+          case (Tools.getReturn calls, numNewErrs + length errs > 0) of
             (Just ret, False) -> postProcessor finalCtxt ret >>= either (handleReturnError finalCtxt) pure
             _ -> recur finalCtxt (configTaskMaxFailures cfg)
 

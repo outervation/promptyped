@@ -13,6 +13,7 @@ import Data.Aeson as AE
 import Data.Aeson.KeyMap qualified as KM
 import Data.Aeson.Types qualified as AET
 import Data.ByteString.Lazy qualified as LBS
+import Data.Either qualified as Either
 import Data.List as L
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
@@ -351,13 +352,14 @@ getLineNumsFromRegex
           | (i, lineText) <- numberedLines,
             lineMatches startRegex lineText
           ]
+        errEnd = "Note only POSIX character classes are supported (e.g. [:space:] not \\s). Try to use the simplest matching regex possible to minimise mistakes, and only use ^ and $ start/end matching when absolutely necessary to disambiguate."
 
     -- 3. Pick the match closest to startLineNumClosestTo (if none, error)
     startLineNum <-
       maybeToRight
         ( "No lines matched the start pattern '"
             <> startLineNumRegex
-            <> "' in the entire text. Note only POSIX character classes are supported."
+            <> "' in the entire text. " <> errEnd 
         )
         (closestTo startLineNumClosestTo matchedStartLines)
 
@@ -376,7 +378,7 @@ getLineNumsFromRegex
             <> endLineNumRegex
             <> "' at or after line "
             <> show startLineNum
-            <> ". Note only POSIX character classes are supported."
+            <> ". " <> errEnd
         )
         (closestTo endLineNumClosestTo matchedEndLines)
 
@@ -418,7 +420,7 @@ toolArgFormatAndDesc ToolCloseFile = (toJ CloseFileArg {fileName = "someFile.txt
 toolArgFormatAndDesc ToolAppendFile = (toJ AppendFileArg {fileName = "somefile.txt", rawTextName = "codeToAppendBox"}, mkSampleCodeBox "codeToAppendBox", "Append code/text to the bottom of a file. Can be used to create a new file if the file doesn't exist, and can be done to a non-focused file.")
 toolArgFormatAndDesc ToolReplaceFile = (toJ AppendFileArg {fileName = "somefile.txt", rawTextName = "codeToReplaceBox"}, mkSampleCodeBox "codeToReplaceBox", "Replace a file with the provided code/text to a file. Can be used to create a new file. Prefer this over editing when the file is small.")
 toolArgFormatAndDesc ToolEditFile = (toJ EditFileArg {fileName = "somefile.txt", startLineNum = 5, endLineNum = 10, rawTextName = "codeBoxToReplaceWith"}, mkSampleCodeBox "codeBoxToReplaceWith", "Replace text in [startLineNum, endLineNum] with the text you provide. Note if making multiple edits to the same file, the start/end line numbers of different edits cannot overlap. IMPORTANT: if you insert more lines than you're replacing, the rest will be inserted, not replaced. So inserting 2 lines at at startLineNum=15 endLineNum=15 will only replace the existing line 15 in the file, and add the second provided line after that, it won't replace lines 15 and 16. Note too that the line-numbers are provided to you at the START of the line in every file. Remember line numbers start at zero.")
-toolArgFormatAndDesc ToolEditFileByMatch = (toJ EditFileByMatchArg {fileName = "somefile.txt", startLineMatchesRegex = "int[[:space:]]*some_func(.*){", startClosestToLineNum = 5, endLineMatchesRegex = "^}", endClosestToLineNum = 20, rawTextName = "codeBoxToReplaceWith"}, mkSampleCodeBox "codeBoxToReplaceWith", "Finds lines matching the startLineNumMatchesRegex and endLineMatchesRegex, and replaces them and the lines between them with with the text you provide. Where multiple matches are present, the match closest to startCloestToLineNum/endClosestToLineNum will be used. Note if making multiple edits to the same file, the regions edited cannot overlap. Note also the regex is simple DFA, and does not support fancy PCRE features, or character classes like \\s, only posix classes like [:space:] are supported. Finally, note that the /* lineNum */ comments are purely to assist you and not present on disk, so your regex shouldn't assume they exist.")
+toolArgFormatAndDesc ToolEditFileByMatch = (toJ EditFileByMatchArg {fileName = "somefile.txt", startLineMatchesRegex = "int[[:space:]]*some_func(.*){", startClosestToLineNum = 5, endLineMatchesRegex = "^}", endClosestToLineNum = 20, rawTextName = "codeBoxToReplaceWith"}, mkSampleCodeBox "codeBoxToReplaceWith", "Finds lines matching the startLineNumMatchesRegex and endLineMatchesRegex, and replaces them and the lines between them with with the text you provide. Where multiple matches are present, the match closest to startClosestToLineNum/endClosestToLineNum will be used. Note if making multiple edits to the same file, the regions edited cannot overlap. Note also the regex is simple DFA, and does not support fancy PCRE features, or character classes like \\s, only posix classes like [:space:] are supported. Finally, note that the /* lineNum */ comments are purely to assist you and not present on disk, so your regex shouldn't assume they exist.")
 toolArgFormatAndDesc ToolInsertInFile = (toJ InsertInFileArg {fileName = "somefile.txt", lineNum = 17, rawTextName = "codeToInsertBox"}, mkSampleCodeBox "codeToInsertBox", "Insert the provided text into the file at lineNum, not replacing/overwriting the content on that line (instead it's moved to below the inserted text).")
 toolArgFormatAndDesc ToolRevertFile = (toJ RevertFileArg {fileName = "someFile.txt"}, "", "Revert un-added changes in an open file; changes are committed when compilation and unit tests succeed, so will revert to the last version of the file before compilation or unit tests failed. Use this if you get the file in a state you can't recover it from.")
 toolArgFormatAndDesc ToolPanic = (toJ PanicArg {reason = "This task is impossible for me to do because ..."}, "", "Call this if you can't complete the task due to it being impossible or not having enough information")
@@ -584,7 +586,7 @@ parseRawTexts input = go input []
     orElse (Right x) _ = Right x
 
 tmpp :: Text
-tmpp = "AppendFile=<[{\"fileName\": \"binance_ws_test.go\", \"rawTextName\": \"TestBestPriceParsingCode\"}]>\nRAWTEXT[TestBestPriceParsingCode]=[R|\nfunc TestBestPriceParsing(t *testing.T) {\n\t// Channel to receive best price events.\n\tbestPriceChan := make(chan *BestPrice, 1)\n\t// Dummy snapshot callback (not used in this test).\n\tsnapshotCb := func(symbol string) {}\n\n\t// Create a new Binance websocket client for BTCUSDT using the bookTicker (best price) stream.\n\tclient := NewBinanceWSClient(\"BTCUSDT\", \"wss://stream.binance.com:9443/ws/btcusdt@bookTicker\", snapshotCb)\n\n\t// Set the best price handler to capture best price events.\n\tclient.SetBestPriceHandler(func(bp *BestPrice) {\n\t\tselect {\n\t\tcase bestPriceChan <- bp:\n\t\tdefault:\n\t\t}\n\t})\n\n\t// Connect to the websocket.\n\tif err := client.Connect(); err != nil {\n\t\tt.Fatalf(\"Failed to connect to websocket: %v\", err)\n\t}\n\n\t// Start the websocket read loop.\n\texitCh := client.Start()\n\n\t// Wait for up to 10 seconds for a best price event.\n\tselect {\n\tcase bp := <-bestPriceChan:\n\t\t// Validate received best price event fields.\n\t\tif bp.EventTime == 0 {\n\t\t\tt.Errorf(\"Received best price event with EventTime = 0\")\n\t\t}\n\t\tif bp.Symbol == \"\" {\n\t\t\tt.Errorf(\"Received best price event with empty Symbol\")\n\t\t}\n\t\tif bp.BidPrice == \"\" {\n\t\t\tt.Errorf(\"Received best price event with empty BidPrice\")\n\t\t}\n\t\tif bp.AskPrice == \"\" {\n\t\t\tt.Errorf(\"Received best price event with empty AskPrice\")\n\t\t}\n\t\tif bp.BidQty == \"\" {\n\t\t\tt.Errorf(\"Received best price event with empty BidQty\")\n\t\t}\n\t\tif bp.AskQty == \"\" {\n\t\t\tt.Errorf(\"Received best price event with empty AskQty\")\n\t\t}\n\tcase <-time.After(10 * time.Second):\n\t\tt.Fatalf(\"Timed out waiting for a best price event\")\n\t}\n\n\t// Disconnect and wait for the read loop to exit.\n\tclient.Disconnect()\n\t<-exitCh\n}\n)r\"\n\nReturn=<[{\"unitTestPassedSuccessfully\": true}]>"
+tmpp = "EditFileByMatch=<[{\n  \"fileName\": \"binanceFuturesSubscriber_test.go\",\n  \"startClosestToLineNum\": 273,\n  \"startLineMatchesRegex\": \"^// Test that a LevelNewQty message has the Side field set\",\n  \"endClosestToLineNum\": 285,\n  \"endLineMatchesRegex\": \"^\\\\s*}\\\\s*$\",\n  \"rawTextName\": \"replaceLevelNewQtyBlock\"\n}]>\nRAWTEXT[replaceLevelNewQtyBlock]=R\"r(\t// Test that a LevelNewQty message has the Side field set by using the helper function.\n\tdummyLevelNewQty := NewLevelNewQty(\"binance_cfutures\", \"BTCUSDT\", 0, 10000.5, 5, 1, 1630001000, 1630001001, \"\")\n\tif dummyLevelNewQty.Side == \"\" {\n\t\tt.Errorf(\"Side field not set in LevelNewQty message\")\n\t}\n)r\"\n  \nReturn=<[{\"fileFixConfirmed\": true, \"rationale\": \"Changed the test in TestAddedFieldsFutures to use the NewLevelNewQty constructor so that a missing side defaults to 'bid'. This ensures that the LevelNewQty message has a non-empty Side field as expected by the specification.\"}]>"
 
 extractFnCalls :: Text -> Text -> Either Text [AET.Object]
 extractFnCalls fullText fnName =
@@ -714,6 +716,22 @@ findToolsCalled txt tools =
           if null parseErrors
             then second (const parsedOK) (findErroneousToolNameCall txt)
             else Left (T.intercalate ", " parseErrors)
+
+data TmppRet = TmppRet{
+  fileFixConfirmed :: Bool,
+  rationale :: Text
+  }deriving (Generic, Eq, Ord, Show)
+instance ToJSON TmppRet
+instance FromJSON TmppRet
+
+tmppTools = Either.fromRight [] $ findToolsCalled tmpp [ToolReturn, ToolEditFileByMatch]
+tmppRawTexts = Either.fromRight [] $ extractRawStrings tmpp
+tmppToolArgs = processToolsArgs @TmppRet tmppTools tmppRawTexts
+tmppToolArgsRan = runApp mempty mempty $ do
+  let contents = "cat\nman\ndog"
+  let contentsUf = "uf cat\nman\ndog"
+  modify' $ addOpenFile "binanceFuturesSubscriber_test.go" contents contentsUf
+  tmppToolArgs
 
 findErroneousToolNameCall :: Text -> Either Text ()
 findErroneousToolNameCall txt =
@@ -896,6 +914,13 @@ data RequiresOpenFile = RequiresOpenFileTrue | RequiresOpenFileFalse
 data RequiresFocusedFile = RequiresFocusedFileTrue | RequiresFocusedFileFalse
   deriving (Eq, Ord, Show)
 
+forceFocusFile :: Text -> AppM ()
+forceFocusFile fileName = do
+  -- We do this so that it doesn't get immediately unfocused. TODO: think of a cleaner solution
+  ts <- liftIO getCurrentPOSIXTime
+  modify' $ updateFileLastModified fileName ts
+  focusFile fileName
+
 handleFileOperation ::
   forall a.
   (BS.BuildSystem a) =>
@@ -913,15 +938,21 @@ handleFileOperation fileName ioAction requiresOpenFile requiresFocusedFile opNam
   liftIO $ Logging.logInfo "FileOperation" $ "Attempting action: " <> opName
   let filePath = FS.toFilePath cfg fileName
   case isFileForbidden cfg fileName of
-    Just err -> pure $ mkError ctxt OtherMsg $ "Error: cannot modify forbidden file. " <> err
+    Just err -> do
+      liftIO $ Logging.logInfo "FileOperation" $ "Attempted to modify forbidden file: " <> fileName
+      pure $ mkError ctxt OtherMsg $ "Error: cannot modify forbidden file. " <> err
     Nothing -> do
       let alreadyOpen = fileAlreadyOpen fileName theState
           alreadyFocused = fileFocused fileName theState
           openOkay = alreadyOpen || requiresOpenFile == RequiresOpenFileFalse
           focusedOkay = alreadyFocused || requiresFocusedFile == RequiresFocusedFileFalse
       case (openOkay, focusedOkay) of
-        (False, _) -> pure $ mkError ctxt OtherMsg ("Error: cannot " <> opName <> " file that isn't open: " <> fileName)
-        (_, False) -> pure $ mkError ctxt OtherMsg ("Error: cannot " <> opName <> " file that isn't focused: " <> fileName)
+        (False, _) -> do
+          liftIO $ Logging.logInfo "FileOperation" $ "Attempted to " <> opName <> " file that isn't open: " <> fileName
+          pure $ mkError ctxt OtherMsg ("Error: cannot " <> opName <> " file that isn't open: " <> fileName)
+        (_, False) -> do
+          liftIO $ Logging.logInfo "FileOperation" $ "Attempted to " <> opName <> " file that isn't focused: " <> fileName
+          pure $ mkError ctxt OtherMsg ("Error: cannot " <> opName <> " file that isn't focused: " <> fileName)
         (True, True) -> do
           checker <- BS.getFormatChecker @a cfg
           let checker' :: AppM (Maybe Text)
@@ -947,10 +978,7 @@ handleFileOperation fileName ioAction requiresOpenFile requiresFocusedFile opNam
     onSuccess cfg ctxt' = do
       liftIO $ Logging.logInfo "FileOperation" "File operation succeeded."
       openFile @a fileName cfg
-      ts <-
-        liftIO getCurrentPOSIXTime
-      modify' $ updateFileLastModified fileName ts
-      focusFile fileName
+      forceFocusFile fileName
       let successMsg = "Succesfully did " <> opName <> " to file " <> fileName
           successCtxt = mkSuccess ctxt' (FileModifiedMsg fileName) successMsg
       considerBuildAndTest @a fileName >>= \case
@@ -971,7 +999,9 @@ openFile fileName cfg = do
   contents <- liftIO $ FS.readFileToTextAndOpen (FS.toFilePath cfg fileName)
   let getContentsMinimised = do
         isSourceFile <- BS.isBuildableFile @bs fileName
-        if isSourceFile then BS.minimiseFile @bs fileName else pure contents
+        let fPath = FS.toFilePath cfg fileName
+        actuallyExists <- liftIO $ FS.fileExistsOnDisk fPath
+        if isSourceFile && actuallyExists then BS.minimiseFile @bs fileName else pure contents
   contentsMinimised <- getContentsMinimised
   modify' (ensureOpenFile fileName contents contentsMinimised)
   FS.updateOpenedFile fileName
@@ -990,11 +1020,14 @@ runTool _ (ToolCallOpenFile args) origCtxt = do
   let initialCtxt = origCtxt
   ctxtUpdates <- forM args $ \(OpenFileArg fileName) -> do
     case fileAlreadyOpen fileName theState of
-      True -> pure $ \ctxt -> mkError ctxt OtherMsg ("file already open: " <> fileName)
+      True -> do
+        liftIO $ Logging.logInfo "FileOperation" $ "Tried to open file that's already open: " <> fileName
+        pure $ \ctxt -> mkError ctxt OtherMsg ("file already open: " <> fileName)
       False -> do
         openFile @bs fileName cfg
         isSourceFile <- BS.isBuildableFile @bs fileName
-        when isSourceFile $ focusFile fileName
+        when isSourceFile $ forceFocusFile fileName
+        liftIO $ Logging.logInfo "FileOperation" $ "Opened file: " <> fileName
         pure $ \ctxt -> mkSuccess ctxt OtherMsg ("Opened file: " <> fileName)
   return $ foldl' (\acc f -> f acc) initialCtxt ctxtUpdates
 runTool _ (ToolCallFocusFile args) origCtxt = do
@@ -1003,10 +1036,13 @@ runTool _ (ToolCallFocusFile args) origCtxt = do
   ctxtUpdates <- forM args $ \(FocusFileArg fileName) -> do
     theState <- get
     case fileExists fileName theState of
-      False -> pure $ \ctxt -> mkError ctxt OtherMsg ("Cannot focus file that doesn't exist: " <> fileName)
+      False -> do
+        liftIO $ Logging.logInfo "FileOperation" $ "Tried to focus non-existing file: " <> fileName
+        pure $ \ctxt -> mkError ctxt OtherMsg ("Cannot focus file that doesn't exist: " <> fileName)
       True -> do
         unless (fileAlreadyOpen fileName theState) $ openFile @bs fileName cfg
-        focusFile fileName
+        forceFocusFile fileName
+        liftIO $ Logging.logInfo "FileOperation" $ "Focused file: " <> fileName
         pure $ \ctxt -> mkSuccess ctxt OtherMsg ("Focused file: " <> fileName)
   return $ foldl' (\acc f -> f acc) initialCtxt ctxtUpdates
 runTool _ (ToolCallCloseFile args) origCtxt = do
@@ -1056,7 +1092,9 @@ runTool rawTexts (ToolCallFileLineOp args) origCtxt = do
   let initialCtxt = origCtxt
       sortedArgAttempt = validateAndSortFileLineArgs args
   case sortedArgAttempt of
-    Left err -> pure $ mkError initialCtxt OtherMsg ("Error in file editing by line arguments: " <> err)
+    Left err -> do
+      liftIO $ Logging.logInfo "FileOperation" $ "Error editing file by line arguments: " <> err
+      pure $ mkError initialCtxt OtherMsg ("Error in file editing by line arguments: " <> err)
     Right sortedArgs -> do
       ctxtUpdates <- forM sortedArgs $ \(FileLineOpArg fileName startLineNum endLineNum textName origToolName) -> pure $ \ctxt -> do
         txt <- getRawText rawTexts textName

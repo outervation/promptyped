@@ -21,6 +21,16 @@ import Relude
 import System.Directory qualified as DIR
 import Tools qualified
 
+writeFileIfDoesntExist :: Text -> Text -> AppM ()
+writeFileIfDoesntExist fName fContents = do
+  cfg <- ask
+  let fPath = FS.toFilePath cfg fName
+  alreadyExistsOnDisk <- liftIO $ FS.fileExistsOnDisk fPath
+  unless alreadyExistsOnDisk $
+    (liftIO $ FS.appendToFile fPath fContents) >>= \case
+      Left err -> throwError $ "Error writing to " <> (T.pack fPath) <> ": " <> err
+      _ -> return ()
+
 journalFileName :: Text
 journalFileName = "journal.txt"
 
@@ -172,7 +182,7 @@ validateAlwaysPassIfCompileTestsFine _ x = do
 validateFileModifiedFine :: Text -> Context -> a -> AppM (Either (MsgKind, Text) a)
 validateFileModifiedFine fileName ctxt x = do
   case hasFileBeenModified ctxt fileName of
-    False -> pure $ Left (OtherMsg, "Error: no modifications have been made to " <> fileName)
+    False -> pure $ Left (OtherMsg, "Error: no modifications have been made to " <> fileName <> ". If you're very confident the desired change is already present in the file, then just make a small edit to the file to add a comment, and this validation will pass.")
     True -> do
       res <- checkCompileTestResults
       pure $ bimap id (const x) res
@@ -246,7 +256,7 @@ allTools :: [Tools.Tool]
 allTools = [Tools.ToolOpenFile, Tools.ToolFocusFile, Tools.ToolCloseFile, Tools.ToolAppendFile, Tools.ToolInsertInFile, Tools.ToolEditFileByMatch, Tools.ToolPanic, Tools.ToolReturn]
 
 readOnlyTools :: [Tools.Tool]
-readOnlyTools = [Tools.ToolOpenFile, Tools.ToolCloseFile, Tools.ToolPanic, Tools.ToolReturn]
+readOnlyTools = [Tools.ToolOpenFile, Tools.ToolFocusFile, Tools.ToolCloseFile, Tools.ToolPanic, Tools.ToolReturn]
 
 data UnitTestDone = UnitTestDone
   { unitTestPassedSuccessfully :: Bool
@@ -279,8 +289,11 @@ clearJournal = do
 makeUnitTestsInner :: forall bs. (BS.BuildSystem bs) => Text -> Text -> (Text -> Text) -> AppM ()
 makeUnitTestsInner background fileName makeTestPrompt = do
   cfg <- ask
-  let unitTestExampleFileName = T.replace fileName " .go" "_test.go"
+  let unitTestExampleFileName = T.replace fileName ".go" "_test.go"
+      unitTestExampleFilePath = FS.toFilePath cfg unitTestExampleFileName
+  unitTestExists <- liftIO $ FS.fileExistsOnDisk unitTestExampleFilePath
   Tools.openFile @bs fileName cfg
+  when unitTestExists $ Tools.openFile @bs unitTestExampleFileName cfg
   let makeCtxt task = makeBaseContext background task
       exampleUnitTests =
         UnitTests
@@ -350,7 +363,7 @@ makeRefactorFileTask background initialDeps fileName desiredChanges refactorUnit
     putTextLn $ "Done task: " <> show x
     return $ "Intended modification: " <> x.summary <> ", with model describing what it did as " <> show modification <> "."
   let modificationsTxt = "The model made the following changes: \n" <> T.unlines modifications
-  when (refactorUnitTests == DoAutoRefactorUnitTests)
+  when ((refactorUnitTests == DoAutoRefactorUnitTests) && not (T.isInfixOf "_test.go" fileName))
     $ makeUnitTestsInner @bs background fileName
     $ makeUnitTestsForSpecificChangePrompt modificationsTxt
 
@@ -806,7 +819,7 @@ makeCreateBasedOnSpecProject projectTexts specFileName projectCfg = do
           validateAlwaysPass
           (configTaskMaxFailures cfg)
 
-  plannedArch <- memoise (configCacheDir cfg) "architecture" () (const "") archRunner
+  plannedArch <- memoise (configCacheDir cfg) "architecture" () (const "") archRunner  
 
   -- 6) Code file planning
   let background =
@@ -841,6 +854,10 @@ makeCreateBasedOnSpecProject projectTexts specFileName projectCfg = do
           (configTaskMaxFailures cfg)
 
   plannedFiles <- memoise (configCacheDir cfg) "file_planner" () (const "") runner
+
+  writeFileIfDoesntExist "architecture.txt" plannedArch.description
+  writeFileIfDoesntExist "files_summary.json" (Tools.toJ plannedFiles)
+  writeFileIfDoesntExist "docs_summary.json" (Tools.toJ segmentPlansResult)
 
   -- 7) Create each file
   forM_ plannedFiles (makeFile @bs filePlanCtxt.contextBackground [])

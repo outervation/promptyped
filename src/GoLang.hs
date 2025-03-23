@@ -132,9 +132,9 @@ minimiseGoFileIO baseDir path env = Dir.withCurrentDirectory baseDir $ do
             <> " with exit code "
             <> show code
             <> "\nstdout:\n"
-            <> truncateText 30 stdoutRes
+            <> truncateText 40 stdoutRes
             <> "\nstderr:\n"
-            <> truncateText 30 stderrRes
+            <> truncateText 40 stderrRes
 
 minimiseGoFile :: Text -> AppM Text
 minimiseGoFile path = do

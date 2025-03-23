@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module FileSystem (replaceInFile, readFileToText, readFileToTextAndOpen, appendToFile, ensureLineNumbers, toFilePath, getFileNames, fileExistsOnDisk, clearFileOnDisk, runProcessWithTimeout, getFileNamesRecursive, handleExitCode, runAll, gitInit, gitAddAndCommit, ensureNoLineNumbers, addLineNumbersToText, updateOpenedFile, reloadOpenFiles, gitSetupUser, gitRevertFile, tryFileOp, checkBinaryOnPath) where
+module FileSystem (replaceInFile, readFileToText, readFileToTextAndOpen, appendToFile, ensureLineNumbers, toFilePath, getFileNames, fileExistsOnDisk, clearFileOnDisk, runProcessWithTimeout, getFileNamesRecursive, handleExitCode, runAll, gitInit, gitAddAndCommit, ensureNoLineNumbers, addLineNumbersToText, addTenthLineNumbersToText, updateOpenedFile, reloadOpenFiles, gitSetupUser, gitRevertFile, tryFileOp, checkBinaryOnPath) where
 
 import Control.Concurrent.Async (concurrently)
 import Control.Exception (IOException, bracket, try)
@@ -37,33 +37,34 @@ toFilePath cfg x = configBaseDir cfg FP.</> T.unpack x
 
 tryFileOp :: FilePath -> (FilePath -> IO (Either T.Text ())) -> AppM (Maybe T.Text) -> Maybe FileChangeBounds -> AppM (Either T.Text ())
 tryFileOp path op checker maybeBounds = do
-  -- Check if file exists first to fail early
-  alreadyExists <- liftIO $ DIR.doesFileExist path
-  if not alreadyExists
-    then liftIO $ op path
-    else do
-      let backupPath = path ++ ".bak"
-          cleanupBackup = liftIO $ tryIOError $ void (DIR.removeFile backupPath)
+  let backupPath = path ++ ".bak"
+      cleanupBackup = liftIO $ tryIOError $ do
+        backupExists <- DIR.doesFileExist backupPath
+        when backupExists (DIR.removeFile backupPath)
 
-      -- Use bracket to ensure proper resource management
-      Catch.bracket
-        (createBackup backupPath)
-        ( \backupResult -> case backupResult of
-            Right _ -> cleanupBackup
-            Left _ -> return $ Right ()
-        )
-        ( \backupResult -> case backupResult of
-            Left err -> return $ Left err
-            Right _ -> processOperation backupPath
-        )
+  Catch.bracket
+    (createBackup backupPath)
+    ( \backupResult -> case backupResult of
+        Right _ -> cleanupBackup
+        Left _ -> return $ Right ()
+    )
+    ( \backupResult -> case backupResult of
+        Left err -> return $ Left err
+        Right _ -> processOperation backupPath
+    )
   where
     -- Create backup and return either error or success
     createBackup :: FilePath -> AppM (Either T.Text ())
     createBackup backupPath = do
-      result <- liftIO $ tryIOError $ DIR.copyFile path backupPath
-      case result of
-        Left err -> return $ Left $ T.pack $ "Failed to create backup: " ++ show err
-        Right _ -> return $ Right ()
+      alreadyExists <- liftIO $ DIR.doesFileExist path
+      -- Don't create backup if file doesn't already exist
+      case alreadyExists of
+        False -> return $ Right ()
+        True -> do
+          result <- liftIO $ tryIOError $ DIR.copyFile path backupPath
+          case result of
+            Left err -> return $ Left $ T.pack $ "Failed to create backup: " ++ show err
+            Right _ -> return $ Right ()
 
     -- Process the operation and validation
     processOperation :: FilePath -> AppM (Either T.Text ())
@@ -86,14 +87,15 @@ tryFileOp path op checker maybeBounds = do
       Just (FileChangeBounds firstLine lastLine) -> T.unlines $ sliceList firstLine lastLine $ T.lines contents
       Nothing -> contents
 
-    -- Restore from backup when validation fails
+    -- Restore from backup (if it exists) when validation fails
     restoreBackup :: FilePath -> T.Text -> AppM (Either T.Text ())
     restoreBackup backupPath err = do
       modifiedFile <- liftIO $ readFileToText path
       let modifiedFileRelevantPart = getRelevantFilePart $ addLineNumbersToText modifiedFile
       restoreResult <- liftIO $ tryIOError $ do
         DIR.removeFile path
-        DIR.copyFile backupPath path
+        backupExists <- DIR.doesFileExist backupPath
+        when backupExists $ DIR.copyFile backupPath path
 
       case restoreResult of
         Left restoreErr ->
@@ -261,6 +263,19 @@ addComment idx originalLine =
         then comment
         else comment <> " " <> originalLine
 
+addTenthLineNumbers :: V.Vector Text -> V.Vector Text
+addTenthLineNumbers = V.imap addTenthComment
+
+addTenthComment :: Int -> Text -> Text
+addTenthComment idx originalLine =
+    if idx `mod` 10 == 0
+    then
+      let comment = "/* " <> T.pack (show idx) <> " */"
+      in if T.null originalLine
+         then comment
+         else comment <> " " <> originalLine
+    else originalLine
+
 ensureNoLineNumbers :: FilePath -> IO (Either Text Text)
 ensureNoLineNumbers filepath = do
   result <- try $ processFileContents filepath :: IO (Either IOException Text)
@@ -280,6 +295,14 @@ addLineNumbersToText contents = do
   let originalLines = V.fromList (T.lines contents)
       processedLines = V.map removeLineNumberComment originalLines
       numberedLines = addLineNumbers processedLines
+      newContents = T.unlines (V.toList numberedLines)
+  newContents
+
+addTenthLineNumbersToText :: Text -> Text
+addTenthLineNumbersToText contents = do
+  let originalLines = V.fromList (T.lines contents)
+      processedLines = V.map removeLineNumberComment originalLines
+      numberedLines = addTenthLineNumbers processedLines
       newContents = T.unlines (V.toList numberedLines)
   newContents
 

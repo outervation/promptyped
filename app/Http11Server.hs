@@ -86,7 +86,7 @@ Key project requirements:
 
 The goal is to create a server implementation that is correct, maintainable, and allows developers to understand each part of the HTTP specification in isolation.
 
-There should be a final, testable server file that integrates all the separate components into a server, and then a small main file that just loads a json config and uses it to start the server.
+There should be a final, testable server file that integrates all the separate components into a server, and then a small main file that just loads a json config and uses it to start the server. Tests for the main file should involve using the go HTTP lib to query the server, to ensure it behaves correctly.
 
 It should be written in Golang, and should not use any existing stdlib HTTP server code (except in unit testing where necessary). No external dependencies are necessary.
 
