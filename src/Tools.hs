@@ -742,10 +742,10 @@ tmppToolArgsRan = runApp mempty mempty $ do
   tmppToolArgs
 
 findErroneousToolNameCall :: Text -> Either Text ()
-findErroneousToolNameCall txt 
-   | T.isInfixOf "ToolName=<[" txt = mkErr "ToolName=<["
-   | T.isInfixOf "ToolName<[" txt = mkErr "ToolName<["
-   | otherwise = Right ()
+findErroneousToolNameCall txt
+  | T.isInfixOf "ToolName=<[" txt = mkErr "ToolName=<["
+  | T.isInfixOf "ToolName<[" txt = mkErr "ToolName<["
+  | otherwise = Right ()
   where
     mkErr fmt =
       Left $ "Error: found " <> fmt <> " in your response, but ToolName is not a tool! Use one of the provided tool names please."
@@ -1067,13 +1067,17 @@ runTool rawTexts (ToolCallAppendFile args) origCtxt = do
   let initialCtxt = origCtxt
   ctxtUpdates <- forM args $ \(AppendFileArg fileName textName) -> pure $ \ctxt -> do
     txt <- getRawText rawTexts textName
+    st <- get
+    let txtNumLines = length $ T.lines txt
+        fileNumLines = case (getOpenFile fileName st) of Just x -> length (T.lines (openFileContents x)); Nothing -> 0
+        affectedBounds = Just $ FileChangeBounds (max 0 (fileNumLines - 5)) (fileNumLines + txtNumLines)
     handleFileOperation @bs
       fileName
       (`FS.appendToFile` txt)
       RequiresOpenFileFalse
       RequiresFocusedFileFalse
       "append"
-      Nothing
+      affectedBounds
       ctxt
   foldlM (\acc f -> f acc) initialCtxt ctxtUpdates
 runTool rawTexts (ToolCallReplaceFile args) origCtxt = do

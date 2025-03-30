@@ -59,8 +59,8 @@ makeGoHttpServer aCfg = do
 sampleBigRefactorCfg :: BigRefactorConfig
 sampleBigRefactorCfg =
   BigRefactorConfig
-    { bigRefactorInitialOpenFiles = ["architecture.txt", "docs_summary.json", "files_summary.json"],
-      bigRefactorOverallTask = "YOUR OVERALL OBJECTIVE is to finalize the project; the initial implementation did not implement main.go. You need to find a file that combines everything into a single testable component (or create one if one doesn't exist), and write a bunch (a lot, thank you!) of integration tests for it that start the server locally running on a non-protected port, make http queries to it (e.g. using the Go stdlib) and assert that the results are correct/as expected. Once that's done, main.go should be populated, such that it just loads a json config (please implement an appropriate format) and uses it to start the server.",
+    { bigRefactorInitialOpenFiles = ["architecture.txt", "docs_summary.json", "files_summary.json", "main.go", "server.go"],
+      bigRefactorOverallTask = "YOUR OVERALL OBJECTIVE is to finalize the project; the initial implementation did not implement main.go. main.go should be populated, such that it just loads a json config in the format from config.go and uses it to start the server from server.go.",
       bigRefactorOverallTaskShortName = "Finalize HTTP2.0 server"
     }
 
@@ -300,7 +300,7 @@ Support for HEAD, GET, POST methods at minimum
 CORS (Cross-Origin Resource Sharing) support
 
 The goal is to create a server implementation that is correct, maintainable, and allows developers to understand each part of the HTTP/2.0 specification in isolation.
-There should be a final, testable server file that integrates all the separate components into a server, and then a small main file that just loads a JSON config and uses it to start the server. The config should include settings like the port to listen on, the root directory for serving files, TLS certificate paths, and other server configuration options. Tests for the main file should involve using the Go HTTP client library to query the server, to ensure it behaves correctly.
+There should be a final, testable server file that integrates all the separate components into a server, and then a small main.go file that just loads a JSON config and uses it to start the server. The config should include settings like the port to listen on, the root directory for serving files, TLS certificate paths, and other server configuration options. Tests for the main file should involve using the Go HTTP client library to query the server, to ensure it behaves correctly.
 It should be written in Golang, and should not use any existing stdlib HTTP server code (except in unit testing where necessary). You should use golang.org/x/net/http2/hpack for HPACK implementation, and you may use the standard library's crypto/tls package for TLS implementation (to avoid reinventing secure encryption). Other aspects of the HTTP/2.0 protocol should be implemented from scratch to facilitate learning and understanding of the protocol details.
 |]
 

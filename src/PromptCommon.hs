@@ -184,6 +184,35 @@ validateFileModifiedFine fileName ctxt x = do
     False -> pure $ Left (OtherMsg, "Error: no modifications have been made to " <> fileName <> ". If you're very confident the desired change is already present in the file, then just make a small edit to the file to add a comment, and this validation will pass.")
     True -> second (const x) <$> checkCompileTestResults
 
+data AiChangeVerificationResult = AiChangeVerificationResult
+  { changeAlreadyBeenMade :: Bool,
+    messageToLlm :: Text
+  }
+  deriving (Generic, Eq, Ord, Show)
+
+instance ToJSON AiChangeVerificationResult
+
+instance FromJSON AiChangeVerificationResult
+
+validateAiChangeVerificationResult :: Context -> AiChangeVerificationResult -> AppM (Either (MsgKind, Text) AiChangeVerificationResult)
+validateAiChangeVerificationResult _ x = do
+  if T.length x.messageToLlm == 0 && not x.changeAlreadyBeenMade
+    then pure $ Left (OtherMsg, "Error: You must return a non-empty messageToLLm when you claim the change it was tasked with has not been made")
+    else pure $ Right x
+
+validateFileModifiedWithAi :: forall bs a. (BS.BuildSystem bs) => Text -> Context -> a -> AppM (Either (MsgKind, Text) a)
+validateFileModifiedWithAi fileName origCtxt x = do
+  cfg <- ask
+  let tools = [Tools.ToolReturn, Tools.ToolPanic]
+      exampleReturn = AiChangeVerificationResult True "Task completed successfuly!"
+      background = "You are an AI agent responsible for checking other agents' output."
+      task = "You are reponsible for determining whether the below file modification task was indeed done to file " <> fileName <> ". Please do so based on what you can see in the file, and return the result in the format specified, with \"changeAlreadyBeenMade\": true if you see the task has indeed been done, and false if it's clear that the requested file modification hasn't been made, along with a \"messagToLlm\", that in the case the change hasn't been made should inform the LLM why the task it claims to have been completed has not been done. Don't check for correctness, i.e. an implementation of the change with a small bug or two should still pass, as they'll be handled later. The task that was supposed to have been done:\n" <> origCtxt.contextTask
+      ctxt = makeBaseContext background task
+  verificationRes <- Engine.runAiFunc @BS.NullBuildSystem ctxt MediumIntelligenceRequired tools exampleReturn validateAiChangeVerificationResult (configTaskMaxFailures cfg)
+  pure $ case verificationRes.changeAlreadyBeenMade of
+    True -> Right x
+    False -> Left (OtherMsg, "Error: An LLM determined that the change you claim to have been made has not actually been made: " <> verificationRes.messageToLlm)
+
 data CreatedFile = CreatedFile
   { createdFileName :: Text,
     createdFileSummary :: Text
@@ -236,9 +265,18 @@ instance ToJSON UnitTest
 
 instance FromJSON UnitTest
 
-data UnitTests = UnitTests
+data FileUnitTests = FileUnitTests
   { unitTestFileName :: Text,
     unitTests :: [UnitTest]
+  }
+  deriving (Generic, Eq, Ord, Show)
+
+instance ToJSON FileUnitTests
+
+instance FromJSON FileUnitTests
+
+data UnitTests = UnitTests
+  { unitTestFiles :: [FileUnitTests]
   }
   deriving (Generic, Eq, Ord, Show)
 
@@ -286,7 +324,7 @@ clearJournal = do
 makeUnitTestsInner :: forall bs. (BS.BuildSystem bs) => Text -> Text -> (Text -> Text) -> AppM ()
 makeUnitTestsInner background fileName makeTestPrompt = do
   cfg <- ask
-  let unitTestExampleFileName = T.replace fileName ".go" "_test.go"
+  let unitTestExampleFileName = T.replace ".go" "_test.go" fileName
       unitTestExampleFilePath = FS.toFilePath cfg unitTestExampleFileName
   unitTestExists <- liftIO $ FS.fileExistsOnDisk unitTestExampleFilePath
   Tools.openFile @bs fileName cfg
@@ -294,20 +332,25 @@ makeUnitTestsInner background fileName makeTestPrompt = do
   let makeCtxt task = makeBaseContext background task
       exampleUnitTests =
         UnitTests
-          { unitTestFileName = unitTestExampleFileName,
-            unitTests =
-              [ UnitTest "testSomethingWorks" "Should test that ...",
-                UnitTest "testsSomethingelseWorks" "Should test that ..."
-              ]
-          }
-      runner fileName' = Engine.runAiFunc @bs (makeCtxt $ makeTestPrompt fileName') MediumIntelligenceRequired allTools exampleUnitTests validateUnitTests (configTaskMaxFailures cfg)
+          [ FileUnitTests
+              { unitTestFileName = unitTestExampleFileName,
+                unitTests =
+                  [ UnitTest "testSomethingWorks" "Should test that ...",
+                    UnitTest "testsSomethingelseWorks" "Should test that ..."
+                  ]
+              }
+          ]
+      runner fileName' = Engine.runAiFunc @bs (makeCtxt $ makeTestPrompt fileName') HighIntelligenceRequired allTools exampleUnitTests validateUnitTests (configTaskMaxFailures cfg)
   planRes <- memoise (configCacheDir cfg) "test_planner" fileName id runner
-  let testFileName = unitTestFileName planRes
-  Tools.openFile @bs testFileName cfg
-  let exampleUnitTestDone = UnitTestDone True
-  let makeUnitTest UnitTest {..} = Engine.runAiFunc @bs (makeCtxt $ makeUnitTestPrompt fileName testFileName unitTestName unitTestSummary) MediumIntelligenceRequired allTools exampleUnitTestDone validateUnitTest (configTaskMaxFailures cfg)
-  forM_ (unitTests planRes) $ \test ->
-    memoise (configCacheDir cfg) ("test_creator_" <> testFileName) test unitTestName makeUnitTest
+  forM_ (unitTestFiles planRes) $ \fileUnitTests -> do
+    let testFileName = unitTestFileName fileUnitTests
+    Tools.openFile @bs testFileName cfg
+    let exampleUnitTestDone = UnitTestDone True
+    let makeUnitTest UnitTest {..} = Engine.runAiFunc @bs (makeCtxt $ makeUnitTestPrompt fileName testFileName unitTestName unitTestSummary) MediumIntelligenceRequired allTools exampleUnitTestDone validateUnitTest (configTaskMaxFailures cfg)
+    forM_ fileUnitTests.unitTests $ \test -> do
+      memoise (configCacheDir cfg) ("test_creator_" <> testFileName <> "_" <> test.unitTestName) test unitTestName makeUnitTest
+      liftIO $ putTextLn $ "Made test " <> test.unitTestName <> " for " <> testFileName
+    modify' (closeOpenFile testFileName)
 
 makeUnitTests :: forall bs. (BS.BuildSystem bs) => Text -> ThingWithDependencies -> AppM ()
 makeUnitTests background plannedFile = do
@@ -354,7 +397,7 @@ makeRefactorFileTask background initialDeps fileName desiredChanges refactorUnit
   let makeChange description = do
         let ctxt = makeBaseContext background $ "Your task is to refactor the file " <> fileName <> " to make the change: " <> show description
             exampleChange = ModifiedFile "someFile.go" "Update the file to add ... so that it ..."
-        Engine.runAiFunc @bs ctxt MediumIntelligenceRequired allTools exampleChange (validateFileModifiedFine fileName) (configTaskMaxFailures cfg)
+        Engine.runAiFunc @bs ctxt MediumIntelligenceRequired allTools exampleChange (validateFileModifiedWithAi @bs fileName) (configTaskMaxFailures cfg)
   modifications <- forM desiredChanges $ \x -> do
     modification <- memoise (configCacheDir cfg) ("file_modifier_" <> fileName) x (\desc -> desc.name) makeChange
     putTextLn $ "Done task: " <> show x
@@ -385,7 +428,10 @@ makeRefactorFilesProject projectTexts refactorCfg = do
   existingFileNames <- liftIO $ FS.getFileNamesRecursive ignoredDirs cfg.configBaseDir
   modify' (updateExistingFiles existingFileNames)
   st <- get
-  sourceFileNames <- filterM (BS.isBuildableFile @bs) $ map existingFileName st.stateFiles
+  let filterSourceFile x = do
+        buildable <- BS.isBuildableFile @bs x
+        return $ buildable && not (T.isInfixOf "_test.go" x)
+  sourceFileNames <- filterM filterSourceFile $ map existingFileName st.stateFiles
   let fixErrs = fixFailedTestsAndCompilation @bs refactorCfg.bigRefactorOverallTask refactorCfg.bigRefactorInitialOpenFiles
   fixErrs
   untilM_ fixErrs compilationAndTestsPass
@@ -521,9 +567,9 @@ makeTargetedRefactorProject projectTexts refactorCfg = do
         let background = projectTexts.projectSummaryText <> "\n" <> summary
             exampleTasks =
               ThingsWithDependencies
-                  [ ThingWithDependencies "addNewClassX" "Class X, which does ..., must be added to support ..." [],
-                    ThingWithDependencies "addNewFuncY" "Function Y, which does ..., must be added to support ..." ["addNewClassX"]
-                  ]
+                [ ThingWithDependencies "addNewClassX" "Class X, which does ..., must be added to support ..." [],
+                  ThingWithDependencies "addNewFuncY" "Function Y, which does ..., must be added to support ..." ["addNewClassX"]
+                ]
             relFiles = rCfg.refactorFile : rCfg.refactorFileDependencies
             autoRefactorUnitTests = if rCfg.refactorUpdateTests then DoAutoRefactorUnitTests else DontAutoRefactorUnitTests
             mkCtxt fileName =
