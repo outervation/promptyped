@@ -600,3 +600,7 @@ data FileChangeBounds = FileChangeBounds Int Int
 
 sliceList :: Int -> Int -> [a] -> [a]
 sliceList n m xs = take (m - n + 1) (drop n xs)
+
+eitherM :: (Monad m) => (a -> m c) -> (b -> m c) -> Either a b -> m c
+eitherM f _ (Left a) = f a
+eitherM _ g (Right b) = g b

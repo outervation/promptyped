@@ -12,6 +12,7 @@ import Core
 import Data.Aeson as AE
 import Data.Graph
 import Data.Map qualified as Map
+import Data.Set qualified as Set
 import Data.Text qualified as T
 import Engine qualified
 import FileSystem qualified as FS
@@ -83,6 +84,10 @@ instance ToJSON FilesProposedChanges
 
 instance FromJSON FilesProposedChanges
 
+lookupFileProposedChanges :: Text -> FilesProposedChanges -> Maybe FileProposedChanges
+lookupFileProposedChanges targetFileName container =
+  find (\fpc -> fileName fpc == targetFileName) (filesProposedChanges container)
+
 compilationAndTestsPass :: AppM Bool
 compilationAndTestsPass = do
   st <- get
@@ -96,7 +101,7 @@ compilationAndTestsPass = do
 topologicalSortThingsWithDependencies :: [ExistingFile] -> ThingsWithDependencies -> Either Text [ThingWithDependencies]
 topologicalSortThingsWithDependencies existingFiles (ThingsWithDependencies files) = do
   let alreadyExists name = name `elem` map existingFileName existingFiles
-  -- 1. Build a map from fileName -> ThingWithDependencies
+  -- 1. Build a mapf rom fileName -> ThingWithDependencies
   let fileMap :: Map Text ThingWithDependencies
       fileMap = Map.fromList [(f.name, f) | f <- files]
 
@@ -157,6 +162,26 @@ validateThingsWithDependencies _ pf = do
   st <- get
   return $ either (\x -> Left (OtherMsg, x)) Right $ topologicalSortThingsWithDependencies (stateFiles st) pf
 
+validateThingsWithDependenciesContainsAll ::
+  [Text] ->
+  Context ->
+  ThingsWithDependencies ->
+  AppM (Either (MsgKind, Text) ())
+validateThingsWithDependenciesContainsAll requiredNames _ things =
+  let availableNamesSet :: Set Text
+      availableNamesSet = Set.fromList $ fmap name (items things)
+
+      missingNames :: [Text]
+      missingNames = filter (\reqName -> not (Set.member reqName availableNamesSet)) requiredNames
+   in if null missingNames
+        then pure $ Right ()
+        else
+          let missingNamesStr :: Text
+              missingNamesStr = T.intercalate ", " missingNames
+              errorMessage :: Text
+              errorMessage = "The following required names were not found: " <> missingNamesStr
+           in pure $ Left (OtherMsg, errorMessage)
+
 validateFileNamesNoNestedPaths :: Context -> ThingsWithDependencies -> AppM (Either (MsgKind, Text) [ThingWithDependencies])
 validateFileNamesNoNestedPaths ctxt things = do
   case validatePropertyOfThingsWithDependencies things validatePathNotNested of
@@ -206,9 +231,10 @@ validateFileModifiedWithAi fileName origCtxt x = do
   let tools = [Tools.ToolReturn, Tools.ToolPanic]
       exampleReturn = AiChangeVerificationResult True "Task completed successfuly!"
       background = "You are an AI agent responsible for checking other agents' output."
-      task = "You are reponsible for determining whether the below file modification task was indeed done to file " <> fileName <> ". Please do so based on what you can see in the file, and return the result in the format specified, with \"changeAlreadyBeenMade\": true if you see the task has indeed been done, and false if it's clear that the requested file modification hasn't been made, along with a \"messagToLlm\", that in the case the change hasn't been made should inform the LLM why the task it claims to have been completed has not been done. Don't check for correctness, i.e. an implementation of the change with a small bug or two should still pass, as they'll be handled later. The task that was supposed to have been done:\n" <> origCtxt.contextTask
+      task = "You are reponsible for determining whether the below file modification task was indeed done to file " <> fileName <> ". Please do so based on what you can see in the file, and return the result in the format specified, with \"changeAlreadyBeenMade\": true if you see the task has indeed been done, and false if it's clear that the requested file modification hasn't been made, along with a \"messagToLlm\", that in the case the change hasn't been made should inform the LLM why the task it claims to have been completed has not been done. Don't check for correctness, i.e. an implementation of the change with a small bug or two should still pass, as they'll be handled later. Do however check that the change is actually present, not just that it left a comment saying it did the change. The task that was supposed to have been done:\n" <> origCtxt.contextTask
       ctxt = makeBaseContext background task
-  verificationRes <- Engine.runAiFunc @BS.NullBuildSystem ctxt MediumIntelligenceRequired tools exampleReturn validateAiChangeVerificationResult (configTaskMaxFailures cfg)
+  verificationRes <- Engine.runAiFunc @bs ctxt MediumIntelligenceRequired tools exampleReturn validateAiChangeVerificationResult (configTaskMaxFailures cfg)
+  liftIO $ putTextLn $ "Got result from AI check of modification:\n" <> origCtxt.contextTask <> "\nResult is: " <> show verificationRes
   pure $ case verificationRes.changeAlreadyBeenMade of
     True -> Right x
     False -> Left (OtherMsg, "Error: An LLM determined that the change you claim to have been made has not actually been made: " <> verificationRes.messageToLlm)
@@ -397,6 +423,7 @@ makeRefactorFileTask background initialDeps fileName desiredChanges refactorUnit
   let makeChange description = do
         let ctxt = makeBaseContext background $ "Your task is to refactor the file " <> fileName <> " to make the change: " <> show description
             exampleChange = ModifiedFile "someFile.go" "Update the file to add ... so that it ..."
+        liftIO $ putTextLn $ "Running file modification task: " <> show description
         Engine.runAiFunc @bs ctxt MediumIntelligenceRequired allTools exampleChange (validateFileModifiedWithAi @bs fileName) (configTaskMaxFailures cfg)
   modifications <- forM desiredChanges $ \x -> do
     modification <- memoise (configCacheDir cfg) ("file_modifier_" <> fileName) x (\desc -> desc.name) makeChange
@@ -497,8 +524,35 @@ makeRefactorFilesProject projectTexts refactorCfg = do
   extraFilesNeeded <- memoise (configCacheDir cfg) "all_extra_files" () (const "") getExtraFilesTask
   let makeFileBackground = background <> "\n You are currently working on adding some extra files that are necessary as part of the refactoring."
   forM_ extraFilesNeeded (makeFile @bs makeFileBackground refactorCfg.bigRefactorInitialOpenFiles)
+  let relFiles = map (\x -> x.name) extraFilesNeeded ++ map (\x -> x.fileName) plannedTasksRefined.filesProposedChanges
+      getFileDependenciesCtxt =
+        makeBaseContext background
+          $ "You've previously just produced a list per file of tasks that must be done to refactor each file to achieve the above objective ("
+          <> objectiveShortName
+          <> ") as well as some extra files that must be created."
+          <> "Now you'll need to create a list of files and their file dependencies, so we know in which order we need to modify the files (and which relevant files should be open when modifying each file)."
+          <> "The previously created tasks are: \n"
+          <> Tools.toJ plannedTasksRefined
+          <> "The previously created extra files are: \n"
+          <> Tools.toJ extraFilesNeeded
+          <> "\n So overall the files you need to identify dependencies for are "
+          <> show relFiles
+      getFileDependenciesValidator = Engine.combineValidators (validateThingsWithDependenciesContainsAll relFiles) validateThingsWithDependencies
+      getFileDependenciesExample =
+        ThingsWithDependencies
+          { items =
+              [ ThingWithDependencies "someFile.go" "This file contains functionality for... (this part isn't important here as it's not used)" [],
+                ThingWithDependencies "someOtherFile.go" "This file contains functionality for something different...  (this part isn't important here as it's not used)" ["someFile.go"]
+              ]
+          }
+      getFileDependenciesTask () = Engine.runAiFunc @bs getFileDependenciesCtxt HighIntelligenceRequired readOnlyTools getFileDependenciesExample getFileDependenciesValidator (configTaskMaxFailures cfg)
+  fileDependencies <- memoise (configCacheDir cfg) "all_file_dependencies" () (const "") getFileDependenciesTask
   let docDeps = map (`ExistingFile` "") refactorCfg.bigRefactorInitialOpenFiles
-  forM_ plannedTasksRefined.filesProposedChanges $ \x -> makeRefactorFileTask @bs background docDeps x.fileName x.proposedChanges DoAutoRefactorUnitTests
+  forM_ fileDependencies $ \x -> do
+    let deps = map (`ExistingFile` "") x.dependencies ++ docDeps
+    case lookupFileProposedChanges x.name plannedTasksRefined of
+      Nothing -> pure ()
+      Just changes -> makeRefactorFileTask @bs background deps changes.fileName changes.proposedChanges DoAutoRefactorUnitTests
 
 makeCreateFilesProject :: forall bs. (BS.BuildSystem bs) => ProjectTexts -> ProjectConfig -> AppM ()
 makeCreateFilesProject projectTexts projectCfg = do

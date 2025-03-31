@@ -927,6 +927,7 @@ forceFocusFile fileName = do
   -- We do this so that it doesn't get immediately unfocused. TODO: think of a cleaner solution
   ts <- liftIO getCurrentPOSIXTime
   modify' $ updateFileLastModified fileName ts
+  liftIO $ Logging.logInfo "FileOperation" $ "Focusing file: " <> fileName
   focusFile fileName
 
 handleFileOperation ::
@@ -1027,13 +1028,14 @@ runTool _ (ToolCallOpenFile args) origCtxt = do
   cfg <- ask
   let initialCtxt = origCtxt
   ctxtUpdates <- forM args $ \(OpenFileArg fileName) -> do
+    isSourceFile <- BS.isBuildableFile @bs fileName
     case fileAlreadyOpen fileName theState of
       True -> do
         liftIO $ Logging.logInfo "FileOperation" $ "Tried to open file that's already open: " <> fileName
+        when isSourceFile $ forceFocusFile fileName
         pure $ \ctxt -> mkError ctxt OtherMsg ("file already open: " <> fileName)
       False -> do
         openFile @bs fileName cfg
-        isSourceFile <- BS.isBuildableFile @bs fileName
         when isSourceFile $ forceFocusFile fileName
         liftIO $ Logging.logInfo "FileOperation" $ "Opened file: " <> fileName
         pure $ \ctxt -> mkSuccess ctxt OtherMsg ("Opened file: " <> fileName)
