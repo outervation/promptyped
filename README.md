@@ -23,7 +23,7 @@ runAiFunc ::
 * a is a type parameter, the type of the object we want the LLM to return, which must be convertible to JSON.
 * bs is a type representing the build system (essentially an interface), which allows changing the backend used for compiling and running unit tests. 
 * Context is a struct with the background text for the task, and [Tools.Tool] is a list of tools that task is allowed to use. Currently the library doesn’t support externally defined tools, but new tools can easily be added to the library in Tools.hs.
-*IntelligenceRequired is an enum: HighIntelligenceRequired | MediumIntelligenceRequired | LowIntelligenceRequired . It allows using different models for different parts of the pipeline; the models are specified in the config.
+* IntelligenceRequired is an enum: HighIntelligenceRequired | MediumIntelligenceRequired | LowIntelligenceRequired . It allows using different models for different parts of the pipeline; the models are specified in the config.
 * We provide a value of type a to the function as an example/dummy value, to illustrate to the LLM how it should look.
 * RemainingFailureTolerance is just an integer representing how many syntax errors (LLM returns syntactically incorrect JSON etc.) before aborting.
 * The most complex type is (a -> AppM (Either (MsgKind, Text) b)). This is the type of a validator: a function that takes an a as input, and returns either a Text error and error kind, or a value of type b. The result is however wrapped in AppM, a monad, which just means it has access to a state and the ability to do IO; e.g. to validate that a file really exists on disk, or that compilation succeeds and unit tests pass. 
