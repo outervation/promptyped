@@ -353,8 +353,8 @@ makeUnitTestsInner background fileName makeTestPrompt = do
   let unitTestExampleFileName = T.replace ".go" "_test.go" fileName
       unitTestExampleFilePath = FS.toFilePath cfg unitTestExampleFileName
   unitTestExists <- liftIO $ FS.fileExistsOnDisk unitTestExampleFilePath
-  Tools.openFile @bs fileName cfg
-  when unitTestExists $ Tools.openFile @bs unitTestExampleFileName cfg
+  Tools.openFile @bs Tools.DoFocusOpenedFile fileName cfg
+  when unitTestExists $ Tools.openFile @bs Tools.DoFocusOpenedFile unitTestExampleFileName cfg
   let makeCtxt task = makeBaseContext background task
       exampleUnitTests =
         UnitTests
@@ -370,7 +370,7 @@ makeUnitTestsInner background fileName makeTestPrompt = do
   planRes <- memoise (configCacheDir cfg) "test_planner" fileName id runner
   forM_ (unitTestFiles planRes) $ \fileUnitTests -> do
     let testFileName = unitTestFileName fileUnitTests
-    Tools.openFile @bs testFileName cfg
+    Tools.openFile @bs Tools.DoFocusOpenedFile testFileName cfg
     let exampleUnitTestDone = UnitTestDone True
     let makeUnitTest UnitTest {..} = Engine.runAiFunc @bs (makeCtxt $ makeUnitTestPrompt fileName testFileName unitTestName unitTestSummary) MediumIntelligenceRequired allTools exampleUnitTestDone validateUnitTest (configTaskMaxFailures cfg)
     forM_ fileUnitTests.unitTests $ \test -> do
@@ -385,7 +385,7 @@ makeUnitTests background plannedFile = do
   clearJournal
   modify' clearOpenFiles
   let dependencies = [fileName, journalFileName] ++ plannedFile.dependencies
-  forM_ dependencies $ \x -> Tools.openFile @bs x cfg
+  forM_ dependencies $ \x -> Tools.openFile @bs Tools.DoFocusOpenedFile x cfg
   makeUnitTestsInner @bs background fileName makeUnitTestsPrompt
 
 makeFile :: forall bs. (BS.BuildSystem bs) => Text -> [Text] -> ThingWithDependencies -> AppM ()
@@ -394,7 +394,7 @@ makeFile background extraFiles pf = do
   resetCompileTestState
   modify' clearOpenFiles
   let dependencies = [pf.name, journalFileName] ++ pf.dependencies ++ extraFiles
-  forM_ dependencies $ \x -> Tools.openFile @bs x cfg
+  forM_ dependencies $ \x -> Tools.openFile @bs Tools.DoFocusOpenedFile x cfg
   let makeCtxt fileName = makeBaseContext background $ makeSourcefilePrompt fileName pf.summary
       exampleCreatedFiles =
         CreatedFiles
@@ -419,12 +419,13 @@ makeRefactorFileTask background initialDeps fileName desiredChanges refactorUnit
   modify' clearOpenFiles
   -- Note: file opened first will appear last (most recent)
   let dependencies = [fileName, journalFileName] ++ map (\x -> x.existingFileName) initialDeps
-  forM_ dependencies $ \x -> Tools.openFile @bs x cfg
+  forM_ dependencies $ \x -> Tools.openFile @bs Tools.DoFocusOpenedFile x cfg
   let makeChange description = do
         let ctxt = makeBaseContext background $ "Your task is to refactor the file " <> fileName <> " to make the change: " <> show description
             exampleChange = ModifiedFile "someFile.go" "Update the file to add ... so that it ..."
+            validateChange = Engine.combineValidatorsSameRes validateAlwaysPassIfCompileTestsFine (validateFileModifiedWithAi @bs fileName)
         liftIO $ putTextLn $ "Running file modification task: " <> show description
-        Engine.runAiFunc @bs ctxt MediumIntelligenceRequired allTools exampleChange (validateFileModifiedWithAi @bs fileName) (configTaskMaxFailures cfg)
+        Engine.runAiFunc @bs ctxt MediumIntelligenceRequired allTools exampleChange validateChange (configTaskMaxFailures cfg)
   modifications <- forM desiredChanges $ \x -> do
     modification <- memoise (configCacheDir cfg) ("file_modifier_" <> fileName) x (\desc -> desc.name) makeChange
     putTextLn $ "Done task: " <> show x
@@ -451,7 +452,7 @@ makeRefactorFilesProject projectTexts refactorCfg = do
   ignoredDirs <- BS.getIgnoredDirs @bs
   let setupOpenFiles fileName = do
         modify' clearOpenFiles
-        forM_ ([fileName, journalFileName] ++ refactorCfg.bigRefactorInitialOpenFiles) $ \x -> Tools.openFile @bs x cfg
+        forM_ ([fileName, journalFileName] ++ refactorCfg.bigRefactorInitialOpenFiles) $ \x -> Tools.openFile @bs Tools.DoFocusOpenedFile x cfg
   existingFileNames <- liftIO $ FS.getFileNamesRecursive ignoredDirs cfg.configBaseDir
   modify' (updateExistingFiles existingFileNames)
   st <- get
@@ -502,7 +503,7 @@ makeRefactorFilesProject projectTexts refactorCfg = do
           ]
       refineChangesTask () = Engine.runAiFunc @bs combineCtxt HighIntelligenceRequired (Tools.ToolAppendFile : readOnlyTools) combineExample validateAlwaysPass (configTaskMaxFailures cfg)
   modify' clearOpenFiles
-  forM_ (journalFileName : refactorCfg.bigRefactorInitialOpenFiles) $ \x -> Tools.openFile @bs x cfg
+  forM_ (journalFileName : refactorCfg.bigRefactorInitialOpenFiles) $ \x -> Tools.openFile @bs Tools.DoFocusOpenedFile x cfg
   plannedTasksRefined <- memoise (configCacheDir cfg) "all_file_dependencies" () (const "") refineChangesTask
 
   let extraFilesCtxt =
@@ -546,7 +547,7 @@ makeRefactorFilesProject projectTexts refactorCfg = do
               ]
           }
       getFileDependenciesTask () = Engine.runAiFunc @bs getFileDependenciesCtxt HighIntelligenceRequired readOnlyTools getFileDependenciesExample getFileDependenciesValidator (configTaskMaxFailures cfg)
-  fileDependencies <- memoise (configCacheDir cfg) "all_file_dependencies" () (const "") getFileDependenciesTask
+  fileDependencies <- memoise (configCacheDir cfg) "all_file_final_dependencies" () (const "") getFileDependenciesTask
   let docDeps = map (`ExistingFile` "") refactorCfg.bigRefactorInitialOpenFiles
   forM_ fileDependencies $ \x -> do
     let deps = map (`ExistingFile` "") x.dependencies ++ docDeps
@@ -612,7 +613,7 @@ makeTargetedRefactorProject projectTexts refactorCfg = do
   modify' (updateExistingFiles existingFileNames)
   let setupOpenFiles fileNames = do
         modify' clearOpenFiles
-        forM_ (fileNames ++ [journalFileName]) $ \x -> Tools.openFile @bs x cfg
+        forM_ (fileNames ++ [journalFileName]) $ \x -> Tools.openFile @bs Tools.DoFocusOpenedFile x cfg
   let summary = refactorCfg.refactorSummary
       doRefactor :: TargetedRefactorConfigItem -> AppM ()
       doRefactor rCfg = do
@@ -669,7 +670,7 @@ makeFileAnalysisProject projectTexts = do
   let background = projectTexts.projectSummaryText
       setupOpenFile fileName = do
         modify' clearOpenFiles
-        Tools.openFile @bs fileName cfg
+        Tools.openFile @bs Tools.DoFocusOpenedFile fileName cfg
       getSummary :: Text -> AppM (Text, FileAnalysisResult)
       getSummary fileName = do
         let mkCtxt name =
@@ -1133,7 +1134,7 @@ fixFailedTestsAndCompilation background relevantFiles = do
               }
       modify' clearOpenFiles
       forM_ (journalFileName : relevantFiles) $ \dep ->
-        Tools.openFile @bs dep cfg
+        Tools.openFile @bs Tools.DoFocusOpenedFile dep cfg
       plan <-
         Engine.runAiFunc @bs
           planContext
@@ -1149,7 +1150,7 @@ fixFailedTestsAndCompilation background relevantFiles = do
 
         -- open the failing file + dependencies
         forM_ (fPlan.failingFileName : fPlan.failingFileDependencies ++ (journalFileName : relevantFiles)) $ \dep ->
-          Tools.openFile @bs dep cfg
+          Tools.openFile @bs Tools.DoFocusOpenedFile dep cfg
 
         let fixContext =
               makeBaseContext background

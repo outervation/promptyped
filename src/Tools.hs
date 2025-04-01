@@ -986,8 +986,7 @@ handleFileOperation fileName ioAction requiresOpenFile requiresFocusedFile opNam
   where
     onSuccess cfg ctxt' = do
       liftIO $ Logging.logInfo "FileOperation" "File operation succeeded."
-      openFile @a fileName cfg
-      forceFocusFile fileName
+      openFile @a DoFocusOpenedFile fileName cfg
       let successMsg = "Succesfully did " <> opName <> " to file " <> fileName
           successCtxt = mkSuccess ctxt' (FileModifiedMsg fileName) successMsg
       considerBuildAndTest @a fileName >>= \case
@@ -1000,10 +999,13 @@ updateFileIfExistsOnDisk :: forall bs. (BS.BuildSystem bs) => Text -> Config -> 
 updateFileIfExistsOnDisk fileName cfg = do
   let filePath = FS.toFilePath cfg fileName
   exists <- liftIO $ FS.fileExistsOnDisk filePath
-  when exists $ openFile @bs fileName cfg
+  when exists $ openFile @bs DontFocusOpenedFile fileName cfg
 
-openFile :: forall bs. (BS.BuildSystem bs) => Text -> Config -> AppM ()
-openFile fileName cfg = do
+data FocusOpenedFile = DoFocusOpenedFile | DontFocusOpenedFile
+  deriving (Eq, Ord, Show)
+
+openFile :: forall bs. (BS.BuildSystem bs) => FocusOpenedFile -> Text -> Config -> AppM ()
+openFile focusOpenedFile fileName cfg = do
   st <- get
   contents <- liftIO $ FS.readFileToTextAndOpen (FS.toFilePath cfg fileName)
   let getContentsMinimised = do
@@ -1015,6 +1017,8 @@ openFile fileName cfg = do
   modify' (ensureOpenFile fileName contents contentsMinimised)
   FS.updateOpenedFile fileName
   unless (fileExists fileName st) $ modify' (addExistingFile fileName "")
+  isSourceFile <- BS.isBuildableFile @bs fileName
+  when (isSourceFile && focusOpenedFile == DoFocusOpenedFile) $ forceFocusFile fileName
   liftIO $ Logging.logInfo "OpenFile" $ "Opened file " <> fileName <> "."
 
 getRawText :: RawTexts -> Text -> AppM Text
@@ -1028,15 +1032,12 @@ runTool _ (ToolCallOpenFile args) origCtxt = do
   cfg <- ask
   let initialCtxt = origCtxt
   ctxtUpdates <- forM args $ \(OpenFileArg fileName) -> do
-    isSourceFile <- BS.isBuildableFile @bs fileName
     case fileAlreadyOpen fileName theState of
       True -> do
         liftIO $ Logging.logInfo "FileOperation" $ "Tried to open file that's already open: " <> fileName
-        when isSourceFile $ forceFocusFile fileName
         pure $ \ctxt -> mkError ctxt OtherMsg ("file already open: " <> fileName)
       False -> do
-        openFile @bs fileName cfg
-        when isSourceFile $ forceFocusFile fileName
+        openFile @bs DoFocusOpenedFile fileName cfg
         liftIO $ Logging.logInfo "FileOperation" $ "Opened file: " <> fileName
         pure $ \ctxt -> mkSuccess ctxt OtherMsg ("Opened file: " <> fileName)
   return $ foldl' (\acc f -> f acc) initialCtxt ctxtUpdates
@@ -1050,8 +1051,7 @@ runTool _ (ToolCallFocusFile args) origCtxt = do
         liftIO $ Logging.logInfo "FileOperation" $ "Tried to focus non-existing file: " <> fileName
         pure $ \ctxt -> mkError ctxt OtherMsg ("Cannot focus file that doesn't exist: " <> fileName)
       True -> do
-        unless (fileAlreadyOpen fileName theState) $ openFile @bs fileName cfg
-        forceFocusFile fileName
+        unless (fileAlreadyOpen fileName theState) $ openFile @bs DoFocusOpenedFile fileName cfg
         liftIO $ Logging.logInfo "FileOperation" $ "Focused file: " <> fileName
         pure $ \ctxt -> mkSuccess ctxt OtherMsg ("Focused file: " <> fileName)
   return $ foldl' (\acc f -> f acc) initialCtxt ctxtUpdates
