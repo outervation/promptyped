@@ -16,9 +16,9 @@ import System.FilePath qualified as FP
 import System.Log.Logger qualified as Logger
 import Text.RawString.QQ (r)
 
-makeGoHttpServer :: AppConfig -> IO ()
-makeGoHttpServer aCfg = do
-  let cfg = appConfigToConfig aCfg
+makeGoHttpServer :: AppConfig -> ModelConfig -> IO ()
+makeGoHttpServer aCfg mCfg = do
+  let cfg = appAndModelConfigToConfig aCfg mCfg
       specFileName = "http2.0_spec.txt" :: Text
       dependencies =
         ["golang.org/x/net/http2/hpack"]

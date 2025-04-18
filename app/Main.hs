@@ -8,19 +8,21 @@ import Data.Text qualified as T
 import Http11Server qualified
 import Http20Server qualified
 import Relude
+import TaskFromConfig qualified
 
 main :: IO ()
 main = do
   args <- getArgs
   case args of
-    [cfgPath, kind] -> do
-      cfgE <- loadConfig cfgPath
+    [appCfgPath, modelCfgPath, kind] -> do
+      cfgE <- loadConfig appCfgPath modelCfgPath
       case cfgE of
-        Right cfg ->
+        Right (aCfg, mCfg) ->
           case kind of
-            "binancedownloader" -> makeGoBinanceApiDataRecorder cfg
-            "http11server" -> Http11Server.makeGoHttpServer cfg
-            "http20server" -> Http20Server.makeGoHttpServer cfg
+            "binancedownloader" -> makeGoBinanceApiDataRecorder aCfg mCfg
+            "http11server" -> Http11Server.makeGoHttpServer aCfg mCfg
+            "http20server" -> Http20Server.makeGoHttpServer aCfg mCfg
+            "taskFromConfig" -> TaskFromConfig.makeTaskFromConfig aCfg mCfg
             _ -> do
               putTextLn $ "Invalid kind: " <> T.pack kind
               exitFailure

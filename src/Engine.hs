@@ -202,18 +202,19 @@ combineValidators validator1 validator2 = \ctxt x -> do
   res1 <- validator1 ctxt x
   eitherM (pure . Left) handleSecondValidator res1
 
-combineValidatorsSameRes :: forall a b. (Show b, Eq a, Eq b) =>
+combineValidatorsSameRes ::
+  forall a b.
+  (Show b, Eq a, Eq b) =>
+  (Context -> a -> AppM (Either (MsgKind, Text) b)) ->
+  (Context -> a -> AppM (Either (MsgKind, Text) b)) ->
   (Context -> a -> AppM (Either (MsgKind, Text) b))
-  -> (Context -> a -> AppM (Either (MsgKind, Text) b))
-  -> (Context -> a -> AppM (Either (MsgKind, Text) b))
 combineValidatorsSameRes validator1 validator2 = \ctxt x -> do
-  let
-    validate val1 val2 = do
-      when (val1 /= val2) $ throwError $ "Different results returned from validators: " <> show val1 <> " vs " <> show val2
-      return $ Right val2
-    handleSecondValidator val1 = do
-      res2 <- validator2 ctxt x
-      eitherM (pure . Left) (validate val1) res2
+  let validate val1 val2 = do
+        when (val1 /= val2) $ throwError $ "Different results returned from validators: " <> show val1 <> " vs " <> show val2
+        return $ Right val2
+      handleSecondValidator val1 = do
+        res2 <- validator2 ctxt x
+        eitherM (pure . Left) (validate val1) res2
   res1 <- validator1 ctxt x
   eitherM (pure . Left) handleSecondValidator res1
 

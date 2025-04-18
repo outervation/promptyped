@@ -66,6 +66,7 @@ executable promtyped
         BinanceApiDataRecorder
         Http11Server
         Http20Server
+        TaskFromConfig
 
     default-language:   GHC2024
     default-extensions: NoImplicitPrelude

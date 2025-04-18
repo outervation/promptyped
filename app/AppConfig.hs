@@ -16,38 +16,63 @@ instance FromJSON ProjectKind
 
 instance ToJSON ProjectKind
 
-data AppConfig = AppConfig
+data ModelConfig = ModelConfig
   { apiKey :: Text,
     apiSite :: Text,
     lowIntModelName :: Text,
     mediumIntModelName :: Text,
     highIntModelName :: Text,
-    baseDir :: Text,
+    taskMaxFailures :: Int,
+    maxNumFocusedFiles :: Int,
+    modelTemperature :: Maybe Float,
+    modelMaxInputTokens :: Int
+  }
+  deriving (Generic, Eq, Ord, Show)
+
+instance FromJSON ModelConfig
+
+instance ToJSON ModelConfig
+
+data TaskConfig = TaskConfig
+  { projectName :: Text,
+    specFilePath :: Text,
+    dependencies :: [Text]
+    --    initialFiles :: [Text]
+  }
+  deriving (Generic, Eq, Ord, Show)
+
+instance FromJSON TaskConfig
+
+instance ToJSON TaskConfig
+
+data AppConfig = AppConfig
+  { baseDir :: Text,
     cacheDir :: Text,
     logFileDir :: Text,
     buildTimeoutSeconds :: Int,
     buildNumJobs :: Int,
     gitUserName :: Text,
     gitUserEmail :: Text,
-    taskMaxFailures :: Int,
     projectKind :: ProjectKind,
-    maxNumFocusedFiles :: Int,
-    modelTemperature :: Maybe Float,
-    modelMaxInputTokens :: Int,
     targetedRefactorCfg :: Maybe PC.TargetedRefactorConfig,
-    bigRefactorCfg :: Maybe PC.BigRefactorConfig
+    bigRefactorCfg :: Maybe PC.BigRefactorConfig,
+    taskCfg :: Maybe TaskConfig
   }
   deriving (Generic, Eq, Ord, Show)
 
-appConfigToConfig :: AppConfig -> Config
-appConfigToConfig aCfg =
+instance FromJSON AppConfig
+
+instance ToJSON AppConfig
+
+appAndModelConfigToConfig :: AppConfig -> ModelConfig -> Config
+appAndModelConfigToConfig aCfg mCfg =
   let cannotModifyDepReason = "You should not need to import any extra external libraries for this project, the stdlib can do everything you need."
    in Config
-        { configApiKey = apiKey aCfg,
-          configApiSite = apiSite aCfg,
-          configLowIntModel = lowIntModelName aCfg,
-          configMediumIntModel = mediumIntModelName aCfg,
-          configHighIntModel = highIntModelName aCfg,
+        { configApiKey = apiKey mCfg,
+          configApiSite = apiSite mCfg,
+          configLowIntModel = lowIntModelName mCfg,
+          configMediumIntModel = mediumIntModelName mCfg,
+          configHighIntModel = highIntModelName mCfg,
           configBaseDir = T.unpack $ baseDir aCfg,
           configCacheDir = T.unpack $ cacheDir aCfg,
           configBuildTimeoutSeconds = buildTimeoutSeconds aCfg,
@@ -55,21 +80,20 @@ appConfigToConfig aCfg =
           configGitUserName = gitUserName aCfg,
           configGitUserEmail = gitUserEmail aCfg,
           configEnvVars = [],
-          configMaxNumFocusedFiles = maxNumFocusedFiles aCfg,
-          configTaskMaxFailures = RemainingFailureTolerance (taskMaxFailures aCfg),
+          configMaxNumFocusedFiles = maxNumFocusedFiles mCfg,
+          configTaskMaxFailures = RemainingFailureTolerance (taskMaxFailures mCfg),
           configForbiddenFiles =
             [ ForbiddenFile "go.mod" cannotModifyDepReason,
               ForbiddenFile "go.sum" cannotModifyDepReason
             ],
-          configModelTemperature = modelTemperature aCfg,
-          configModelMaxInputTokens = modelMaxInputTokens aCfg
+          configModelTemperature = modelTemperature mCfg,
+          configModelMaxInputTokens = modelMaxInputTokens mCfg
         }
 
-instance FromJSON AppConfig
-
-instance ToJSON AppConfig
-
-loadConfig :: FilePath -> IO (Either Text AppConfig)
-loadConfig path = do
-  contents <- BS.readFile path
-  return $ (bimap T.pack id) $ eitherDecode contents
+loadConfig :: FilePath -> FilePath -> IO (Either Text (AppConfig, ModelConfig))
+loadConfig appCfgPath modelCfgPath = do
+  appBytes <- BS.readFile appCfgPath
+  modelBytes <- BS.readFile modelCfgPath
+  let appE = first T.pack (eitherDecode appBytes) :: Either T.Text AppConfig
+      modelE = first T.pack (eitherDecode modelBytes) :: Either T.Text ModelConfig
+  pure $ liftA2 (,) appE modelE

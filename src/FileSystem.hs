@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module FileSystem (replaceInFile, readFileToText, readFileToTextAndOpen, appendToFile, ensureLineNumbers, toFilePath, getFileNames, fileExistsOnDisk, clearFileOnDisk, runProcessWithTimeout, getFileNamesRecursive, handleExitCode, runAll, gitInit, gitAddAndCommit, ensureNoLineNumbers, addLineNumbersToText, addTenthLineNumbersToText, updateOpenedFile, reloadOpenFiles, gitSetupUser, gitRevertFile, tryFileOp, checkBinaryOnPath) where
+module FileSystem (replaceInFile, readFileToText, readFileToTextMayThrow, readFileToTextAndOpen, appendToFile, ensureLineNumbers, toFilePath, getFileNames, fileExistsOnDisk, clearFileOnDisk, runProcessWithTimeout, getFileNamesRecursive, handleExitCode, runAll, gitInit, gitAddAndCommit, ensureNoLineNumbers, addLineNumbersToText, addTenthLineNumbersToText, updateOpenedFile, reloadOpenFiles, gitSetupUser, gitRevertFile, tryFileOp, checkBinaryOnPath) where
 
 import Control.Concurrent.Async (concurrently)
 import Control.Exception (IOException, bracket, try)
@@ -25,6 +25,9 @@ import System.IO (hClose)
 import System.IO.Error (tryIOError)
 import System.Process qualified as Proc
 import System.Timeout qualified as Timeout
+
+maxErrLinesToShow :: Int
+maxErrLinesToShow = 100
 
 runAll :: [IO (Either Text ())] -> IO (Either Text ())
 runAll = foldM step (Right ())
@@ -111,10 +114,15 @@ tryFileOp path op checker maybeBounds = do
 
 readFileToText :: FilePath -> IO Text
 readFileToText path = do
-  mayPath <- try @IOException (readFileBS path)
-  return $ case mayPath of
+  mayVal <- try @IOException (readFileBS path)
+  return $ case mayVal of
     Left _ -> ""
     Right val -> TE.decodeUtf8Lenient val
+
+readFileToTextMayThrow :: FilePath -> IO Text
+readFileToTextMayThrow path = do
+  val <- readFileBS path
+  return $ TE.decodeUtf8Lenient val
 
 updateOpenedFile :: Text -> AppM ()
 updateOpenedFile fileName = do
@@ -408,9 +416,9 @@ handleExitCode opName res = do
             <> " with exit code "
             <> show code
             <> "\nstdout:\n"
-            <> truncateText 30 stdoutRes
+            <> truncateText maxErrLinesToShow stdoutRes
             <> "\nstderr:\n"
-            <> truncateText 30 stderrRes
+            <> truncateText maxErrLinesToShow stderrRes
 
 gitInit :: FilePath -> IO (Either Text ())
 gitInit path = DIR.withCurrentDirectory path $ do

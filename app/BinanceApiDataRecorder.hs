@@ -16,9 +16,9 @@ import System.FilePath qualified as FP
 import System.Log.Logger qualified as Logger
 import Text.RawString.QQ (r)
 
-makeGoBinanceApiDataRecorder :: AppConfig -> IO ()
-makeGoBinanceApiDataRecorder aCfg = do
-  let cfg = appConfigToConfig aCfg
+makeGoBinanceApiDataRecorder :: AppConfig -> ModelConfig -> IO ()
+makeGoBinanceApiDataRecorder aCfg mCfg = do
+  let cfg = appAndModelConfigToConfig aCfg mCfg
       dependencies =
         [ "github.com/xitongsys/parquet-go",
           "github.com/xitongsys/parquet-go-source",
