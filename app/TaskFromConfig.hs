@@ -16,14 +16,11 @@ import Control.Exception (ErrorCall (..), throwIO)
 import Control.Monad.Except
 import Core
 import Data.Aeson
-import Data.Kind (Type)
-import Data.Proxy (Proxy (..))
 import Data.Text qualified as T
 import FileSystem qualified as FS
 import GoLang qualified as GoLangMod
 import Logging qualified
 import PromptCommon
-import PromptTexts qualified
 import Relude
 import System.FilePath qualified as FP
 import System.Log.Logger qualified as Logger
@@ -81,13 +78,14 @@ makeTaskFromConfig aCfg mCfg = do
   liftIO $ Logging.logInfo "Initial state" (show initialState)
   let projectFn :: AppM ()
       projectFn = case projectKind aCfg of
-        _ -> throwError $ "Unsupported project kind for TaskFromConfig: " <> show (projectKind aCfg)
-        RefactorProject -> case bigRefactorCfg aCfg of
-          Just refactorCfg -> withBuildSystem (getBuildSystem CPlusPlus) $ \(proxy :: Proxy bs) -> makeRefactorFilesProject @bs projectTexts refactorCfg
+        RefactorProject -> case
+          bigRefactorCfg aCfg of
+          Just refactorCfg -> withBuildSystem (getBuildSystem GoLang) $ \(_ :: Proxy bs) -> makeRefactorFilesProject @bs projectTexts refactorCfg
           Nothing -> throwError "Missing big refactor config!"
         TargetedRefactorProject -> case targetedRefactorCfg aCfg of
-          Just refactorCfg -> withBuildSystem (getBuildSystem CPlusPlus) $ \(proxy :: Proxy bs) -> makeTargetedRefactorProject @bs projectTexts refactorCfg
+          Just refactorCfg -> withBuildSystem (getBuildSystem GoLang) $ \(_ :: Proxy bs) -> makeTargetedRefactorProject @bs projectTexts refactorCfg
           Nothing -> throwError "Missing targeted refactor config!"
+        _ -> throwError $ "Unsupported project kind for TaskFromConfig: " <> show (projectKind aCfg)
   res <- runApp cfg initialState projectFn
   case res of
     Left err -> putTextLn $ "Process ended with error: " <> show err

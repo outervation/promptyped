@@ -53,6 +53,7 @@ data AppConfig = AppConfig
     buildNumJobs :: Int,
     gitUserName :: Text,
     gitUserEmail :: Text,
+    envVars :: [(Text, Text)],
     projectKind :: ProjectKind,
     targetedRefactorCfg :: Maybe PC.TargetedRefactorConfig,
     bigRefactorCfg :: Maybe PC.BigRefactorConfig,
@@ -79,7 +80,7 @@ appAndModelConfigToConfig aCfg mCfg =
           configBuildNumJobs = buildNumJobs aCfg,
           configGitUserName = gitUserName aCfg,
           configGitUserEmail = gitUserEmail aCfg,
-          configEnvVars = [],
+          configEnvVars = envVars aCfg,
           configMaxNumFocusedFiles = maxNumFocusedFiles mCfg,
           configTaskMaxFailures = RemainingFailureTolerance (taskMaxFailures mCfg),
           configForbiddenFiles =

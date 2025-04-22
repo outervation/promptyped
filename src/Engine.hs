@@ -67,10 +67,10 @@ makeSyntaxErrorCorrectionPrompt tools exampleReturn llmMsg err = do
   let returnValueDesc = Tools.returnValueToDescription exampleReturn
       toolDesc = Tools.toolsToDescription tools
       msgBeginning = "You are an agent responsible for error correction of LLM output. There is a specific syntax for tools that the LLM could use, described as follows: " <> toolDesc <> "\nThere is also a syntax for values the LLM may return, as follows: " <> returnValueDesc
-      msgRes = "The LLM returned syntactically incorrect output:\n" <> content llmMsg <> "\nThe exact error was: " <> err <> "\nPlease output the same output as above but with the syntax error corrected, thanks! If you can't fix it, just return it as-is and it'll be handled downstream, don't panic."
+      msgRes = "The LLM returned syntactically incorrect output:\n" <> content llmMsg <> "\nThe exact error was: " <> err <> "\nPlease output the same output as above but with the syntax error corrected, thanks! For missing textbox names, if a tool call references a text box that doesn't exist, but right after it is an unused textbox that seems to fit, then please fix the textbox name to match. If you can't fix it, just return it as-is and it'll be handled downstream, don't panic."
   return $ Message (roleName RoleUser) (msgBeginning <> msgRes)
 
-runPromptWithSyntaxErrorCorrection :: (ToJSON a) => IntelligenceRequired -> [Tools.Tool] -> a -> [Message] -> AppM (Message, UsageData)
+runPromptWithSyntaxErrorCorrection :: forall a. (ToJSON a, FromJSON a, Show a) => IntelligenceRequired -> [Tools.Tool] -> a -> [Message] -> AppM (Message, UsageData)
 runPromptWithSyntaxErrorCorrection intReq tools example messages = do
   (res, queryStats) <- runPrompt intReq messages
   let mayToolsCalled = Tools.findToolsCalled (content res) tools
@@ -79,7 +79,10 @@ runPromptWithSyntaxErrorCorrection intReq tools example messages = do
     (_, _, True) -> pure (res, queryStats)
     (Right [(Tools.ToolReturn, _)], Right (_ : _), False) -> handleErr "Raw text block seen but no tool call using it" res queryStats
     (Right [], Right (_ : _), False) -> handleErr "Raw text block seen but no tool calls that could use it" res queryStats
-    (Right _, Right _, False) -> pure (res, queryStats)
+    (Right callsRaw, Right rawTextBlocks, False) -> do
+      Tools.processToolsArgs @a callsRaw rawTextBlocks >>= \case
+        ([], _) -> pure (res, queryStats)
+        (errs, _) -> handleErr (T.intercalate ",\n" errs) res queryStats
     (Left err, _, False) -> handleErr err res queryStats
     (_, Left err, False) -> handleErr err res queryStats
   where
@@ -131,7 +134,7 @@ contextToMessages Context {..} tools theState isCloseFileTask exampleReturn = do
     getOpenFilesDesc :: AppM Text
     getOpenFilesDesc = do
       renderedFiles <- mapM (renderOpenFile render) $ stateOpenFiles theState
-      pure $ "All currently open files: \n " <> unlines renderedFiles
+      pure $ "All currently open files (note these always represent the latest version on disk, even though they may appear in the context before the messages containing changes made to them): \n " <> unlines renderedFiles
     filesDesc = "All available files: \n " <> unlines (map renderExistingFile $ stateFiles theState)
 
 shortenOldErrorMessages :: [(MsgKind, Message)] -> [(MsgKind, Message)]
@@ -299,14 +302,16 @@ runAiFuncInner isCloseFileTask origCtxt intReq tools exampleReturn postProcessor
       Tools.processToolsArgs callsRaw rawTextBlocks >>= \case
         (errs, []) -> addErrorAndRecurse ("Error in function calls/return logic: " <> T.intercalate "," errs) ctxtWithAiMsg SyntaxError OtherMsg
         (errs, calls) -> do
-          liftIO $ Logging.logInfo "RunAiFunc" $ "Got " <> (show $ length errs) <> " errors, and func calls: " <> (T.intercalate ", " $ map (Tools.toolName . Tools.toolCallTool) calls)
           cfg <- ask
           let toolProcessingCtxt = foldr (\err innerCtxt -> addErrorToContext innerCtxt err OtherMsg) ctxtWithAiMsg errs
               ctxtUpdates = flip map calls $ \x innerCtxt -> Tools.runTool @bs rawTextBlocks x innerCtxt
           finalCtxt <- foldlM (\acc f -> f acc) toolProcessingCtxt ctxtUpdates
           let numNewErrs = contextNumErrors finalCtxt - contextNumErrors toolProcessingCtxt
+          liftIO $ Logging.logInfo "RunAiFunc" $ "Got " <> (show $ length errs) <> " errors, " <> (show numNewErrs) <> " new context errors, and func calls: " <> (T.intercalate ", " $ map (Tools.toolName . Tools.toolCallTool) calls)
           case (Tools.getReturn calls, numNewErrs + length errs > 0) of
-            (Just ret, False) -> postProcessor finalCtxt ret >>= either (handleReturnError finalCtxt) pure
+            (Just ret, False) -> do
+              liftIO $ Logging.logInfo "RunAiFunc" "Running validator/postprocessor to attempt return"
+              postProcessor finalCtxt ret >>= either (handleReturnError finalCtxt) pure
             _ -> recur finalCtxt (configTaskMaxFailures cfg)
 
     addErrorAndRecurse errMsg theCtxt errKind msgKind = do

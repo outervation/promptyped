@@ -239,10 +239,10 @@ isFileForbidden cfg name = do
   let match = filter (\x -> forbiddenFileName x == name) (configForbiddenFiles cfg)
   case match of
     (x : _) -> Just $ "File " <> name <> " is forbidden to modify because: " <> forbiddenFileReason x
-    [] ->
-      if T.isInfixOf "/" name
-        then Just $ "Filename " <> name <> " is forbidden because it contains '/'; no nested paths are allowed!"
-        else Nothing
+    [] -> Nothing
+--      if T.isInfixOf "/" name
+--        then Just $ "Filename " <> name <> " is forbidden because it contains '/'; no nested paths are allowed!"
+--        else Nothing
 
 -- Metrics type for tracking
 data Metrics = Metrics

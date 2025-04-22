@@ -314,7 +314,7 @@ validateUnitTests :: Context -> UnitTests -> AppM (Either (MsgKind, Text) UnitTe
 validateUnitTests _ cf = pure $ Right cf
 
 allTools :: [Tools.Tool]
-allTools = [Tools.ToolOpenFile, Tools.ToolFocusFile, Tools.ToolCloseFile, Tools.ToolAppendFile, Tools.ToolInsertInFile, Tools.ToolEditFileByMatch, Tools.ToolPanic, Tools.ToolReturn]
+allTools = [Tools.ToolOpenFile, Tools.ToolFocusFile, Tools.ToolCloseFile, Tools.ToolAppendFile, Tools.ToolInsertInFile, Tools.ToolEditFile, Tools.ToolPanic, Tools.ToolReturn]
 
 readOnlyTools :: [Tools.Tool]
 readOnlyTools = [Tools.ToolOpenFile, Tools.ToolFocusFile, Tools.ToolCloseFile, Tools.ToolPanic, Tools.ToolReturn]
@@ -413,13 +413,13 @@ makeFile background extraFiles pf = do
 data AutoRefactorUnitTests = DoAutoRefactorUnitTests | DontAutoRefactorUnitTests
   deriving (Eq, Ord, Show)
 
-makeRefactorFileTask :: forall bs. (BS.BuildSystem bs) => Text -> [ExistingFile] -> Text -> [ThingWithDependencies] -> AutoRefactorUnitTests -> AppM ()
+makeRefactorFileTask :: forall bs. (BS.BuildSystem bs) => Text -> [(ExistingFile, Tools.FocusOpenedFile)] -> Text -> [ThingWithDependencies] -> AutoRefactorUnitTests -> AppM ()
 makeRefactorFileTask background initialDeps fileName desiredChanges refactorUnitTests = do
   cfg <- ask
   modify' clearOpenFiles
   -- Note: file opened first will appear last (most recent)
-  let dependencies = [fileName, journalFileName] ++ map (\x -> x.existingFileName) initialDeps
-  forM_ dependencies $ \x -> Tools.openFile @bs Tools.DoFocusOpenedFile x cfg
+  let dependencies = [(fileName, Tools.DoFocusOpenedFile), (journalFileName, Tools.DoFocusOpenedFile)] ++ map (\(x, shouldFocus) -> (x.existingFileName, shouldFocus)) initialDeps
+  forM_ dependencies $ \(x, shouldFocus) -> Tools.openFile @bs shouldFocus x cfg
   let makeChange description = do
         let ctxt = makeBaseContext background $ "Your task is to refactor the file " <> fileName <> " to make the change: " <> show description
             exampleChange = ModifiedFile "someFile.go" "Update the file to add ... so that it ..."
@@ -550,7 +550,8 @@ makeRefactorFilesProject projectTexts refactorCfg = do
   fileDependencies <- memoise (configCacheDir cfg) "all_file_final_dependencies" () (const "") getFileDependenciesTask
   let docDeps = map (`ExistingFile` "") refactorCfg.bigRefactorInitialOpenFiles
   forM_ fileDependencies $ \x -> do
-    let deps = map (`ExistingFile` "") x.dependencies ++ docDeps
+    let depsFiles = map (`ExistingFile` "") x.dependencies ++ docDeps
+        deps = map (\f -> (f, Tools.DoFocusOpenedFile)) depsFiles
     case lookupFileProposedChanges x.name plannedTasksRefined of
       Nothing -> pure ()
       Just changes -> makeRefactorFileTask @bs background deps changes.fileName changes.proposedChanges DoAutoRefactorUnitTests
@@ -597,7 +598,8 @@ instance FromJSON TargetedRefactorConfigItem
 
 data TargetedRefactorConfig = TargetedRefactorConfig
   { refactorSummary :: Text,
-    refactorFileTasks :: [TargetedRefactorConfigItem]
+    refactorFileTasks :: [TargetedRefactorConfigItem],
+    refactorOpenAllSourceFiles :: Bool
   }
   deriving (Generic, Eq, Ord, Show)
 
@@ -611,14 +613,28 @@ makeTargetedRefactorProject projectTexts refactorCfg = do
   ignoredDirs <- BS.getIgnoredDirs @bs
   existingFileNames <- liftIO $ FS.getFileNamesRecursive ignoredDirs cfg.configBaseDir
   modify' (updateExistingFiles existingFileNames)
+  origSt <- get
+  sourceFileNamesOrig <- filterM (BS.isBuildableFile @bs) $ map existingFileName origSt.stateFiles
+  case sourceFileNamesOrig of
+    [] -> return ()
+    (someSourceFile : _) -> do
+      _ <- Tools.considerBuildAndTest @bs someSourceFile
+      return ()
   let setupOpenFiles fileNames = do
         modify' clearOpenFiles
+        when refactorCfg.refactorOpenAllSourceFiles $ do
+          st <- get
+          let filterSourceFile x = do
+                buildable <- BS.isBuildableFile @bs x
+                return $ buildable && not (T.isInfixOf "_test.go" x)
+          sourceFileNames <- filterM filterSourceFile $ map existingFileName st.stateFiles
+          forM_ sourceFileNames $ \x -> Tools.openFile @bs Tools.DontFocusOpenedFile x cfg
         forM_ (fileNames ++ [journalFileName]) $ \x -> Tools.openFile @bs Tools.DoFocusOpenedFile x cfg
   let summary = refactorCfg.refactorSummary
       doRefactor :: TargetedRefactorConfigItem -> AppM ()
       doRefactor rCfg = do
-        origSt <- get
-        unless (fileExists rCfg.refactorFile origSt) $ throwError $ "Trying to refactor file that doesn't exist: " <> rCfg.refactorFile
+        preSt <- get
+        unless (fileExists rCfg.refactorFile preSt) $ throwError $ "Trying to refactor file that doesn't exist: " <> rCfg.refactorFile <> "; files are: " <> show preSt.stateFiles
         let background = projectTexts.projectSummaryText <> "\n" <> summary
             exampleTasks =
               ThingsWithDependencies
@@ -643,7 +659,7 @@ makeTargetedRefactorProject projectTexts refactorCfg = do
         st <- get
         case getExistingFiles rCfg.refactorFileDependencies st of
           Left err -> throwError $ "Dependency listed for " <> rCfg.refactorFile <> " does not exist: " <> err
-          Right deps -> makeRefactorFileTask @bs taskBackground deps rCfg.refactorFile plannedTasks autoRefactorUnitTests
+          Right deps -> makeRefactorFileTask @bs taskBackground (map (\x -> (x, Tools.DoFocusOpenedFile)) deps) rCfg.refactorFile plannedTasks autoRefactorUnitTests
   forM_ refactorCfg.refactorFileTasks doRefactor
 
 data FileAnalysisResult = FileAnalysisResult

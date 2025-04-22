@@ -927,8 +927,11 @@ forceFocusFile fileName = do
   -- We do this so that it doesn't get immediately unfocused. TODO: think of a cleaner solution
   ts <- liftIO getCurrentPOSIXTime
   modify' $ updateFileLastModified fileName ts
-  liftIO $ Logging.logInfo "FileOperation" $ "Focusing file: " <> fileName
   focusFile fileName
+  st <- get
+  let focused = fileFocused fileName st
+  unless focused $ throwError $ "Failed to focus file: " <> fileName <> " :\n" <> show st
+  liftIO $ Logging.logInfo "FileOperation" $ "Focusing file: " <> fileName
 
 handleFileOperation ::
   forall a.
@@ -1008,8 +1011,8 @@ openFile :: forall bs. (BS.BuildSystem bs) => FocusOpenedFile -> Text -> Config 
 openFile focusOpenedFile fileName cfg = do
   st <- get
   contents <- liftIO $ FS.readFileToTextAndOpen (FS.toFilePath cfg fileName)
+  isSourceFile <- BS.isBuildableFile @bs fileName
   let getContentsMinimised = do
-        isSourceFile <- BS.isBuildableFile @bs fileName
         let fPath = FS.toFilePath cfg fileName
         actuallyExists <- liftIO $ FS.fileExistsOnDisk fPath
         if isSourceFile && actuallyExists then BS.minimiseFile @bs fileName else pure contents
@@ -1017,9 +1020,9 @@ openFile focusOpenedFile fileName cfg = do
   modify' (ensureOpenFile fileName contents contentsMinimised)
   FS.updateOpenedFile fileName
   unless (fileExists fileName st) $ modify' (addExistingFile fileName "")
-  isSourceFile <- BS.isBuildableFile @bs fileName
-  when (isSourceFile && focusOpenedFile == DoFocusOpenedFile) $ forceFocusFile fileName
-  liftIO $ Logging.logInfo "OpenFile" $ "Opened file " <> fileName <> "."
+  let shouldFocus = isSourceFile && focusOpenedFile == DoFocusOpenedFile
+  when shouldFocus $ forceFocusFile fileName
+  liftIO $ Logging.logInfo "OpenFile" $ "Opened file " <> fileName <> ", shouldFocus: " <> (show shouldFocus) <> ", isSourceFile: " <> (show isSourceFile)
 
 getRawText :: RawTexts -> Text -> AppM Text
 getRawText rawTexts name = case lookupText name rawTexts of
