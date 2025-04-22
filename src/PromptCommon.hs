@@ -314,7 +314,7 @@ validateUnitTests :: Context -> UnitTests -> AppM (Either (MsgKind, Text) UnitTe
 validateUnitTests _ cf = pure $ Right cf
 
 allTools :: [Tools.Tool]
-allTools = [Tools.ToolOpenFile, Tools.ToolFocusFile, Tools.ToolCloseFile, Tools.ToolAppendFile, Tools.ToolInsertInFile, Tools.ToolEditFile, Tools.ToolPanic, Tools.ToolReturn]
+allTools = [Tools.ToolOpenFile, Tools.ToolFocusFile, Tools.ToolCloseFile, Tools.ToolAppendFile, Tools.ToolInsertInFile, Tools.ToolEditFileByMatch, Tools.ToolPanic, Tools.ToolReturn]
 
 readOnlyTools :: [Tools.Tool]
 readOnlyTools = [Tools.ToolOpenFile, Tools.ToolFocusFile, Tools.ToolCloseFile, Tools.ToolPanic, Tools.ToolReturn]
@@ -334,8 +334,8 @@ checkCompileTestResults = do
   let res = stateCompileTestRes st
   pure $ case (compileRes res, testRes res) of
     (Nothing, Nothing) -> Right ()
-    (Just compileErr, _) -> Left (CompileFailMsg, "Error, compilation failed, fix it before returning. Note that if you see a 'missing import path' compilation error, it may be because you forgot a closing ')' for the go import list. If you see 'is not a package path' when trying to import a local file you created, remember you should include 'project_name/filename', NOT '/home/username/project_name/filename' or 'username/project_name/filename' The last error was: " <> compileErr)
-    (Nothing, Just testErr) -> Left (TestFailMsg, "Error, unit tests didn't all pass (or failed to compile), fix them first. I encourage you to add more logging/printf for debugging if necessary, and to record your current step and planned future steps in the journal.txt . If you see 'is not a package path' when trying to import a local file you created into a test, remember you should include 'project_name/filename', NOT '/home/username/project_name/filename' or 'username/project_name/filename, and put everything in package main. The last error was: " <> testErr)
+    (Just _, _) -> Left (CompileFailMsg, "Error, compilation failed, fix it before returning. Note that if you see a 'missing import path' compilation error, it may be because you forgot a closing ')' for the go import list. If you see 'is not a package path' when trying to import a local file you created, remember you should include 'project_name/filename', NOT '/home/username/project_name/filename' or 'username/project_name/filename'. The compilation error is described earlier above.")
+    (Nothing, Just _) -> Left (TestFailMsg, "Error, unit tests didn't all pass (or failed to compile), fix them first. I encourage you to add more logging/printf for debugging if necessary, and to record your current step and planned future steps in the journal.txt . If you see 'is not a package path' when trying to import a local file you created into a test, remember you should include 'project_name/filename', NOT '/home/username/project_name/filename' or 'username/project_name/filename, and put everything in package main. The error with unit tests is described earlier above.")
 
 validateUnitTest :: Context -> UnitTestDone -> AppM (Either (MsgKind, Text) ())
 validateUnitTest _ t = case unitTestPassedSuccessfully t of
@@ -613,24 +613,21 @@ makeTargetedRefactorProject projectTexts refactorCfg = do
   ignoredDirs <- BS.getIgnoredDirs @bs
   existingFileNames <- liftIO $ FS.getFileNamesRecursive ignoredDirs cfg.configBaseDir
   modify' (updateExistingFiles existingFileNames)
-  origSt <- get
-  sourceFileNamesOrig <- filterM (BS.isBuildableFile @bs) $ map existingFileName origSt.stateFiles
-  case sourceFileNamesOrig of
-    [] -> return ()
-    (someSourceFile : _) -> do
-      _ <- Tools.considerBuildAndTest @bs someSourceFile
-      return ()
-  let setupOpenFiles fileNames = do
+  _ <- Tools.buildAndTest @bs
+  let filterSourceFile x = do
+        buildable <- BS.isBuildableFile @bs x
+        return $ buildable && not (T.isInfixOf "_test.go" x)
+
+      setupOpenFiles fileNames = do
         modify' clearOpenFiles
         when refactorCfg.refactorOpenAllSourceFiles $ do
           st <- get
-          let filterSourceFile x = do
-                buildable <- BS.isBuildableFile @bs x
-                return $ buildable && not (T.isInfixOf "_test.go" x)
           sourceFileNames <- filterM filterSourceFile $ map existingFileName st.stateFiles
           forM_ sourceFileNames $ \x -> Tools.openFile @bs Tools.DontFocusOpenedFile x cfg
         forM_ (fileNames ++ [journalFileName]) $ \x -> Tools.openFile @bs Tools.DoFocusOpenedFile x cfg
-  let summary = refactorCfg.refactorSummary
+
+      summary = refactorCfg.refactorSummary
+
       doRefactor :: TargetedRefactorConfigItem -> AppM ()
       doRefactor rCfg = do
         preSt <- get
@@ -659,7 +656,12 @@ makeTargetedRefactorProject projectTexts refactorCfg = do
         st <- get
         case getExistingFiles rCfg.refactorFileDependencies st of
           Left err -> throwError $ "Dependency listed for " <> rCfg.refactorFile <> " does not exist: " <> err
-          Right deps -> makeRefactorFileTask @bs taskBackground (map (\x -> (x, Tools.DoFocusOpenedFile)) deps) rCfg.refactorFile plannedTasks autoRefactorUnitTests
+          Right depsFiles -> do
+            sourceFileNames <- filterM filterSourceFile $ map existingFileName st.stateFiles
+            let deps = map (\f -> (f, Tools.DoFocusOpenedFile)) depsFiles
+                sourceFilesWithFocus = map (\x -> (ExistingFile x "", Tools.DontFocusOpenedFile)) sourceFileNames
+                finalDeps = if refactorCfg.refactorOpenAllSourceFiles then deps ++ sourceFilesWithFocus else deps
+            makeRefactorFileTask @bs taskBackground finalDeps rCfg.refactorFile plannedTasks autoRefactorUnitTests
   forM_ refactorCfg.refactorFileTasks doRefactor
 
 data FileAnalysisResult = FileAnalysisResult
@@ -989,14 +991,14 @@ fixFailedTestsAndCompilationSimple background = do
   sourceFileNames <- filterM (BS.isBuildableFile @bs) $ map existingFileName origSt.stateFiles
   case sourceFileNames of
     [] -> return ()
-    (someSourceFile : _) -> do
-      _ <- Tools.considerBuildAndTest @bs someSourceFile
+    (_ : _) -> do
+      _ <- Tools.buildAndTest @bs
       st <- get
       let res = stateCompileTestRes st
           mayTask = case (compileRes res, testRes res) of
             (Nothing, Nothing) -> Nothing
-            (Just compileErr, _) -> Just $ "The project fails to build, please fix it. The error: \n" <> compileErr
-            (Nothing, Just testErr) -> Just $ "Fix the error that occurred building or running the tests. At each step please append to the journal.txt what you're currently doing and what you plan to do next. The error: \n" <> testErr
+            (Just _, _) -> Just $ "The project fails to build, please fix it. The error is described earlier above."
+            (Nothing, Just _) -> Just $ "Fix the error that occurred building or running the tests. At each step please append to the journal.txt what you're currently doing and what you plan to do next. The error is described earlier above."
       case mayTask of
         Nothing -> do
           putTextLn "Tests and compilation are fine, no need to fix"

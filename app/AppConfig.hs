@@ -23,6 +23,7 @@ data ModelConfig = ModelConfig
     mediumIntModelName :: Text,
     highIntModelName :: Text,
     taskMaxFailures :: Int,
+    rejectInvalidSyntaxDiffs :: Bool,
     maxNumFocusedFiles :: Int,
     modelTemperature :: Maybe Float,
     modelMaxInputTokens :: Int
@@ -83,6 +84,7 @@ appAndModelConfigToConfig aCfg mCfg =
           configEnvVars = envVars aCfg,
           configMaxNumFocusedFiles = maxNumFocusedFiles mCfg,
           configTaskMaxFailures = RemainingFailureTolerance (taskMaxFailures mCfg),
+          configRejectInvalidSyntaxDiffs = rejectInvalidSyntaxDiffs mCfg,
           configForbiddenFiles =
             [ ForbiddenFile "go.mod" cannotModifyDepReason,
               ForbiddenFile "go.sum" cannotModifyDepReason

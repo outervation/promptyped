@@ -75,7 +75,7 @@ checkFormatGo ::
   FilePath ->
   IO (Maybe Text)
 checkFormatGo timeout dir = Dir.withCurrentDirectory dir $ do
-  fmtResult <- runProcessWithTimeout timeout "." [] "go" ["fmt"]
+  fmtResult <- runProcessWithTimeout timeout "." [] "go" ["fmt", "./..."]
   res <- handleExitCode "'go fmt'" fmtResult
   case res of
     Left err -> pure . Just $ "The change you attempted to make would produce invalid syntax, with go fmt failing with:\n" <> err <> "\nThe change has been rejected so please try again, being careful with line numbers (remembering they're inclusive; [startLine, endLine]). An off-by-one error for instance might accidentally delete the closing bracket of a previous function, or fail to replace the final bracket of a function being replaced (leading to duplicate closing brackets)."
@@ -95,7 +95,7 @@ buildProjectGo timeout dir newEnv = Dir.withCurrentDirectory dir $ do
         buildResult <- runProcessWithTimeout timeout "." newEnv "go" ["build", "./..."]
         handleExitCode "'go build'" buildResult
       fmtIt = do
-        fmtResult <- runProcessWithTimeout timeout "." newEnv "go" ["fmt"]
+        fmtResult <- runProcessWithTimeout timeout "." newEnv "go" ["fmt", "./..."]
         handleExitCode "'go fmt'" fmtResult
   eitherToMaybe <$> runAll [buildIt, fmtIt]
 
@@ -136,7 +136,7 @@ minimiseGoFileIO baseDir path env = Dir.withCurrentDirectory baseDir $ do
             <> "\nstderr:\n"
             <> truncateText 40 stderrRes
 
-minimiseGoFile :: Text -> AppM Text
+minimiseGoFile :: Text -> AppM (Either Text Text)
 minimiseGoFile path = do
   cfg <- ask
   envVars <- getEnvVars
@@ -147,8 +147,8 @@ minimiseGoFile path = do
       filePath = toFilePath cfg path
   res <- liftIO $ minimiseGoFileIO baseDir filePath envVars
   case res of
-    Left err -> throwError $ "Error minimising go file: " <> err
-    Right txt -> pure txt
+    Left err -> pure $ Left $ "Error minimising go file: " <> err
+    Right txt -> pure $ Right txt
 
 data GoLang = GoLang
 

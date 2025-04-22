@@ -169,6 +169,7 @@ data Config = Config
     configGitUserName :: Text,
     configGitUserEmail :: Text,
     configTaskMaxFailures :: RemainingFailureTolerance,
+    configRejectInvalidSyntaxDiffs :: Bool,
     configForbiddenFiles :: [ForbiddenFile],
     configMaxNumFocusedFiles :: Int,
     configModelTemperature :: Maybe Float,
@@ -192,6 +193,7 @@ instance Semigroup Config where
         configGitUserName = configGitUserName b <> configGitUserName a,
         configGitUserEmail = configGitUserEmail b <> configGitUserEmail a,
         configTaskMaxFailures = configTaskMaxFailures a <> configTaskMaxFailures b,
+        configRejectInvalidSyntaxDiffs = configRejectInvalidSyntaxDiffs a && configRejectInvalidSyntaxDiffs b,
         configForbiddenFiles = configForbiddenFiles a <> configForbiddenFiles b,
         configMaxNumFocusedFiles = configMaxNumFocusedFiles b,
         configModelTemperature = configModelTemperature b <|> configModelTemperature a,
@@ -214,6 +216,7 @@ instance Monoid Config where
         configGitUserName = T.empty,
         configGitUserEmail = T.empty,
         configTaskMaxFailures = mempty,
+        configRejectInvalidSyntaxDiffs = False,
         configForbiddenFiles = [],
         configMaxNumFocusedFiles = 0,
         configModelTemperature = Nothing,
@@ -240,6 +243,7 @@ isFileForbidden cfg name = do
   case match of
     (x : _) -> Just $ "File " <> name <> " is forbidden to modify because: " <> forbiddenFileReason x
     [] -> Nothing
+
 --      if T.isInfixOf "/" name
 --        then Just $ "Filename " <> name <> " is forbidden because it contains '/'; no nested paths are allowed!"
 --        else Nothing

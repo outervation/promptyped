@@ -299,7 +299,7 @@ toolName :: Tool -> Text
 toolName x = T.drop 4 $ show x
 
 toolSummary :: Text
-toolSummary = "You have the following tools available to you, that you may call with JSON args. Line numbers are included for your focused OpenFiles to simplify your task, but are not present in the files on disk (so don't explicitly write line numbers to disk!). Only a limited number of source files can be 'focused' (shown in full detail) at a time; to avoid overwhelming the context, the rest will only show function types and struct definitions. You may append to an open file that's not focused, but not do any line-number-based edits (as you can't see function bodies in an unfocused file). For tools that modify files, after modification the file will be compiled if a source file, and run if it's a unit test file. \n IMPORTANT NOTE: for Append/Edit/InsertIn file, you don't provide the text as part of the json, instead you set \"rawTextName\": \"someRawTextBox\", and then afterwards include the raw string literal in C++ style RAWTEXT[someRawTextBox]=R\"r( ...the actual text... )r\". This is to avoid the need for JSON-escaping the code/text; you instead directly include the unescaped text in between the R\"r( and )r\". It allows allows multiple commands to refer to the same raw text box where necessary (e.g. if inserting the same code in multiple places). Note that LINE NUMBERS START AT ZERO, and appear at the START of the line, not the end."
+toolSummary = "You have the following tools available to you, that you may call with JSON args. Line numbers are included for your focused OpenFiles to simplify your task, but are not present in the files on disk (so don't explicitly write line numbers to disk!). Only a limited number of source files can be 'focused' (shown in full detail) at a time; to avoid overwhelming the context, the rest will only show function types and struct definitions. You may append to an open file that's not focused, but not do any line-number-based edits (as you can't see function bodies in an unfocused file). For tools that modify files, after modification the file will be compiled if a source file, and run if it's a unit test file. \n IMPORTANT NOTE: for Append/Edit/InsertIn file, you don't provide the text as part of the json, instead you set \"rawTextName\": \"someRawTextBox\", and then afterwards include the raw string literal in C++ style RAWTEXT[someRawTextBox]=R\"r( ...the actual text... )r\". This is to avoid the need for JSON-escaping the code/text; you instead directly include the unescaped text in between the R\"r( and )r\". It allows allows multiple commands to refer to the same raw text box where necessary (e.g. if inserting the same code in multiple places). Note that LINE NUMBERS START AT ZERO, and appear at the START of the line, not the end. Also PLEASE NOTE: you can't make overlapping line-based edits, as order of operations for overlapping edits is undefined."
 
 -- | Compile a Text regex with error reporting using regex-tdfa.
 compileRegex :: Text -> Either Text Regex
@@ -421,9 +421,9 @@ toolArgFormatAndDesc ToolFocusFile = (toJ FocusFileArg {fileName = "someFile.txt
 toolArgFormatAndDesc ToolCloseFile = (toJ CloseFileArg {fileName = "someFile.txt"}, "", "Remove a file from the context")
 toolArgFormatAndDesc ToolAppendFile = (toJ AppendFileArg {fileName = "somefile.txt", rawTextName = "codeToAppendBox"}, mkSampleCodeBox "codeToAppendBox", "Append code/text to the bottom of a file. Can be used to create a new file if the file doesn't exist, and can be done to a non-focused file.")
 toolArgFormatAndDesc ToolReplaceFile = (toJ AppendFileArg {fileName = "somefile.txt", rawTextName = "codeToReplaceBox"}, mkSampleCodeBox "codeToReplaceBox", "Replace a file with the provided code/text to a file. Can be used to create a new file. Prefer this over editing when the file is small.")
-toolArgFormatAndDesc ToolEditFile = (toJ EditFileArg {fileName = "somefile.txt", startLineNum = 5, endLineNum = 10, rawTextName = "codeBoxToReplaceWith"}, mkSampleCodeBox "codeBoxToReplaceWith", "Replace text in [startLineNum, endLineNum] with the text you provide. Note if making multiple edits to the same file, the start/end line numbers of different edits cannot overlap. IMPORTANT: if you insert more lines than you're replacing, the rest will be inserted, not replaced. So inserting 2 lines at at startLineNum=15 endLineNum=15 will only replace the existing line 15 in the file, and add the second provided line after that, it won't replace lines 15 and 16. Note too that the line-numbers are provided to you at the START of the line in every file. Remember line numbers start at zero.")
-toolArgFormatAndDesc ToolEditFileByMatch = (toJ EditFileByMatchArg {fileName = "somefile.txt", startLineMatchesRegex = "int[[:space:]]*some_func(.*){", startClosestToLineNum = 5, endLineMatchesRegex = "^}", endClosestToLineNum = 20, rawTextName = "codeBoxToReplaceWith"}, mkSampleCodeBox "codeBoxToReplaceWith", "Finds lines matching the startLineNumMatchesRegex and endLineMatchesRegex, and replaces them and the lines between them with with the text you provide. Where multiple matches are present, the match closest to startClosestToLineNum/endClosestToLineNum will be used. Note if making multiple edits to the same file, the regions edited cannot overlap. Note also the regex is simple DFA, and does not support fancy PCRE features, or character classes like \\s, only posix classes like [:space:] are supported. Finally, note that the /* lineNum */ comments are purely to assist you and not present on disk, so your regex shouldn't assume they exist.")
-toolArgFormatAndDesc ToolInsertInFile = (toJ InsertInFileArg {fileName = "somefile.txt", lineNum = 17, rawTextName = "codeToInsertBox"}, mkSampleCodeBox "codeToInsertBox", "Insert the provided text into the file at lineNum, not replacing/overwriting the content on that line (instead it's moved to below the inserted text).")
+toolArgFormatAndDesc ToolEditFile = (toJ EditFileArg {fileName = "somefile.txt", startLineNum = 5, endLineNum = 10, rawTextName = "codeBoxToReplaceWith"}, mkSampleCodeBox "codeBoxToReplaceWith", "Replace text in [startLineNum, endLineNum] with the text you provide. Note if making multiple edits to the same file, the start/end line numbers of different edits cannot overlap. IMPORTANT: if you insert more lines than you're replacing, the rest will be inserted, not replaced. So inserting 2 lines at at startLineNum=15 endLineNum=15 will only replace the existing line 15 in the file, and add the second provided line after that, it won't replace lines 15 and 16. Note too that the line-numbers are provided to you at the START of the line in every file. Remember line numbers start at zero, and that multiple edits cannot overlap!")
+toolArgFormatAndDesc ToolEditFileByMatch = (toJ EditFileByMatchArg {fileName = "somefile.txt", startLineMatchesRegex = "int[[:space:]]*some_func(.*){", startClosestToLineNum = 5, endLineMatchesRegex = "^}", endClosestToLineNum = 20, rawTextName = "codeBoxToReplaceWith"}, mkSampleCodeBox "codeBoxToReplaceWith", "Finds lines matching the startLineNumMatchesRegex and endLineMatchesRegex, and replaces them and the lines between them with with the text you provide. Where multiple matches are present, the match closest to startClosestToLineNum/endClosestToLineNum will be used. Note if making multiple edits to the same file, the regions edited cannot overlap. Note also the regex is simple DFA, and does not support fancy PCRE features, or character classes like \\s, only posix classes like [:space:] are supported. Finally, note that the /* lineNum */ comments are purely to assist you and not present on disk, so your regex shouldn't assume they exist. Remember multiple edits cannot overlap!")
+toolArgFormatAndDesc ToolInsertInFile = (toJ InsertInFileArg {fileName = "somefile.txt", lineNum = 17, rawTextName = "codeToInsertBox"}, mkSampleCodeBox "codeToInsertBox", "Insert the provided text into the file at lineNum, not replacing/overwriting the content on that line (instead it's moved to below the inserted text). Note that this cannot overlap with lines modified by an Edit tool, as order of operations is undefined.")
 toolArgFormatAndDesc ToolRevertFile = (toJ RevertFileArg {fileName = "someFile.txt"}, "", "Revert un-added changes in an open file; changes are committed when compilation and unit tests succeed, so will revert to the last version of the file before compilation or unit tests failed. Use this if you get the file in a state you can't recover it from.")
 toolArgFormatAndDesc ToolPanic = (toJ PanicArg {reason = "This task is impossible for me to do because ..."}, "", "Call this if you can't complete the task due to it being impossible or not having enough information")
 
@@ -883,38 +883,41 @@ reloadLogs = do
           return $ f {openFileContents = newContents}
         else return f
 
+buildAndTest :: forall a. (BS.BuildSystem a) => AppM (Maybe (MsgKind, Text))
+buildAndTest = do
+  cfg <- ask
+  let baseDir = configBaseDir cfg
+  timeIONano64M (BS.buildProject @a cfg) >>= \case
+    (Just err, compileNanos) -> do
+      liftIO $ Logging.logInfo "ConsiderBuildAndTest" $ "Compilation/tests failed: " <> err
+      -- liftIO $ putTextLn $ "Compilation failed: " <> err
+      modify' $ updateLastCompileState (Just err)
+      modify' $ updateStateMetrics (mempty {metricsNumCompileFails = 1, metricsCompileTime = compileNanos})
+      FS.reloadOpenFiles
+      return $ Just (CompileFailMsg, err)
+    (Nothing, compileNanos) -> do
+      liftIO $ Logging.logInfo "ConsiderBuildAndTest" "Compilation succeeded."
+      modify' $ updateLastCompileState Nothing
+      (result, testNanos) <- timeIONano64M $ BS.testProject @a cfg
+      liftIO $ Logging.logInfo "ConsiderBuildAndTest" $ "Testing " <> if isJust result then "failed." else "succeeded."
+      ignoredDirs <- BS.getIgnoredDirs @a
+      existingFileNames <- liftIO $ FS.getFileNamesRecursive ignoredDirs baseDir
+      modify' (updateExistingFiles existingFileNames)
+      reloadLogs
+      FS.reloadOpenFiles
+      modify' $ updateLastTestState result
+      when (isJust result) $ modify $ updateStateMetrics (mempty {metricsNumTestFails = 1, metricsCompileTime = compileNanos, metricsTestTime = testNanos})
+      {-          case result of
+                  Just err -> liftIO $ putTextLn $ "Test error: " <> err
+                  Nothing -> return () -}
+      return $ fmap (TestFailMsg,) result
+
 considerBuildAndTest :: forall a. (BS.BuildSystem a) => Text -> AppM (Maybe (MsgKind, Text))
 considerBuildAndTest fileName = do
   isBuildable <- BS.isBuildableFile @a fileName
-  cfg <- ask
-  let baseDir = configBaseDir cfg
   case isBuildable of
     False -> return Nothing
-    True -> do
-      timeIONano64M (BS.buildProject @a cfg) >>= \case
-        (Just err, compileNanos) -> do
-          liftIO $ Logging.logInfo "ConsiderBuildAndTest" $ "Compilation/tests failed: " <> err
-          -- liftIO $ putTextLn $ "Compilation failed: " <> err
-          modify' $ updateLastCompileState (Just err)
-          modify' $ updateStateMetrics (mempty {metricsNumCompileFails = 1, metricsCompileTime = compileNanos})
-          FS.reloadOpenFiles
-          return $ Just (CompileFailMsg, err)
-        (Nothing, compileNanos) -> do
-          liftIO $ Logging.logInfo "ConsiderBuildAndTest" "Compilation succeeded."
-          modify' $ updateLastCompileState Nothing
-          (result, testNanos) <- timeIONano64M $ BS.testProject @a cfg
-          liftIO $ Logging.logInfo "ConsiderBuildAndTest" $ "Testing " <> if isJust result then "failed." else "succeeded."
-          ignoredDirs <- BS.getIgnoredDirs @a
-          existingFileNames <- liftIO $ FS.getFileNamesRecursive ignoredDirs baseDir
-          modify' (updateExistingFiles existingFileNames)
-          reloadLogs
-          FS.reloadOpenFiles
-          modify' $ updateLastTestState result
-          when (isJust result) $ modify $ updateStateMetrics (mempty {metricsNumTestFails = 1, metricsCompileTime = compileNanos, metricsTestTime = testNanos})
-          {-          case result of
-                      Just err -> liftIO $ putTextLn $ "Test error: " <> err
-                      Nothing -> return () -}
-          return $ fmap (TestFailMsg,) result
+    True -> buildAndTest @a
 
 data RequiresOpenFile = RequiresOpenFileTrue | RequiresOpenFileFalse
   deriving (Eq, Ord, Show)
@@ -977,8 +980,11 @@ handleFileOperation fileName ioAction requiresOpenFile requiresFocusedFile opNam
                   Just err -> do
                     modify' onSyntaxCheckFail
                     pure $ Just err
-              op = FS.tryFileOp filePath ioAction checker' changeBounds
-              -- op = liftIO $ ioAction filePath
+              op =
+                if configRejectInvalidSyntaxDiffs cfg
+                  then
+                    FS.tryFileOp filePath ioAction checker' changeBounds
+                  else liftIO $ ioAction filePath
               onErr :: Text -> AppM Context
               onErr err = do
                 liftIO $ Logging.logInfo "FileOperation" $ "File operation failed due to: " <> err
@@ -1015,7 +1021,13 @@ openFile focusOpenedFile fileName cfg = do
   let getContentsMinimised = do
         let fPath = FS.toFilePath cfg fileName
         actuallyExists <- liftIO $ FS.fileExistsOnDisk fPath
-        if isSourceFile && actuallyExists then BS.minimiseFile @bs fileName else pure contents
+        if isSourceFile && actuallyExists
+          then do
+            minRes <- BS.minimiseFile @bs fileName
+            case minRes of
+              Right minimised -> pure minimised
+              Left err -> (liftIO $ Logging.logInfo "OpenFile" $ "Failed to minimise file " <> fileName <> " due to error: \n " <> err) >> pure contents
+          else pure contents
   contentsMinimised <- getContentsMinimised
   modify' (ensureOpenFile fileName contents contentsMinimised)
   FS.updateOpenedFile fileName
@@ -1055,6 +1067,7 @@ runTool _ (ToolCallFocusFile args) origCtxt = do
         pure $ \ctxt -> mkError ctxt OtherMsg ("Cannot focus file that doesn't exist: " <> fileName)
       True -> do
         unless (fileAlreadyOpen fileName theState) $ openFile @bs DoFocusOpenedFile fileName cfg
+        forceFocusFile fileName
         liftIO $ Logging.logInfo "FileOperation" $ "Focused file: " <> fileName
         pure $ \ctxt -> mkSuccess ctxt OtherMsg ("Focused file: " <> fileName)
   return $ foldl' (\acc f -> f acc) initialCtxt ctxtUpdates

@@ -111,17 +111,26 @@ getTask st isCloseFileTask mainTask = do
   "YOUR CURRENT TASK: " <> case (compileRes res, testRes res, isCloseFileTask) of
     (_, _, IsCloseFileTaskTrue) -> "Please close the least important open file, to free up space in the context. The task you were working on when the context got too large is as follows; you should close the file least relevant to it: " <> mainTask
     (Nothing, Nothing, IsCloseFileTaskFalse) -> mainTask
-    (Just compileErr, _, IsCloseFileTaskFalse) -> "Fix the project build error. The error: \n" <> compileErr <> "\n. The task you were working on when compilation failed:  " <> mainTask
-    (Nothing, Just testErr, IsCloseFileTaskFalse) -> "Fix the error that occurred building or running the tests. The error: \n" <> testErr <> "\n. The task you were working on when compilation failed: " <> mainTask
+    (Just _, _, IsCloseFileTaskFalse) -> "Fix the project build error. The error is described above. The task you were working on when compilation failed:\n " <> mainTask
+    (Nothing, Just _, IsCloseFileTaskFalse) -> "Fix the error that occurred building or running the tests. The error is described above. The task you were working on when compilation failed:\n " <> mainTask
 
 contextToMessages :: forall bs a. (BS.BuildSystem bs, ToJSON a) => Context -> [Tools.Tool] -> AppState -> IsCloseFileTask -> a -> AppM [Message]
 contextToMessages Context {..} tools theState isCloseFileTask exampleReturn = do
   openFilesDesc <- getOpenFilesDesc
+  compileTestResDesc <- compileTestDesc $ stateCompileTestRes theState
   let messagesToUse = takeEnd (numOldMessagesToKeepInContext + 1) contextRest
       messages = map snd messagesToUse
       taskDesc = getTask theState isCloseFileTask contextTask
       returnValueDesc = Tools.returnValueToDescription exampleReturn
-      allTexts = [contextBackground, filesDesc, openFilesDesc, toolDesc, returnValueDesc, taskDesc]
+      allTexts =
+        [ contextBackground,
+          filesDesc,
+          openFilesDesc,
+          toolDesc,
+          returnValueDesc,
+          compileTestResDesc,
+          taskDesc
+        ]
    in pure $ mergeAdjacentRoleMessages $ Message {role = roleName RoleUser, content = T.unlines allTexts} : messages
   where
     toolDesc = Tools.toolsToDescription tools
@@ -136,6 +145,14 @@ contextToMessages Context {..} tools theState isCloseFileTask exampleReturn = do
       renderedFiles <- mapM (renderOpenFile render) $ stateOpenFiles theState
       pure $ "All currently open files (note these always represent the latest version on disk, even though they may appear in the context before the messages containing changes made to them): \n " <> unlines renderedFiles
     filesDesc = "All available files: \n " <> unlines (map renderExistingFile $ stateFiles theState)
+    compileTestDesc ctRes = do
+      let compDesc = case ctRes.compileRes of
+            Just err -> "Failed with error: \n" <> err
+            Nothing -> "Succeeded!"
+          testDesc = case ctRes.testRes of
+            Just err -> "Failed with error: \n" <> err
+            Nothing -> "Succeeded!"
+      return $ "Latest Compile/Test State (note this represents the latest results even after messages that many occur below in the context): \n Last compilation: " <> compDesc <> "\nLast unit test run: " <> testDesc
 
 shortenOldErrorMessages :: [(MsgKind, Message)] -> [(MsgKind, Message)]
 shortenOldErrorMessages msgs =
