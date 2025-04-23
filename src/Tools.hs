@@ -15,6 +15,7 @@ import Data.Aeson.Types qualified as AET
 import Data.ByteString.Lazy qualified as LBS
 import Data.Either qualified as Either
 import Data.List as L
+import Data.Set qualified as Set
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Data.Vector qualified as V
@@ -108,6 +109,23 @@ mergeToolCalls =
         -- We do not merge these, so just leave them untouched:
         ToolCallPanic _ -> grp
         ToolCallReturn _ -> grp
+
+getFileName :: Object -> Maybe String
+getFileName obj =
+  case KM.lookup "fileName" obj of
+    Just (String textValue) ->
+      Just (T.unpack textValue)
+    _ -> Nothing
+
+getAllFileNames :: [Object] -> [Text]
+getAllFileNames objects =
+  let fileNames = mapMaybe getFileName objects
+   in map T.pack $ Set.toList (Set.fromList fileNames)
+
+getToolCallFileNames :: [(Tool, [AET.Object])] -> [Text]
+getToolCallFileNames vals =
+  let names = concatMap (\(_, objs) -> getAllFileNames objs) vals
+   in Set.toList $ Set.fromList names
 
 data OpenFileArg = OpenFileArg
   { fileName :: Text
@@ -442,7 +460,7 @@ returnValueToDescription example = do
   fmt <> " \n You must either return a value or call a tool. Because you're part of an automated process, you cannot prompt the user for information, so panic if you don't know how to proceed."
 
 toolsToDescription :: [Tool] -> Text
-toolsToDescription tools = toolSummary <> "\nAll available tools: \n" <> T.unlines (map toolToDescription tools) <> "\n Multiple tool calls are supported, you can either do ToolName=<[{jsonArgs}]>, ToolName=<[{otherJsonArgs}]>, or ToolName=<[{jsonArgs}, {otherJsonArgs}]>; both are supported. (Replace ToolName here with the actual name of a tool; ToolName itself is not a tool!)"
+toolsToDescription tools = toolSummary <> "\nAll available tools: \n" <> T.unlines (map toolToDescription tools) <> "\n Multiple tool calls are supported, you can either do ToolName=<[{jsonArgs}]>, ToolName=<[{otherJsonArgs}]>, or ToolName=<[{jsonArgs}, {otherJsonArgs}]>; both are supported. (Replace ToolName here with the actual name of a tool; ToolName itself is not a tool!). Remember that the latest state of the files to modify is in the OpenFiles section."
 
 tmp :: Text
 tmp = "AppendFile<[{\"fileName\":\"websocket_client.h\",\"text\":\"#pragma once\\n\\n#include <libwebsockets.h>\\n#include \\\"config.h\\\"\\n#include \\\"simdjson.h\\\"\\n#include \\\"book_data.h\\\"\\n#include \\\"trade_data.h\\\"\\n#include <spdlog/spdlog.h>\\n#include <functional>\\n\\nnamespace websocket {\\n\\nstruct Handler {\\n    virtual void on_trade(const trade_data::TradeEvent& trade) = 0;\\n    virtual void on_agg_trade(const trade_data::AggTradeEvent& agg_trade) = 0;\\n    virtual void on_book_update(const book_data::BookUpdate& update) = 0;\\n    virtual void on_best_bid_ask(const book_data::BestBidAsk& update) = 0;\\n    virtual void request_snapshot(const std::string& symbol) = 0;\\n    virtual ~Handler() = default;\\n};\\n\\nnamespace core {\\n    bool check_sequence_gap(uint64_t last_update_id, const book_data::BookUpdate& update);\\n    void process_message(simdjson::ondemand::document& doc, Handler& handler);\\n}\\n\\nclass WebSocketClient {\\npublic:\\n    WebSocketClient(config::BinanceConfig config, Handler& handler);\\n    ~WebSocketClient();\\n\\n    void connect();\\n    void poll(int timeout_ms = 0);\\n\\nprivate:\\n    static int lws_callback(lws* wsi, lws_callback_reasons reason, void* user, void* in, size_t len);\\n    int handle_callback(lws* wsi, lws_callback_reasons reason, void* in, size_t len);\\n\\n    lws_context* context = nullptr;\\n    lws* wsi = nullptr;\\n    config::BinanceConfig config;\\n    Handler& handler;\\n    simdjson::ondemand::parser json_parser;\\n};\\n\\n} // namespace websocket\\n\"}]>\nOpenFile=<[{\"fileName\":\"websocket_client.h\"}]>\n\nReturn=<[{\"createdFiles\":[{\"createdFileName\":\"websocket_client.h\",\"createdFileSummary\":\"Libwebsockets wrapper for Binance with message processing core. Handles WS connection lifecycle, message parsing using simdjson, sequence gap detection, and event dispatch to handler interfaces. Separates pure message validation (check_sequence_gap) from IO-bound WS ops. Uses config::BinanceConfig for endpoints and symbols. Pure core logic in namespace allows testing without live connection.\"}]}]>"
@@ -1026,7 +1044,7 @@ openFile focusOpenedFile fileName cfg = do
             minRes <- BS.minimiseFile @bs fileName
             case minRes of
               Right minimised -> pure minimised
-              Left err -> (liftIO $ Logging.logInfo "OpenFile" $ "Failed to minimise file " <> fileName <> " due to error: \n " <> err) >> pure contents
+              Left err -> liftIO $ (Logging.logInfo "OpenFile" $ "Failed to minimise file " <> fileName <> " due to error: \n " <> err) >> pure contents
           else pure contents
   contentsMinimised <- getContentsMinimised
   modify' (ensureOpenFile fileName contents contentsMinimised)
@@ -1034,7 +1052,7 @@ openFile focusOpenedFile fileName cfg = do
   unless (fileExists fileName st) $ modify' (addExistingFile fileName "")
   let shouldFocus = isSourceFile && focusOpenedFile == DoFocusOpenedFile
   when shouldFocus $ forceFocusFile fileName
-  liftIO $ Logging.logInfo "OpenFile" $ "Opened file " <> fileName <> ", shouldFocus: " <> (show shouldFocus) <> ", isSourceFile: " <> (show isSourceFile)
+  liftIO $ Logging.logInfo "OpenFile" $ "Opened file " <> fileName <> ", shouldFocus: " <> show shouldFocus <> ", isSourceFile: " <> show isSourceFile
 
 getRawText :: RawTexts -> Text -> AppM Text
 getRawText rawTexts name = case lookupText name rawTexts of
@@ -1087,7 +1105,7 @@ runTool rawTexts (ToolCallAppendFile args) origCtxt = do
     txt <- getRawText rawTexts textName
     st <- get
     let txtNumLines = length $ T.lines txt
-        fileNumLines = case (getOpenFile fileName st) of Just x -> length (T.lines (openFileContents x)); Nothing -> 0
+        fileNumLines = case getOpenFile fileName st of Just x -> length (T.lines (openFileContents x)); Nothing -> 0
         affectedBounds = Just $ FileChangeBounds (max 0 (fileNumLines - 5)) (fileNumLines + txtNumLines)
     handleFileOperation @bs
       fileName

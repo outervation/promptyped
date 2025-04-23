@@ -24,7 +24,7 @@ shortenedMessageLength :: Int
 shortenedMessageLength = 200
 
 numRecentAiMessagesNotToTruncate :: Int
-numRecentAiMessagesNotToTruncate = 2
+numRecentAiMessagesNotToTruncate = 1
 
 numOldMessagesToKeepInContext :: Int
 numOldMessagesToKeepInContext = 10
@@ -49,7 +49,7 @@ runPrompt :: IntelligenceRequired -> [Message] -> AppM (Message, UsageData)
 runPrompt intReq messages = do
   st <- get
   cfg <- ask
-  liftIO $ Logging.logInfo "SendMessages" (T.unlines . map renderMessage . reverse . take 5 $ reverse messages)
+  -- liftIO $ Logging.logInfo "SendMessages" (T.unlines . map renderMessage . reverse . take 5 $ reverse messages)
   let openFileNames = T.intercalate "," $ map openFileName (stateOpenFiles st)
       existingFileNames = T.intercalate "," $ map existingFileName (stateFiles st)
       model = getModel cfg intReq
@@ -62,13 +62,15 @@ runPrompt intReq messages = do
     Left err -> throwError $ "Error running prompt, with messages " <> show messages <> ": " <> err
     Right queryResult -> updateStats (stats queryResult) (usage queryResult) nanosTaken >> pure (message queryResult, usage queryResult)
 
-makeSyntaxErrorCorrectionPrompt :: (ToJSON a) => [Tools.Tool] -> a -> Message -> Text -> [Message]
-makeSyntaxErrorCorrectionPrompt tools exampleReturn llmMsg err = do
+makeSyntaxErrorCorrectionPrompt :: (ToJSON a) => [OpenFile] -> [Tools.Tool] -> a -> Message -> Text -> [Message]
+makeSyntaxErrorCorrectionPrompt relFiles tools exampleReturn llmMsg err = do
   let returnValueDesc = Tools.returnValueToDescription exampleReturn
       toolDesc = Tools.toolsToDescription tools
-      msgBeginning = "You are an agent responsible for error correction of LLM output. There is a specific syntax for tools that the LLM could use, described as follows: " <> toolDesc <> "\nThere is also a syntax for values the LLM may return, as follows: " <> returnValueDesc
+      msgBeginning = "You are an agent responsible for error correction of LLM output. There is a specific syntax for tools that the LLM could use, described as follows: " <> toolDesc <> "\nThere is also a syntax for values the LLM may return, as follows: " <> returnValueDesc <> "\n"
+      fileTexts = map (\x -> openFileName x <> ": \n" <> FS.addTenthLineNumbersToText (openFileContents x)) relFiles
+      openFilesDesc = if null relFiles then "" else "The following open files may be relevant: " <> T.intercalate "\n\n" fileTexts
       msgRes = "The LLM returned syntactically incorrect output:\n" <> content llmMsg <> "\nThe exact error was: " <> err <> "\nPlease output the same output as above but with the syntax error corrected, thanks! For missing textbox names, if a tool call references a text box that doesn't exist, but right after it is an unused textbox that seems to fit, then please fix the textbox name to match. If you can't fix it, just return it as-is and it'll be handled downstream, don't panic."
-  return $ Message (roleName RoleUser) (msgBeginning <> msgRes)
+  return $ Message (roleName RoleUser) (msgBeginning <> openFilesDesc <> msgRes)
 
 runPromptWithSyntaxErrorCorrection :: forall a. (ToJSON a, FromJSON a, Show a) => IntelligenceRequired -> [Tools.Tool] -> a -> [Message] -> AppM (Message, UsageData)
 runPromptWithSyntaxErrorCorrection intReq tools example messages = do
@@ -77,23 +79,31 @@ runPromptWithSyntaxErrorCorrection intReq tools example messages = do
       mayRawTextBlocks = Tools.extractRawStrings (content res)
   case (mayToolsCalled, mayRawTextBlocks, T.length (content res) == 0) of
     (_, _, True) -> pure (res, queryStats)
-    (Right [(Tools.ToolReturn, _)], Right (_ : _), False) -> handleErr "Raw text block seen but no tool call using it" res queryStats
-    (Right [], Right (_ : _), False) -> handleErr "Raw text block seen but no tool calls that could use it" res queryStats
+    (Right [(Tools.ToolReturn, _)], Right (_ : _), False) -> handleErr [] "Raw text block seen but no tool call using it" res queryStats
+    (Right [], Right (_ : _), False) -> handleErr [] "Raw text block seen but no tool calls that could use it" res queryStats
     (Right callsRaw, Right rawTextBlocks, False) -> do
       Tools.processToolsArgs @a callsRaw rawTextBlocks >>= \case
         ([], _) -> pure (res, queryStats)
-        (errs, _) -> handleErr (T.intercalate ",\n" errs) res queryStats
-    (Left err, _, False) -> handleErr err res queryStats
-    (_, Left err, False) -> handleErr err res queryStats
+        (errs, _) -> do
+          st <- get
+          let relFileNames = Tools.getToolCallFileNames callsRaw
+              relOpenFiles = mapMaybe (`getOpenFile` st) relFileNames
+          handleErr relOpenFiles (T.intercalate ",\n" errs) res queryStats
+    (Left err, _, False) -> handleErr [] err res queryStats
+    (_, Left err, False) -> handleErr [] err res queryStats
   where
-    handleErr err res queryStats = do
+    handleErr relFiles err res queryStats = do
       liftIO $ Logging.logInfo "RunPromptWithSyntaxErrorCorrection" "Requesting syntax fix."
-      let errorCorrectionMsg = makeSyntaxErrorCorrectionPrompt tools example res err
+      let errorCorrectionMsg = makeSyntaxErrorCorrectionPrompt relFiles tools example res err
       (res', _) <- runPrompt intReq errorCorrectionMsg
       let mayToolsCalled' = Tools.findToolsCalled (content res') tools
       case mayToolsCalled' of
-        Right _ -> pure (res', queryStats)
-        Left _ -> pure (res, queryStats)
+        Right _ -> do
+          liftIO $ Logging.logInfo "RunPromptWithSyntaxErrorCorrection" "Using reponse with syntax fix."
+          pure (res', queryStats)
+        Left _ -> do
+          liftIO $ Logging.logInfo "RunPromptWithSyntaxErrorCorrection" "Using original response."
+          pure (res, queryStats)
 
 mergeAdjacentRoleMessages :: [Message] -> [Message]
 mergeAdjacentRoleMessages [] = []
@@ -138,7 +148,7 @@ contextToMessages Context {..} tools theState isCloseFileTask exampleReturn = do
     render isFocused file = do
       isSourceFile <- isBuildableFile @bs file
       if (not isSourceFile) || isFocused == FileFocusedTrue
-        then pure $ (FS.addTenthLineNumbersToText file)
+        then pure $ FS.addTenthLineNumbersToText file
         else pure file
     getOpenFilesDesc :: AppM Text
     getOpenFilesDesc = do
@@ -217,7 +227,7 @@ combineValidators ::
   (Context -> a -> AppM (Either (MsgKind, Text) ())) ->
   (Context -> a -> AppM (Either (MsgKind, Text) b)) ->
   (Context -> a -> AppM (Either (MsgKind, Text) b))
-combineValidators validator1 validator2 = \ctxt x -> do
+combineValidators validator1 validator2 ctxt x = do
   let handleSecondValidator _ = validator2 ctxt x
   res1 <- validator1 ctxt x
   eitherM (pure . Left) handleSecondValidator res1
@@ -228,7 +238,7 @@ combineValidatorsSameRes ::
   (Context -> a -> AppM (Either (MsgKind, Text) b)) ->
   (Context -> a -> AppM (Either (MsgKind, Text) b)) ->
   (Context -> a -> AppM (Either (MsgKind, Text) b))
-combineValidatorsSameRes validator1 validator2 = \ctxt x -> do
+combineValidatorsSameRes validator1 validator2 ctxt x = do
   let validate val1 val2 = do
         when (val1 /= val2) $ throwError $ "Different results returned from validators: " <> show val1 <> " vs " <> show val2
         return $ Right val2
@@ -291,10 +301,10 @@ runAiFuncInner isCloseFileTask origCtxt intReq tools exampleReturn postProcessor
     st <- get
     let msg = "Input context length is now " <> show (prompt_tokens queryStats) <> ", more than the configured max of " <> show (configModelMaxInputTokens cfg) <> ". Please CloseFile the least important open file."
         fileClosedRes = FileClosed "leastImportantFileName.go"
-        fileClosedExample = Tools.returnValueToDescription $ fileClosedRes
+        fileClosedExample = Tools.returnValueToDescription fileClosedRes
         openFileNames :: [Text]
         openFileNames = map (show . openFileName) $ stateOpenFiles st
-        taskExtra = "Your context is now too large, so please CloseFile the least important file (based on the below task) and after calling CloseFile immediately return like " <> fileClosedExample <> ". Please don't use any other tools or return anything else as they're disabled until you return a FileClosed. The open files (which you may close) are: " <> (T.intercalate ", " openFileNames)
+        taskExtra = "Your context is now too large, so please CloseFile the least important file (based on the below task) and after calling CloseFile immediately return like " <> fileClosedExample <> ". Please don't use any other tools or return anything else as they're disabled until you return a FileClosed. The open files (which you may close) are: " <> T.intercalate ", " openFileNames
         baseCtxt = makeBaseContext (contextBackground ctxt) (taskExtra <> "\nThe task you were working on: \n" <> contextTask ctxt)
         fileCloseContext = (addErrorToContext baseCtxt msg OtherMsg)
         maxErrs = configTaskMaxFailures cfg
@@ -324,7 +334,7 @@ runAiFuncInner isCloseFileTask origCtxt intReq tools exampleReturn postProcessor
               ctxtUpdates = flip map calls $ \x innerCtxt -> Tools.runTool @bs rawTextBlocks x innerCtxt
           finalCtxt <- foldlM (\acc f -> f acc) toolProcessingCtxt ctxtUpdates
           let numNewErrs = contextNumErrors finalCtxt - contextNumErrors toolProcessingCtxt
-          liftIO $ Logging.logInfo "RunAiFunc" $ "Got " <> (show $ length errs) <> " errors, " <> (show numNewErrs) <> " new context errors, and func calls: " <> (T.intercalate ", " $ map (Tools.toolName . Tools.toolCallTool) calls)
+          liftIO $ Logging.logInfo "RunAiFunc" $ "Got errors: " <> show errs <> ",\n " <> show numNewErrs <> " new context errors, and func calls: " <> T.intercalate ", " (map (Tools.toolName . Tools.toolCallTool) calls)
           case (Tools.getReturn calls, numNewErrs + length errs > 0) of
             (Just ret, False) -> do
               liftIO $ Logging.logInfo "RunAiFunc" "Running validator/postprocessor to attempt return"
