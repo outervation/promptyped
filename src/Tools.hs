@@ -728,7 +728,7 @@ findToolsCalled txt tools =
           -- want to distinguish "no matches at all" from "all parse
           -- errors," we can do so here.  For simplicity, say:
           if null parseErrors
-            then Left "No tool calls found. Remember the syntax is ToolName=<[{ someJson }]> , not ToolName=[{ someJson }] and not ToolName<[{ someJson }]> (replace ToolName here with the actual name of the tool; ToolName itself is not a tool!)"
+            then Right []
             else Left (T.intercalate ", " parseErrors)
         _ ->
           -- We do have at least one success. If any had errors, produce a
@@ -1014,7 +1014,7 @@ handleFileOperation fileName ioAction requiresOpenFile requiresFocusedFile opNam
     onSuccess cfg ctxt' = do
       liftIO $ Logging.logInfo "FileOperation" "File operation succeeded."
       openFile @a DoFocusOpenedFile fileName cfg
-      let successMsg = "Succesfully did " <> opName <> " to file " <> fileName
+      let successMsg = "Successfully did " <> opName <> " to file " <> fileName
           successCtxt = mkSuccess ctxt' (FileModifiedMsg fileName) successMsg
       considerBuildAndTest @a fileName >>= \case
         Nothing -> do

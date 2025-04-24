@@ -79,6 +79,7 @@ runPromptWithSyntaxErrorCorrection intReq tools example messages = do
       mayRawTextBlocks = Tools.extractRawStrings (content res)
   case (mayToolsCalled, mayRawTextBlocks, T.length (content res) == 0) of
     (_, _, True) -> pure (res, queryStats)
+    (Right [], Right [], False) -> pure (res, queryStats)
     (Right [(Tools.ToolReturn, _)], Right (_ : _), False) -> handleErr [] "Raw text block seen but no tool call using it" res queryStats
     (Right [], Right (_ : _), False) -> handleErr [] "Raw text block seen but no tool calls that could use it" res queryStats
     (Right callsRaw, Right rawTextBlocks, False) -> do

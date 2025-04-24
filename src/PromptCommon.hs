@@ -416,6 +416,7 @@ data AutoRefactorUnitTests = DoAutoRefactorUnitTests | DontAutoRefactorUnitTests
 makeRefactorFileTask :: forall bs. (BS.BuildSystem bs) => Text -> [(ExistingFile, Tools.FocusOpenedFile)] -> Text -> [ThingWithDependencies] -> AutoRefactorUnitTests -> AppM ()
 makeRefactorFileTask background initialDeps fileName desiredChanges refactorUnitTests = do
   cfg <- ask
+  _ <- Tools.buildAndTest @bs
   modify' clearOpenFiles
   -- Note: file opened first will appear last (most recent)
   let dependencies = [(fileName, Tools.DoFocusOpenedFile), (journalFileName, Tools.DoFocusOpenedFile)] ++ map (\(x, shouldFocus) -> (x.existingFileName, shouldFocus)) initialDeps
