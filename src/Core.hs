@@ -20,6 +20,28 @@ import Relude
 getCurrentPOSIXTime :: IO POSIXTime
 getCurrentPOSIXTime = getPOSIXTime
 
+data SummariseActionArg = SummariseActionArg{
+  actionSummary :: Text,
+  actionReason :: Text,
+  actionFuturePlanSummary :: Text
+  } deriving (Generic, Eq, Ord, Show)
+
+instance ToJSON SummariseActionArg
+instance FromJSON SummariseActionArg
+
+data EventResult = Succeeded | Failed | FailedWithError Text
+  deriving (Generic, Eq, Ord, Show)
+
+data TracedEvent =
+  EvtAiAction SummariseActionArg |
+  EvtOpenFile Text EventResult | 
+  EvtFocusFile Text EventResult |
+  EvtCloseFile Text EventResult |
+  EvtFileOp Text EventResult |
+  EvtCompileProject EventResult |
+  EvtTestProject EventResult
+  deriving (Generic, Eq, Ord, Show)
+
 newtype RemainingFailureTolerance = RemainingFailureTolerance Int
   deriving (Eq, Ord, Show, Num)
 
@@ -410,15 +432,22 @@ data Context = Context
   { contextBackground :: Text,
     contextTask :: Text,
     contextRest :: [(MsgKind, Message)],
-    contextNumErrors :: Int
+    contextNumErrors :: Int,
+    contextEvents :: [TracedEvent]
   }
   deriving (Eq, Ord, Show)
 
 makeBaseContext :: Text -> Text -> Context
-makeBaseContext background task = Context {contextBackground = background, contextTask = task, contextRest = [], contextNumErrors = 0}
+makeBaseContext background task = Context {contextBackground = background, contextTask = task, contextRest = [], contextNumErrors = 0, contextEvents = []}
 
 addToContext :: Context -> MsgKind -> Message -> Context
 addToContext c kind msg = c {contextRest = contextRest c ++ [(kind, msg)]}
+
+addEvtToContext :: Context -> TracedEvent -> Context
+addEvtToContext c evt = c {contextEvents = contextEvents c ++ [evt]}
+
+addEvtsToContext :: Context -> [TracedEvent] -> Context
+addEvtsToContext c evts = c {contextEvents = contextEvents c ++ evts}
 
 contextRecordError :: Context -> Context
 contextRecordError ctxt = ctxt {contextNumErrors = contextNumErrors ctxt}

@@ -13,7 +13,6 @@ import Data.Aeson as AE
 import Data.Aeson.KeyMap qualified as KM
 import Data.Aeson.Types qualified as AET
 import Data.ByteString.Lazy qualified as LBS
-import Data.Either qualified as Either
 import Data.List as L
 import Data.Set qualified as Set
 import Data.Text qualified as T
@@ -26,10 +25,16 @@ import ShapeChecker (checkShapesMatch)
 import Text.Regex.Base (makeRegexM)
 import Text.Regex.TDFA (Regex, match)
 
-data Tool = ToolOpenFile | ToolFocusFile | ToolCloseFile | ToolAppendFile | ToolReplaceFile | ToolInsertInFile | ToolEditFile | ToolEditFileByMatch | ToolRevertFile | ToolFileLineOp | ToolPanic | ToolReturn
+data Tool = ToolOpenFile | ToolFocusFile | ToolCloseFile | ToolAppendFile | ToolReplaceFile | ToolInsertInFile | ToolEditFile | ToolEditFileByMatch | ToolRevertFile | ToolFileLineOp | ToolPanic | ToolSummariseAction | ToolReturn
   deriving (Eq, Ord, Show)
 
-data ToolCall a = ToolCallOpenFile [OpenFileArg] | ToolCallFocusFile [FocusFileArg] | ToolCallCloseFile [CloseFileArg] | ToolCallAppendFile [AppendFileArg] | ToolCallReplaceFile [AppendFileArg] | ToolCallEditFile [EditFileArg] | ToolCallEditFileByMatch [EditFileByMatchArg] | ToolCallRevertFile [RevertFileArg] | ToolCallInsertInFile [InsertInFileArg] | ToolCallFileLineOp [FileLineOpArg] | ToolCallPanic PanicArg | ToolCallReturn a
+isMutation :: Tool -> Bool
+isMutation ToolReturn = False
+isMutation ToolPanic = False
+isMutation ToolSummariseAction = False
+isMutation _ = True
+
+data ToolCall a = ToolCallOpenFile [OpenFileArg] | ToolCallFocusFile [FocusFileArg] | ToolCallCloseFile [CloseFileArg] | ToolCallAppendFile [AppendFileArg] | ToolCallReplaceFile [AppendFileArg] | ToolCallEditFile [EditFileArg] | ToolCallEditFileByMatch [EditFileByMatchArg] | ToolCallRevertFile [RevertFileArg] | ToolCallInsertInFile [InsertInFileArg] | ToolCallFileLineOp [FileLineOpArg] | ToolCallPanic PanicArg | ToolCallSummariseAction [SummariseActionArg] | ToolCallReturn a
   deriving (Generic, Eq, Ord, Show)
 
 instance (ToJSON a) => ToJSON (ToolCall a)
@@ -47,6 +52,7 @@ toolCallTool (ToolCallEditFileByMatch _) = ToolEditFileByMatch
 toolCallTool (ToolCallInsertInFile _) = ToolInsertInFile
 toolCallTool (ToolCallRevertFile _) = ToolRevertFile
 toolCallTool (ToolCallPanic _) = ToolPanic
+toolCallTool (ToolCallSummariseAction _) = ToolSummariseAction
 toolCallTool (ToolCallReturn _) = ToolReturn
 toolCallTool (ToolCallFileLineOp _) = ToolFileLineOp
 
@@ -101,6 +107,10 @@ mergeToolCalls =
         ToolCallRevertFile _ ->
           [ ToolCallRevertFile
               (concat [as | ToolCallRevertFile as <- grp])
+          ]
+        ToolCallSummariseAction _ ->
+          [ ToolCallSummariseAction
+              (concat [as | ToolCallSummariseAction as <- grp])
           ]
         ToolCallFileLineOp _ ->
           [ ToolCallFileLineOp
@@ -310,7 +320,6 @@ data PanicArg = PanicArg
   deriving (Generic, Show, Eq, Ord)
 
 instance ToJSON PanicArg
-
 instance FromJSON PanicArg
 
 toolName :: Tool -> Text
@@ -444,6 +453,9 @@ toolArgFormatAndDesc ToolEditFileByMatch = (toJ EditFileByMatchArg {fileName = "
 toolArgFormatAndDesc ToolInsertInFile = (toJ InsertInFileArg {fileName = "somefile.txt", lineNum = 17, rawTextName = "codeToInsertBox"}, mkSampleCodeBox "codeToInsertBox", "Insert the provided text into the file at lineNum, not replacing/overwriting the content on that line (instead it's moved to below the inserted text). Note that this cannot overlap with lines modified by an Edit tool, as order of operations is undefined.")
 toolArgFormatAndDesc ToolRevertFile = (toJ RevertFileArg {fileName = "someFile.txt"}, "", "Revert un-added changes in an open file; changes are committed when compilation and unit tests succeed, so will revert to the last version of the file before compilation or unit tests failed. Use this if you get the file in a state you can't recover it from.")
 toolArgFormatAndDesc ToolPanic = (toJ PanicArg {reason = "This task is impossible for me to do because ..."}, "", "Call this if you can't complete the task due to it being impossible or not having enough information")
+toolArgFormatAndDesc ToolSummariseAction = (toJ SummariseActionArg {  actionSummary = "Adding the field blah to someType",
+  actionReason = "The spec requires someType to have that field",
+  actionFuturePlanSummary = "Implement functionality blaz that requires blah field on someType"}, "", "Call this once in every response that's not just a plain return, to allow keeping a record of your actions and future plans, to keep on track and avoid getting caught in cycles. Please keep the summary as brief as possible.")
 
 mkToolCallSyntax :: Tool -> Text -> Text
 mkToolCallSyntax tool argFormat = toolName tool <> "=<[" <> argFormat <> "]>"
@@ -460,7 +472,7 @@ returnValueToDescription example = do
   fmt <> " \n You must either return a value or call a tool. Because you're part of an automated process, you cannot prompt the user for information, so panic if you don't know how to proceed."
 
 toolsToDescription :: [Tool] -> Text
-toolsToDescription tools = toolSummary <> "\nAll available tools: \n" <> T.unlines (map toolToDescription tools) <> "\n Multiple tool calls are supported, you can either do ToolName=<[{jsonArgs}]>, ToolName=<[{otherJsonArgs}]>, or ToolName=<[{jsonArgs}, {otherJsonArgs}]>; both are supported. (Replace ToolName here with the actual name of a tool; ToolName itself is not a tool!). Remember that the latest state of the files to modify is in the OpenFiles section."
+toolsToDescription tools = toolSummary <> "\nAll available tools: \n" <> T.unlines (map toolToDescription tools) <> "\n Multiple tool calls are supported, you can either do ToolName=<[{jsonArgs}]>, ToolName=<[{otherJsonArgs}]>, or ToolName=<[{jsonArgs}, {otherJsonArgs}]>; both are supported. (Replace ToolName here with the actual name of a tool; ToolName itself is not a tool!). Remember that the latest state of the files to modify is in the OpenFiles section. Please include one SummariseAction call in each response to capture your intent."
 
 tmp :: Text
 tmp = "AppendFile<[{\"fileName\":\"websocket_client.h\",\"text\":\"#pragma once\\n\\n#include <libwebsockets.h>\\n#include \\\"config.h\\\"\\n#include \\\"simdjson.h\\\"\\n#include \\\"book_data.h\\\"\\n#include \\\"trade_data.h\\\"\\n#include <spdlog/spdlog.h>\\n#include <functional>\\n\\nnamespace websocket {\\n\\nstruct Handler {\\n    virtual void on_trade(const trade_data::TradeEvent& trade) = 0;\\n    virtual void on_agg_trade(const trade_data::AggTradeEvent& agg_trade) = 0;\\n    virtual void on_book_update(const book_data::BookUpdate& update) = 0;\\n    virtual void on_best_bid_ask(const book_data::BestBidAsk& update) = 0;\\n    virtual void request_snapshot(const std::string& symbol) = 0;\\n    virtual ~Handler() = default;\\n};\\n\\nnamespace core {\\n    bool check_sequence_gap(uint64_t last_update_id, const book_data::BookUpdate& update);\\n    void process_message(simdjson::ondemand::document& doc, Handler& handler);\\n}\\n\\nclass WebSocketClient {\\npublic:\\n    WebSocketClient(config::BinanceConfig config, Handler& handler);\\n    ~WebSocketClient();\\n\\n    void connect();\\n    void poll(int timeout_ms = 0);\\n\\nprivate:\\n    static int lws_callback(lws* wsi, lws_callback_reasons reason, void* user, void* in, size_t len);\\n    int handle_callback(lws* wsi, lws_callback_reasons reason, void* in, size_t len);\\n\\n    lws_context* context = nullptr;\\n    lws* wsi = nullptr;\\n    config::BinanceConfig config;\\n    Handler& handler;\\n    simdjson::ondemand::parser json_parser;\\n};\\n\\n} // namespace websocket\\n\"}]>\nOpenFile=<[{\"fileName\":\"websocket_client.h\"}]>\n\nReturn=<[{\"createdFiles\":[{\"createdFileName\":\"websocket_client.h\",\"createdFileSummary\":\"Libwebsockets wrapper for Binance with message processing core. Handles WS connection lifecycle, message parsing using simdjson, sequence gap detection, and event dispatch to handler interfaces. Separates pure message validation (check_sequence_gap) from IO-bound WS ops. Uses config::BinanceConfig for endpoints and symbols. Pure core logic in namespace allows testing without live connection.\"}]}]>"
@@ -747,18 +759,6 @@ instance ToJSON TmppRet
 
 instance FromJSON TmppRet
 
-tmppTools = Either.fromRight [] $ findToolsCalled tmpp [ToolReturn, ToolEditFileByMatch]
-
-tmppRawTexts = Either.fromRight [] $ extractRawStrings tmpp
-
-tmppToolArgs = processToolsArgs @TmppRet tmppTools tmppRawTexts
-
-tmppToolArgsRan = runApp mempty mempty $ do
-  let contents = "cat\nman\ndog"
-  let contentsUf = "uf cat\nman\ndog"
-  modify' $ addOpenFile "binanceFuturesSubscriber_test.go" contents contentsUf
-  tmppToolArgs
-
 findErroneousToolNameCall :: Text -> Either Text ()
 findErroneousToolNameCall txt
   | T.isInfixOf "ToolName=<[" txt = mkErr "ToolName=<["
@@ -829,6 +829,7 @@ processToolArgs rawTexts tool@ToolEditFile args = ToolCallEditFile <$> processAr
 processToolArgs rawTexts tool@ToolEditFileByMatch args = ToolCallEditFileByMatch <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolInsertInFile args = ToolCallInsertInFile <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolRevertFile args = ToolCallRevertFile <$> processArgsOfType tool rawTexts args
+processToolArgs rawTexts tool@ToolSummariseAction args = ToolCallSummariseAction <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolFileLineOp args = ToolCallFileLineOp <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolPanic args = ToolCallPanic <$> processArgOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolReturn args = ToolCallReturn <$> processArgOfType tool rawTexts args
@@ -880,11 +881,14 @@ normaliseLineOpTool (ToolCallEditFileByMatch args) = do
   pure $ second ToolCallFileLineOp mayNewArgs
 normaliseLineOpTool x = pure $ Right x
 
-mkSuccess :: Context -> MsgKind -> Text -> Context
-mkSuccess ctxt kind = addToContextUser ctxt kind . mappend "Success: "
+mkSuccess :: Context -> MsgKind -> Text -> TracedEvent -> Context
+mkSuccess ctxt kind txt evt = (addToContextUser ctxt kind ("Success: " <> txt)) `addEvtToContext` evt
 
-mkError :: Context -> MsgKind -> Text -> Context
-mkError ctxt kind = addToContextUser (contextRecordError ctxt) kind . mappend "Error: "
+mkErrorNoEvt :: Context -> MsgKind -> Text ->  Context
+mkErrorNoEvt ctxt kind txt = addToContextUser (contextRecordError ctxt) kind ("Error: " <> txt)
+
+mkError :: Context -> MsgKind -> Text -> TracedEvent -> Context
+mkError ctxt kind txt evt = (addToContextUser (contextRecordError ctxt) kind ("Error: " <> txt)) `addEvtToContext` evt
 
 reloadLogs :: AppM ()
 reloadLogs = do
@@ -901,7 +905,7 @@ reloadLogs = do
           return $ f {openFileContents = newContents}
         else return f
 
-buildAndTest :: forall a. (BS.BuildSystem a) => AppM (Maybe (MsgKind, Text))
+buildAndTest :: forall a. (BS.BuildSystem a) => AppM (Maybe (MsgKind, Text), [TracedEvent])
 buildAndTest = do
   cfg <- ask
   let baseDir = configBaseDir cfg
@@ -912,9 +916,10 @@ buildAndTest = do
       modify' $ updateLastCompileState (Just err)
       modify' $ updateStateMetrics (mempty {metricsNumCompileFails = 1, metricsCompileTime = compileNanos})
       FS.reloadOpenFiles
-      return $ Just (CompileFailMsg, err)
+      return (Just (CompileFailMsg, err), [EvtCompileProject Failed])
     (Nothing, compileNanos) -> do
       liftIO $ Logging.logInfo "ConsiderBuildAndTest" "Compilation succeeded."
+      let evts = [EvtCompileProject Succeeded]
       modify' $ updateLastCompileState Nothing
       (result, testNanos) <- timeIONano64M $ BS.testProject @a cfg
       liftIO $ Logging.logInfo "ConsiderBuildAndTest" $ "Testing " <> if isJust result then "failed." else "succeeded."
@@ -928,13 +933,13 @@ buildAndTest = do
       {-          case result of
                   Just err -> liftIO $ putTextLn $ "Test error: " <> err
                   Nothing -> return () -}
-      return $ fmap (TestFailMsg,) result
+      return (fmap (TestFailMsg,) result, evts ++ [EvtTestProject (if isJust result then Failed else Succeeded)])
 
-considerBuildAndTest :: forall a. (BS.BuildSystem a) => Text -> AppM (Maybe (MsgKind, Text))
+considerBuildAndTest :: forall a. (BS.BuildSystem a) => Text -> AppM (Maybe (MsgKind, Text), [TracedEvent])
 considerBuildAndTest fileName = do
   isBuildable <- BS.isBuildableFile @a fileName
   case isBuildable of
-    False -> return Nothing
+    False -> return (Nothing, [])
     True -> buildAndTest @a
 
 data RequiresOpenFile = RequiresOpenFileTrue | RequiresOpenFileFalse
@@ -973,7 +978,7 @@ handleFileOperation fileName ioAction requiresOpenFile requiresFocusedFile opNam
   case isFileForbidden cfg fileName of
     Just err -> do
       liftIO $ Logging.logInfo "FileOperation" $ "Attempted to modify forbidden file: " <> fileName
-      pure $ mkError ctxt OtherMsg $ "Error: cannot modify forbidden file. " <> err
+      pure $ mkError ctxt OtherMsg ("Error: cannot modify forbidden file. " <> err) (EvtFileOp fileName (FailedWithError "Cannot modify forbidden file"))
     Nothing -> do
       let alreadyOpen = fileAlreadyOpen fileName theState
           alreadyFocused = fileFocused fileName theState
@@ -982,10 +987,10 @@ handleFileOperation fileName ioAction requiresOpenFile requiresFocusedFile opNam
       case (openOkay, focusedOkay) of
         (False, _) -> do
           liftIO $ Logging.logInfo "FileOperation" $ "Attempted to " <> opName <> " file that isn't open: " <> fileName
-          pure $ mkError ctxt OtherMsg ("Error: cannot " <> opName <> " file that isn't open: " <> fileName)
+          pure $ mkError ctxt OtherMsg ("Error: cannot " <> opName <> " file that isn't open: " <> fileName) (EvtFileOp fileName (FailedWithError "Cannot modify non-opened file"))
         (_, False) -> do
           liftIO $ Logging.logInfo "FileOperation" $ "Attempted to " <> opName <> " file that isn't focused: " <> fileName
-          pure $ mkError ctxt OtherMsg ("Error: cannot " <> opName <> " file that isn't focused: " <> fileName)
+          pure $ mkError ctxt OtherMsg ("Error: cannot " <> opName <> " file that isn't focused: " <> fileName) (EvtFileOp fileName (FailedWithError "Cannot modify non-focused file"))
         (True, True) -> do
           checker <- BS.getFormatChecker @a cfg
           let checker' :: AppM (Maybe Text)
@@ -1007,7 +1012,7 @@ handleFileOperation fileName ioAction requiresOpenFile requiresFocusedFile opNam
               onErr err = do
                 liftIO $ Logging.logInfo "FileOperation" $ "File operation failed due to: " <> err
                 updateFileIfExistsOnDisk @a fileName cfg
-                pure $ mkError ctxt OtherMsg err
+                pure $ mkError ctxt OtherMsg err (EvtFileOp fileName (FailedWithError $ T.take 100 err))
           res <- op
           either onErr (const $ onSuccess cfg ctxt) res
   where
@@ -1015,12 +1020,12 @@ handleFileOperation fileName ioAction requiresOpenFile requiresFocusedFile opNam
       liftIO $ Logging.logInfo "FileOperation" "File operation succeeded."
       openFile @a DoFocusOpenedFile fileName cfg
       let successMsg = "Successfully did " <> opName <> " to file " <> fileName
-          successCtxt = mkSuccess ctxt' (FileModifiedMsg fileName) successMsg
+          successCtxt = mkSuccess ctxt' (FileModifiedMsg fileName) successMsg (EvtFileOp fileName Succeeded)
       considerBuildAndTest @a fileName >>= \case
-        Nothing -> do
+        (Nothing, evts) -> do
           FS.gitAddAndCommit fileName
-          pure successCtxt
-        Just (msgKind, err) -> pure $ mkError successCtxt msgKind (show msgKind <> ": " <> err)
+          pure $ addEvtsToContext successCtxt evts
+        (Just (msgKind, err), evts) -> pure $ (mkErrorNoEvt successCtxt msgKind (show msgKind <> ": " <> err)) `addEvtsToContext` evts
 
 updateFileIfExistsOnDisk :: forall bs. (BS.BuildSystem bs) => Text -> Config -> AppM ()
 updateFileIfExistsOnDisk fileName cfg = do
@@ -1068,11 +1073,11 @@ runTool _ (ToolCallOpenFile args) origCtxt = do
     case fileAlreadyOpen fileName theState of
       True -> do
         liftIO $ Logging.logInfo "FileOperation" $ "Tried to open file that's already open: " <> fileName
-        pure $ \ctxt -> mkError ctxt OtherMsg ("file already open: " <> fileName)
+        pure $ \ctxt -> mkError ctxt OtherMsg ("file already open: " <> fileName) (EvtOpenFile fileName (FailedWithError "Can't open file that is already open"))
       False -> do
         openFile @bs DoFocusOpenedFile fileName cfg
         liftIO $ Logging.logInfo "FileOperation" $ "Opened file: " <> fileName
-        pure $ \ctxt -> mkSuccess ctxt OtherMsg ("Opened file: " <> fileName)
+        pure $ \ctxt -> mkSuccess ctxt OtherMsg ("Opened file: " <> fileName) (EvtOpenFile fileName Succeeded)
   return $ foldl' (\acc f -> f acc) initialCtxt ctxtUpdates
 runTool _ (ToolCallFocusFile args) origCtxt = do
   cfg <- ask
@@ -1082,22 +1087,22 @@ runTool _ (ToolCallFocusFile args) origCtxt = do
     case fileExists fileName theState of
       False -> do
         liftIO $ Logging.logInfo "FileOperation" $ "Tried to focus non-existing file: " <> fileName
-        pure $ \ctxt -> mkError ctxt OtherMsg ("Cannot focus file that doesn't exist: " <> fileName)
+        pure $ \ctxt -> mkError ctxt OtherMsg ("Cannot focus file that doesn't exist: " <> fileName) (EvtFocusFile fileName (FailedWithError "Can't focus file that doesn't exist"))
       True -> do
         unless (fileAlreadyOpen fileName theState) $ openFile @bs DoFocusOpenedFile fileName cfg
         forceFocusFile fileName
         liftIO $ Logging.logInfo "FileOperation" $ "Focused file: " <> fileName
-        pure $ \ctxt -> mkSuccess ctxt OtherMsg ("Focused file: " <> fileName)
+        pure $ \ctxt -> mkSuccess ctxt OtherMsg ("Focused file: " <> fileName) (EvtFocusFile fileName Succeeded)
   return $ foldl' (\acc f -> f acc) initialCtxt ctxtUpdates
 runTool _ (ToolCallCloseFile args) origCtxt = do
   let initialCtxt = origCtxt
   ctxtUpdates <- forM args $ \(CloseFileArg fileName) -> do
     theState <- get
     case fileAlreadyOpen fileName theState of
-      False -> pure $ \ctxt -> mkError ctxt OtherMsg ("cannot close file that isn't open: " <> fileName)
+      False -> pure $ \ctxt -> mkError ctxt OtherMsg ("cannot close file that isn't open: " <> fileName) (EvtCloseFile fileName (FailedWithError "Can't close file that isn't open"))
       True -> do
         modify' (closeOpenFile fileName)
-        pure $ \ctxt -> mkSuccess ctxt (FileClosedMsg fileName) ("Closed file: " <> fileName)
+        pure $ \ctxt -> mkSuccess ctxt (FileClosedMsg fileName) ("Closed file: " <> fileName) (EvtCloseFile fileName Succeeded)
   return $ foldl' (\acc f -> f acc) initialCtxt ctxtUpdates
 runTool rawTexts (ToolCallAppendFile args) origCtxt = do
   let initialCtxt = origCtxt
@@ -1142,7 +1147,7 @@ runTool rawTexts (ToolCallFileLineOp args) origCtxt = do
   case sortedArgAttempt of
     Left err -> do
       liftIO $ Logging.logInfo "FileOperation" $ "Error editing file by line arguments: " <> err
-      pure $ mkError initialCtxt OtherMsg ("Error in file editing by line arguments: " <> err)
+      pure $ mkError initialCtxt OtherMsg ("Error in file editing by line arguments: " <> err) (EvtFileOp "unresolved" (FailedWithError ("Edit arguments error: " <> err)))
     Right sortedArgs -> do
       ctxtUpdates <- forM sortedArgs $ \(FileLineOpArg fileName startLineNum endLineNum textName origToolName) -> pure $ \ctxt -> do
         txt <- getRawText rawTexts textName
@@ -1170,6 +1175,7 @@ runTool _ (ToolCallRevertFile args) origCtxt = do
       Nothing
       ctxt
   foldlM (\acc f -> f acc) initialCtxt ctxtUpdates
+runTool _ (ToolCallSummariseAction args) ctxt = pure $ foldl (\acc evt -> addEvtToContext acc (EvtAiAction evt)) ctxt args 
 runTool _ (ToolCallPanic arg) _ = throwError $ "AI panicked due to reason= " <> show arg
 runTool _ (ToolCallReturn arg) ctxt = pure $ addToContextUser ctxt OtherMsg ("Attempted to return value: " <> show arg)
 

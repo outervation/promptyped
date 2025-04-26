@@ -137,14 +137,18 @@ contextToMessages Context {..} tools theState isCloseFileTask exampleReturn = do
         [ contextBackground,
           filesDesc,
           openFilesDesc,
+          evtsDesc,
           toolDesc,
           returnValueDesc,
           compileTestResDesc,
-          taskDesc
+          taskDesc,
+          respReqsDesc
         ]
    in pure $ mergeAdjacentRoleMessages $ Message {role = roleName RoleUser, content = T.unlines allTexts} : messages
   where
     toolDesc = Tools.toolsToDescription tools
+    respReqsDesc = "Your response must either call at least one tool or return a value. If calling any tool, please also include a SummariseAction tool call too, for tracking the intent and future plans."
+    evtsDesc = "Here is a list of your recent actions, the intent behind them and their results. Look carefully to identify any circular behaviour here, to avoid getting stuck in a loop, and so you don't lose track of your train of thought/intention:\n" <> T.intercalate "\n" (map show contextEvents)
     render :: FileFocused -> Text -> AppM Text
     render isFocused file = do
       isSourceFile <- isBuildableFile @bs file
@@ -163,7 +167,7 @@ contextToMessages Context {..} tools theState isCloseFileTask exampleReturn = do
           testDesc = case ctRes.testRes of
             Just err -> "Failed with error: \n" <> err
             Nothing -> "Succeeded!"
-      return $ "Latest Compile/Test State (note this represents the latest results even after messages that many occur below in the context): \n Last compilation: " <> compDesc <> "\nLast unit test run: " <> testDesc
+      return $ "\nLATEST COMPILE/TEST STATE (note this represents the latest results even after messages that many occur below in the context): \nLast compilation: " <> compDesc <> "\nLast unit test run: " <> testDesc <> "\n"
 
 shortenOldErrorMessages :: [(MsgKind, Message)] -> [(MsgKind, Message)]
 shortenOldErrorMessages msgs =
@@ -262,6 +266,11 @@ validateFileClosed ctxt fc@(FileClosed fileName) = do
 data IsCloseFileTask = IsCloseFileTaskTrue | IsCloseFileTaskFalse
   deriving (Eq, Ord, Show)
 
+toolCallsMissingRequiredSummary :: [(Tools.Tool, [AET.Object])]  -> Bool
+toolCallsMissingRequiredSummary calls = do
+  let tools = map fst calls
+  (any Tools.isMutation tools) && Tools.ToolSummariseAction `notElem` tools
+
 runAiFunc ::
   forall bs a b.
   (FromJSON a, ToJSON a, Show a, BS.BuildSystem bs) =>
@@ -287,6 +296,8 @@ runAiFuncInner ::
   AppM b
 runAiFuncInner isCloseFileTask origCtxt intReq tools exampleReturn postProcessor remainingErrs = do
   when (remainingErrs <= 0) $ throwError "Aborting as reached max number of errors"
+  when (notElem Tools.ToolReturn tools) $ throwError "Missing Return tool!"
+  when (notElem Tools.ToolSummariseAction tools) $ throwError "Missing SummariseAction tool!"
   cfg <- ask
   theState <- get
   let (RemainingFailureTolerance failureToleranceInt) = configTaskMaxFailures cfg
@@ -321,7 +332,8 @@ runAiFuncInner isCloseFileTask origCtxt intReq tools exampleReturn postProcessor
     (Left err, _) -> addErrorAndRecurse ("Error in function calls/return: " <> err) ctxtWithAiMsg SyntaxError OtherMsg
     (Right [], _) -> addErrorAndRecurse "Must call a tool or return. Remember the syntax is ToolName=<[{ someJson }]> , not ToolName=[{ someJson }] and not ToolName<[{ someJson }]> (replace ToolName here with the actual name of the tool; ToolName itself is not a tool!)." ctxtWithAiMsg SyntaxError OtherMsg
     (_, Left err) -> addErrorAndRecurse ("Error in raw text syntax: " <> err) ctxtWithAiMsg SyntaxError OtherMsg
-    (Right callsRaw, Right rawTextBlocks) -> handleToolCalls ctxtWithAiMsg callsRaw rawTextBlocks
+    (Right callsRaw, Right _) | toolCallsMissingRequiredSummary callsRaw -> addErrorAndRecurse ("Made state-changing tool calls but didn't include SummariseAction=<[{...}]> call") ctxtWithAiMsg SyntaxError OtherMsg
+    (Right callsRaw, Right rawTextBlocks) | otherwise -> handleToolCalls ctxtWithAiMsg callsRaw rawTextBlocks
   where
     recur recurCtxt remainingErrs' = runAiFuncInner @bs isCloseFileTask recurCtxt intReq tools exampleReturn postProcessor remainingErrs'
 
