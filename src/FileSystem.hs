@@ -27,7 +27,7 @@ import System.Process qualified as Proc
 import System.Timeout qualified as Timeout
 
 maxErrLinesToShow :: Int
-maxErrLinesToShow = 100
+maxErrLinesToShow = 500
 
 runAll :: [IO (Either Text ())] -> IO (Either Text ())
 runAll = foldM step (Right ())

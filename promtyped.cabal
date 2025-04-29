@@ -22,6 +22,7 @@ library
         Logging
         OpenRouterClient
         ShapeChecker
+        TerminalInput
 
     hs-source-dirs:     src
     default-language:   GHC2024

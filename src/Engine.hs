@@ -32,6 +32,9 @@ numOldMessagesToKeepInContext = 10
 numSyntaxRejectsToCauseContextReset :: Int
 numSyntaxRejectsToCauseContextReset = 5
 
+numRecentEventsToShow :: Int
+numRecentEventsToShow = 100
+
 updateStats :: GenerationStats -> UsageData -> Int64 -> AppM ()
 updateStats generation usage timeTaken = do
   let ifNZOr x y = if x /= 0 then x else y
@@ -148,7 +151,7 @@ contextToMessages Context {..} tools theState isCloseFileTask exampleReturn = do
   where
     toolDesc = Tools.toolsToDescription tools
     respReqsDesc = "Your response must either call at least one tool or return a value. If calling any tool, please also include a SummariseAction tool call too, for tracking the intent and future plans."
-    evtsDesc = "Here is a list of your recent actions, the intent behind them and their results. Look carefully to identify any circular behaviour here, to avoid getting stuck in a loop, and so you don't lose track of your train of thought/intention:\n" <> T.intercalate "\n" (map show contextEvents)
+    evtsDesc = "Here is a list of your recent actions, the intent behind them and their results. Look carefully to identify any circular behaviour here, to avoid getting stuck in a loop, and so you don't lose track of your train of thought/intention:\n" <> T.intercalate "\n" (map show (takeEnd numRecentEventsToShow contextEvents))
     render :: FileFocused -> Text -> AppM Text
     render isFocused file = do
       isSourceFile <- isBuildableFile @bs file
@@ -297,7 +300,7 @@ runAiFuncInner ::
 runAiFuncInner isCloseFileTask origCtxt intReq tools exampleReturn postProcessor remainingErrs = do
   when (remainingErrs <= 0) $ throwError "Aborting as reached max number of errors"
   when (notElem Tools.ToolReturn tools) $ throwError "Missing Return tool!"
-  when (notElem Tools.ToolSummariseAction tools) $ throwError "Missing SummariseAction tool!"
+  when ((any Tools.isMutation tools) && notElem Tools.ToolSummariseAction tools) $ throwError "Missing SummariseAction tool!"
   cfg <- ask
   theState <- get
   let (RemainingFailureTolerance failureToleranceInt) = configTaskMaxFailures cfg

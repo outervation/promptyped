@@ -7,6 +7,7 @@ module PromptCommon where
 
 import BuildSystem as BS
 import Control.Monad.Except
+import TerminalInput qualified
 import Control.Monad.Loops (untilM_)
 import Core
 import Data.Aeson as AE
