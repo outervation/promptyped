@@ -40,7 +40,7 @@ makeGoBinanceApiDataRecorder aCfg mCfg = do
           }
       backgroundTexts = projectSummary . T.pack $ configBaseDir cfg
       projectTexts = ProjectTexts {projectSummaryText = backgroundTexts}
-      initialState = AppState mempty [] [] (CompileTestState Nothing Nothing 0)
+      initialState = AppState mempty [] [] mempty
       logDir = T.unpack $ logFileDir aCfg
       logPath = logDir FP.</> "promptyped_binapi_downloader.log"
       debugLogPath = logDir FP.</> "promptyped_binapi_downloader.debug.log"

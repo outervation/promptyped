@@ -30,7 +30,7 @@ makeGoHttpServer aCfg mCfg = do
           }
       backgroundTexts = architectureDesc <> "\n" <> PromptTexts.approachSummary
       projectTexts = ProjectTexts {projectSummaryText = backgroundTexts}
-      initialState = AppState mempty [] [] (CompileTestState Nothing Nothing 0)
+      initialState = AppState mempty [] [] mempty
       logDir = T.unpack $ logFileDir aCfg
       logPath = logDir FP.</> "promptyped_http11_server.log"
       debugLogPath = logDir FP.</> "promptyped_http11_server.debug.log"

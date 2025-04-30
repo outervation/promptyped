@@ -68,7 +68,7 @@ makeTaskFromConfig aCfg mCfg = do
           }
       backgroundTexts = spec
       projectTexts = ProjectTexts {projectSummaryText = backgroundTexts}
-      initialState = AppState mempty [] [] (CompileTestState Nothing Nothing 0)
+      initialState = AppState mempty [] [] mempty
       logDir = T.unpack $ logFileDir aCfg
       projectNameStr = T.unpack tCfg.projectName
       logPath = logDir FP.</> projectNameStr <> ".log"

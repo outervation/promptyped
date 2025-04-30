@@ -13,6 +13,7 @@ import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
 import Data.Time.Clock.System (SystemTime, getSystemTime, systemToTAITime)
 import Data.Time.Clock.TAI (diffAbsoluteTime)
 import Data.Typeable ()
+import qualified Text.Show
 import Data.Vector qualified as V
 import Relude
 
@@ -29,7 +30,13 @@ data SummariseActionArg = SummariseActionArg{
 instance ToJSON SummariseActionArg
 instance FromJSON SummariseActionArg
 
-data EventResult = Succeeded | Failed | FailedWithError Text
+data PotentiallyBigMessage = PotentiallyBigMessage Text
+  deriving (Generic, Eq, Ord)
+
+instance Show PotentiallyBigMessage where
+  show _ = "(Not shown to save space)"
+
+data EventResult = Succeeded | Failed | FailedWithError Text | FailedWithPotentiallyVeryLongError PotentiallyBigMessage
   deriving (Generic, Eq, Ord, Show)
 
 data TracedEvent =

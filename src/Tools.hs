@@ -916,7 +916,7 @@ buildAndTest = do
       modify' $ updateLastCompileState (Just err)
       modify' $ updateStateMetrics (mempty {metricsNumCompileFails = 1, metricsCompileTime = compileNanos})
       FS.reloadOpenFiles
-      return (Just (CompileFailMsg, err), [EvtCompileProject Failed])
+      return (Just (CompileFailMsg, err), [EvtCompileProject (FailedWithPotentiallyVeryLongError $ PotentiallyBigMessage err)])
     (Nothing, compileNanos) -> do
       liftIO $ Logging.logInfo "ConsiderBuildAndTest" "Compilation succeeded."
       let evts = [EvtCompileProject Succeeded]
