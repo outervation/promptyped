@@ -319,7 +319,7 @@ instance Group Metrics where
         metricsNumTestFails = -test
       }
 
-data CompileTestState = CompileTestState {compileRes :: Maybe Text, testRes :: Maybe Text, numConsecutiveSyntaxCheckFails :: Int}
+data CompileTestState = CompileTestState {compileRes :: Maybe Text, testRes :: Maybe Text, numConsecutiveCompilationFails :: Int, numConsecutiveSyntaxCheckFails :: Int}
   deriving (Generic, Eq, Ord, Show)
 
 instance FromJSON CompileTestState
@@ -331,10 +331,11 @@ instance Semigroup CompileTestState where
     CompileTestState
       (compileRes a <|> compileRes b)
       (testRes a <|> testRes b)
+      (numConsecutiveCompilationFails a + numConsecutiveCompilationFails b)
       (numConsecutiveSyntaxCheckFails a + numConsecutiveSyntaxCheckFails b)
 
 instance Monoid CompileTestState where
-  mempty = CompileTestState Nothing Nothing 0
+  mempty = CompileTestState Nothing Nothing 0 0
 
 data AppState = AppState
   { stateMetrics :: Metrics,
@@ -360,7 +361,7 @@ updateStateMetrics metrics st = st {stateMetrics = stateMetrics st <> metrics}
 
 updateLastCompileState :: Maybe Text -> AppState -> AppState
 updateLastCompileState res st =
-  st {stateCompileTestRes = (stateCompileTestRes st) {compileRes = res}}
+  st {stateCompileTestRes = (stateCompileTestRes st) {compileRes = res, numConsecutiveCompilationFails = if isJust res then (numConsecutiveCompilationFails (stateCompileTestRes st) + 1) else 0}}
 
 updateLastTestState :: Maybe Text -> AppState -> AppState
 updateLastTestState res st =
