@@ -305,7 +305,7 @@ runAiFuncInner isCloseFileTask origCtxt intReq tools exampleReturn postProcessor
   theState <- get
   let (RemainingFailureTolerance failureToleranceInt) = configTaskMaxFailures cfg
       -- when (theState.stateCompileTestRes.numConsecutiveSyntaxCheckFails > failureToleranceInt) $ throwError "Aborting as reached max number of errors attempting to write syntactically correct code"
-      shouldClearMessages = theState.stateCompileTestRes.numConsecutiveSyntaxCheckFails > failureToleranceInt
+      shouldClearMessages = theState.stateCompileTestRes.numConsecutiveSyntaxCheckFails > numSyntaxRejectsToCauseContextReset
       origCtxt' = if shouldClearMessages then updateContextMessages origCtxt (const []) else origCtxt
       truncateOldAiMessages = truncateOldMessages "assistant" numRecentAiMessagesNotToTruncate shortenedMessageLength
       aiTruncatedCtxt = updateContextMessages origCtxt' truncateOldAiMessages

@@ -1203,3 +1203,76 @@ fixFailedTestsAndCompilation background relevantFiles = do
         return ()
 
       putTextLn "Done fixing all files that were identified!"
+
+
+data SimpleResponse = SimpleResponse
+  { response :: Text
+  }
+  deriving (Generic, Eq, Ord, Show)
+
+instance ToJSON SimpleResponse
+instance FromJSON SimpleResponse
+
+-- | An interactive workflow that reads user input, sends it to the LLM,
+--   and prints the response, looping indefinitely.
+--   Includes project summary in context and opens all source files unfocused.
+makePromptResponseProject :: forall bs. (BS.BuildSystem bs) => ProjectTexts -> AppM ()
+makePromptResponseProject projectTexts = do
+    cfg <- ask
+
+    ignoredDirs <- BS.getIgnoredDirs @bs
+    existingFileNames <- liftIO $ FS.getFileNamesRecursive ignoredDirs cfg.configBaseDir
+    modify' (updateExistingFiles existingFileNames)
+    st <- get
+
+    -- Define the filter function
+    let filterSourceFile x = do
+            buildable <- BS.isBuildableFile @bs x
+            return $ buildable && not (T.isInfixOf "_test.go" x)
+
+    sourceFileNames <- filterM filterSourceFile $ map existingFileName st.stateFiles
+
+    -- Open all source files without focusing
+    liftIO $ putTextLn "Opening source files (unfocused)..."
+    modify' clearOpenFiles 
+    forM_ sourceFileNames $ \fileName -> do
+        Tools.openFile @bs Tools.DontFocusOpenedFile fileName cfg
+    liftIO $ putTextLn $ "Opened " <> show (length sourceFileNames) <> " source files."
+
+    -- Prepare the context background including project summary
+    let baseBackground = projectTexts.projectSummaryText
+        assistantRole = "You are a helpful AI assistant aware of the project context (source files listed above). Please respond directly and concisely to the user's input below."
+        -- Combine project summary and assistant role for the final background
+        background = baseBackground <> "\n\n" <> assistantRole
+
+        tools = allTools
+        -- Example response for the LLM call structure.
+        exampleResp = SimpleResponse { response = "This is an example response text." }
+
+    liftIO $ putTextLn "Starting interactive LLM mode."
+    liftIO $ putTextLn "Enter your text prompt below (end input with an empty line)."
+    liftIO $ putTextLn "Press Ctrl+C to exit the application."
+
+    -- Loop indefinitely until user interruption (e.g., Ctrl+C)
+    forever $ do
+        -- Read potentially multi-line input from the user
+        userLines <- liftIO TerminalInput.readLinesUntilEmpty
+
+        -- Only proceed if the user entered some text
+        unless (null userLines) $ do
+            let userTask = T.unlines userLines
+                -- Use the pre-computed background
+                ctxt = makeBaseContext background userTask
+
+            -- No validation needed beyond successful JSON parsing, hence validateAlwaysPass.
+            llmResult <- Engine.runAiFunc @bs
+                           ctxt
+                           MediumIntelligenceRequired -- Adjust intelligence as needed
+                           tools
+                           exampleResp
+                           validateAlwaysPass
+                           (configTaskMaxFailures cfg)
+
+            -- Print the LLM's response
+            liftIO $ putTextLn $ "\nLLM Response:\n" <> llmResult.response
+            liftIO $ putTextLn "" -- Add spacing before the next prompt

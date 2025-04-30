@@ -9,7 +9,7 @@ import Data.Text qualified as T
 import PromptCommon qualified as PC
 import Relude
 
-data ProjectKind = CreateProject | RefactorProject | TargetedRefactorProject | FileAnalysisProject
+data ProjectKind = CreateProject | RefactorProject | TargetedRefactorProject | FileAnalysisProject | ChatProject
   deriving (Generic, Eq, Ord, Show)
 
 instance FromJSON ProjectKind
