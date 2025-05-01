@@ -1,4 +1,4 @@
-module Logging (logInfo, logWarn, logDebug, initializeLogger) where
+module Logging (logInfo, logWarn, logError, logDebug, initializeLogger) where
 
 import Data.Text as T
 import Relude
@@ -41,6 +41,10 @@ logInfo context msg = do
 logWarn :: Text -> Text -> IO ()
 logWarn context msg = do
   warningM (T.unpack context) (T.unpack msg)
+
+logError :: Text -> Text -> IO ()
+logError context msg = do
+  errorM (T.unpack context) (T.unpack msg)
 
 logDebug :: Text -> Text -> IO ()
 logDebug context msg = do

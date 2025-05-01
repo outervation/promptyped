@@ -46,7 +46,8 @@ data TracedEvent =
   EvtCloseFile Text EventResult |
   EvtFileOp Text EventResult |
   EvtCompileProject EventResult |
-  EvtTestProject EventResult
+  EvtTestProject EventResult | 
+  EvtApproachCorrection Text
   deriving (Generic, Eq, Ord, Show)
 
 newtype RemainingFailureTolerance = RemainingFailureTolerance Int
@@ -645,3 +646,27 @@ sliceList n m xs = take (m - n + 1) (drop n xs)
 eitherM :: (Monad m) => (a -> m c) -> (b -> m c) -> Either a b -> m c
 eitherM f _ (Left a) = f a
 eitherM _ g (Right b) = g b
+
+runActionWithoutModifyingState :: forall a. AppM a -> AppM a
+runActionWithoutModifyingState actionToRun = do
+    currentState <- get
+    currentConfig <- ask
+
+    --    Unwrap AppM -> ReaderT -> StateT -> ExceptT -> IO
+    --    Run the ReaderT layer using the captured config
+    let computationToRun :: StateT AppState (ExceptT AppError IO) a
+        computationToRun = runReaderT (runAppM actionToRun) currentConfig
+
+    --    This runs the computation starting with 'currentState' and gives
+    --    us the result within the underlying monad (ExceptT AppError IO),
+    --    discarding the final state of the *inner* computation.
+    let underlyingComputation :: ExceptT AppError IO a
+        underlyingComputation = evalStateT computationToRun currentState
+
+    -- 4. Run the underlying ExceptT/IO stack
+    resultOrError <- liftIO $ runExceptT underlyingComputation
+
+    -- 5. Handle the result within the *outer* AppM context
+    case resultOrError of
+        Left err     -> throwError err 
+        Right result -> pure result    

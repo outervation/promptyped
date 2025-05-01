@@ -14,11 +14,19 @@ import Data.ByteString.Lazy qualified as LBS
 import Data.List.Extra (takeEnd)
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
+import Data.Set qualified as Set
 import FileSystem qualified as FS
 import Logging qualified
 import OpenRouterClient as Client
 import Relude
 import Tools qualified
+
+allTools :: [Tools.Tool]
+allTools = [Tools.ToolOpenFile, Tools.ToolFocusFile, Tools.ToolCloseFile, Tools.ToolAppendFile, Tools.ToolInsertInFile, Tools.ToolEditFileByMatch, Tools.ToolSummariseAction, Tools.ToolPanic, Tools.ToolReturn]
+
+readOnlyTools :: [Tools.Tool]
+readOnlyTools = [Tools.ToolOpenFile, Tools.ToolFocusFile, Tools.ToolCloseFile, Tools.ToolSummariseAction, Tools.ToolPanic, Tools.ToolReturn]
+
 
 shortenedMessageLength :: Int
 shortenedMessageLength = 200
@@ -32,8 +40,142 @@ numOldMessagesToKeepInContext = 10
 numSyntaxRejectsToCauseContextReset :: Int
 numSyntaxRejectsToCauseContextReset = 5
 
+maxConsecutiveCompileErrors :: Int
+maxConsecutiveCompileErrors = 5
+
 numRecentEventsToShow :: Int
 numRecentEventsToShow = 100
+
+data CompileProgressResult = CompileProgressResult
+  { progressMade :: Bool,
+        rationale :: Text
+  }
+    deriving (Generic, Eq, Ord, Show)
+
+instance ToJSON CompileProgressResult
+instance FromJSON CompileProgressResult
+
+data RelevantFilesResult = RelevantFilesResult
+  { relevantFiles :: [Text]
+  }
+    deriving (Generic, Eq, Ord, Show)
+
+instance ToJSON RelevantFilesResult
+instance FromJSON RelevantFilesResult
+
+data CompileSolutionResult = CompileSolutionResult
+  { hasSolution :: Bool,
+        compileErrorSolution :: Text
+  }
+    deriving (Generic, Eq, Ord, Show)
+
+instance ToJSON CompileSolutionResult
+instance FromJSON CompileSolutionResult
+
+getRecentCompileErrors :: [TracedEvent] -> Int -> [Text]
+getRecentCompileErrors events n =
+  mapMaybe extractError $ takeEnd n events
+  where
+    extractError :: TracedEvent -> Maybe Text
+    extractError (EvtCompileProject (FailedWithPotentiallyVeryLongError (PotentiallyBigMessage msg))) = Just msg
+    extractError (EvtCompileProject (FailedWithError msg)) = Just msg -- Also consider regular text errors
+    extractError _ = Nothing
+
+validateAlwaysPass :: Context -> a -> AppM (Either (MsgKind, Text) a)
+validateAlwaysPass _ x = pure $ Right x
+
+-- Validator for RelevantFilesResult
+validateRelevantFilesExist :: Context -> RelevantFilesResult -> AppM (Either (MsgKind, Text) RelevantFilesResult)
+validateRelevantFilesExist _ result = do
+  st <- get
+  let existingFileNames = Set.fromList $ map existingFileName (stateFiles st)
+      missingFiles = filter (not . (`Set.member` existingFileNames)) (relevantFiles result)
+  if null missingFiles
+    then pure $ Right result
+    else pure $ Left (OtherMsg, "AI suggested relevant files that do not exist: " <> T.intercalate ", " missingFiles)
+
+handleConsecutiveCompileFailures :: forall bs. (BS.BuildSystem bs) => Context -> AppM Context
+handleConsecutiveCompileFailures origCtxt = do
+  st <- get
+  cfg <- ask
+  let consecutiveFails = numConsecutiveCompilationFails (stateCompileTestRes st)
+      shouldIntervene = consecutiveFails > 0 && consecutiveFails `mod` maxConsecutiveCompileErrors == 0
+
+  if not shouldIntervene
+    then pure origCtxt -- No intervention needed
+    else do
+      putTextLn $ "Detected " <> show consecutiveFails <> " consecutive compilation failures. Checking for progress..."
+      liftIO $ Logging.logWarn "CompileFailureIntervention" $ "Detected " <> show consecutiveFails <> " consecutive failures. Checking progress."
+
+      let recentErrors = getRecentCompileErrors (contextEvents origCtxt) maxConsecutiveCompileErrors
+          currentError = fromMaybe "No current error details available" (compileRes $ stateCompileTestRes st)
+
+      -- 1. Check for Progress
+      let progressCheckContext = makeBaseContext origCtxt.contextBackground $
+            "The last " <> show (length recentErrors) <> " compilation attempts failed. Please analyze the error messages to determine if any progress is being made (e.g., different errors, fewer errors, fixing previous issues).\n" <>
+            "Recent Errors (newest last):\n" <> T.unlines (map (\(i, e) -> T.pack (show i) <> ": " <> truncateText 5 e) $ zip [1..] recentErrors) <> "\n" <>
+            "Current Error:\n" <> currentError <> "\n"
+          exampleProgress = CompileProgressResult True "Syntax error fixed, now facing a type error."
+
+      progressResult <- runAiFunc @bs progressCheckContext LowIntelligenceRequired readOnlyTools exampleProgress validateAlwaysPass (configTaskMaxFailures cfg)
+
+      if progressResult.progressMade
+        then do
+          putTextLn $ "AI determined progress is being made: " <> progressResult.rationale
+          liftIO $ Logging.logInfo "CompileFailureIntervention" $ "Progress detected: " <> progressResult.rationale
+          pure origCtxt -- Progress detected, continue normally
+        else do
+          putTextLn $ "AI determined NO progress is being made: " <> progressResult.rationale <> ". Attempting intervention."
+          liftIO $ Logging.logWarn "CompileFailureIntervention" $ "No progress detected: " <> progressResult.rationale <> ". Intervening."
+
+          -- 2. Identify Relevant Files
+          allSourceFiles <- filterM (BS.isBuildableFile @bs) $ map existingFileName (stateFiles st)
+          modify' clearOpenFiles 
+          forM_ allSourceFiles $ \fn -> do
+             Tools.openFile @bs Tools.DontFocusOpenedFile fn cfg
+          let relevantFilesContext = makeBaseContext origCtxt.contextBackground $
+                "Compilation has failed repeatedly without progress. The current error is:\n" <> currentError <> "\n\n" <>
+                "The available source files are:\n" <> T.intercalate ", " allSourceFiles <> "\n\n" <>
+                "Please identify a small list of file names that are most relevant to understanding and fixing this error (e.g., the file with the error, files defining types/functions mentioned in the error)."
+              exampleRelevantFiles = RelevantFilesResult ["main.go", "utils.go"]
+
+          relevantFilesResult <- runAiFunc @bs relevantFilesContext HighIntelligenceRequired readOnlyTools exampleRelevantFiles validateRelevantFilesExist (configTaskMaxFailures cfg)
+
+          -- 3. Get Solution Plan (using a temporary context/state view for file focus)
+          -- We don't modify the main state here, just the context view for the AI call.
+          let filesToFocus = relevantFiles relevantFilesResult
+              recentEvents = takeEnd 10 (contextEvents origCtxt) -- Provide recent history
+
+              -- Construct a temporary context view for the solution AI
+              solutionPrompt =
+                "Compilation is stuck. Current error:\n" <> currentError <> "\n\n" <>
+                "Based on the error, the following files were deemed most relevant:\n" <> T.intercalate ", " filesToFocus <> "\n\n" <>
+                "Recent actions taken:\n" <> T.unlines (map show recentEvents) <> "\n\n" <>
+                "Please analyze the error, relevant files, and recent history to suggest a specific, actionable plan to fix the compilation error. Return=<[{ hasSolution: bool, compileErrorSolution: string }]>. If you cannot find a likely solution, set hasSolution to false."
+              solutionContext = makeBaseContext origCtxt.contextBackground solutionPrompt
+              exampleSolution = CompileSolutionResult True "Import 'newpkg' in file_a.go and change function signature in file_b.go to accept an integer."
+
+          putTextLn $ "Focusing relevant files for analysis: " <> T.intercalate ", " filesToFocus
+          modify' clearOpenFiles -- Clear existing open files first
+          forM_ filesToFocus $ \fn -> do
+             Tools.openFile @bs Tools.DoFocusOpenedFile fn cfg
+
+          -- Now call the AI with the files focused in the actual state
+          solutionResult <- runAiFunc @bs solutionContext HighIntelligenceRequired readOnlyTools exampleSolution validateAlwaysPass (configTaskMaxFailures cfg)
+
+          if solutionResult.hasSolution
+            then do
+              let interventionMessage = "SYSTEM INTERVENTION: Compilation has failed " <> show consecutiveFails <> " times without progress. Based on analysis, a potential solution is:\n" <> solutionResult.compileErrorSolution <> "\nPlease prioritize implementing this approach."
+              putTextLn $ "AI suggested a solution: " <> solutionResult.compileErrorSolution
+              liftIO $ Logging.logWarn "CompileFailureIntervention" $ "AI suggested solution: " <> solutionResult.compileErrorSolution
+              -- Add the intervention message and event to the *original* context
+              let updatedCtxt = addEvtToContext (addToContextUser origCtxt OtherMsg interventionMessage) (EvtApproachCorrection solutionResult.compileErrorSolution)
+              pure updatedCtxt
+            else do
+              let abortMsg = "Aborting: Max consecutive compile errors (" <> show consecutiveFails <> ") reached without progress, and AI could not suggest a specific fix."
+              putTextLn abortMsg
+              liftIO $ Logging.logError "CompileFailureIntervention" abortMsg
+              throwError abortMsg
 
 updateStats :: GenerationStats -> UsageData -> Int64 -> AppM ()
 updateStats generation usage timeTaken = do
@@ -297,13 +439,14 @@ runAiFuncInner ::
   (Context -> a -> AppM (Either (MsgKind, Text) b)) ->
   RemainingFailureTolerance ->
   AppM b
-runAiFuncInner isCloseFileTask origCtxt intReq tools exampleReturn postProcessor remainingErrs = do
+runAiFuncInner isCloseFileTask initialCtxt intReq tools exampleReturn postProcessor remainingErrs = do
   when (remainingErrs <= 0) $ throwError "Aborting as reached max number of errors"
   when (notElem Tools.ToolReturn tools) $ throwError "Missing Return tool!"
   when ((any Tools.isMutation tools) && notElem Tools.ToolSummariseAction tools) $ throwError "Missing SummariseAction tool!"
+  origCtxt <- runActionWithoutModifyingState $ handleConsecutiveCompileFailures @bs initialCtxt
   cfg <- ask
   theState <- get
-  let (RemainingFailureTolerance failureToleranceInt) = configTaskMaxFailures cfg
+  let -- (RemainingFailureTolerance failureToleranceInt) = configTaskMaxFailures cfg
       -- when (theState.stateCompileTestRes.numConsecutiveSyntaxCheckFails > failureToleranceInt) $ throwError "Aborting as reached max number of errors attempting to write syntactically correct code"
       shouldClearMessages = theState.stateCompileTestRes.numConsecutiveSyntaxCheckFails > numSyntaxRejectsToCauseContextReset
       origCtxt' = if shouldClearMessages then updateContextMessages origCtxt (const []) else origCtxt

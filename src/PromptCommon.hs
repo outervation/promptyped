@@ -23,6 +23,7 @@ import Relude
 import System.Directory qualified as DIR
 import Tools qualified
 
+
 writeFileIfDoesntExist :: Text -> Text -> AppM ()
 writeFileIfDoesntExist fName fContents = do
   cfg <- ask
@@ -198,9 +199,6 @@ instance ToJSON ThingWithDescription
 
 instance FromJSON ThingWithDescription
 
-validateAlwaysPass :: Context -> a -> AppM (Either (MsgKind, Text) a)
-validateAlwaysPass _ x = pure $ Right x
-
 validateAlwaysPassIfCompileTestsFine :: Context -> a -> AppM (Either (MsgKind, Text) a)
 validateAlwaysPassIfCompileTestsFine _ x = second (const x) <$> checkCompileTestResults
 
@@ -314,12 +312,6 @@ instance FromJSON UnitTests
 validateUnitTests :: Context -> UnitTests -> AppM (Either (MsgKind, Text) UnitTests)
 validateUnitTests _ cf = pure $ Right cf
 
-allTools :: [Tools.Tool]
-allTools = [Tools.ToolOpenFile, Tools.ToolFocusFile, Tools.ToolCloseFile, Tools.ToolAppendFile, Tools.ToolInsertInFile, Tools.ToolEditFileByMatch, Tools.ToolSummariseAction, Tools.ToolPanic, Tools.ToolReturn]
-
-readOnlyTools :: [Tools.Tool]
-readOnlyTools = [Tools.ToolOpenFile, Tools.ToolFocusFile, Tools.ToolCloseFile, Tools.ToolSummariseAction, Tools.ToolPanic, Tools.ToolReturn]
-
 data UnitTestDone = UnitTestDone
   { unitTestPassedSuccessfully :: Bool
   }
@@ -367,13 +359,13 @@ makeUnitTestsInner background fileName makeTestPrompt = do
                   ]
               }
           ]
-      runner fileName' = Engine.runAiFunc @bs (makeCtxt $ makeTestPrompt fileName') HighIntelligenceRequired allTools exampleUnitTests validateUnitTests (configTaskMaxFailures cfg)
+      runner fileName' = Engine.runAiFunc @bs (makeCtxt $ makeTestPrompt fileName') HighIntelligenceRequired Engine.allTools exampleUnitTests validateUnitTests (configTaskMaxFailures cfg)
   planRes <- memoise (configCacheDir cfg) "test_planner" fileName id runner
   forM_ (unitTestFiles planRes) $ \fileUnitTests -> do
     let testFileName = unitTestFileName fileUnitTests
     Tools.openFile @bs Tools.DoFocusOpenedFile testFileName cfg
     let exampleUnitTestDone = UnitTestDone True
-    let makeUnitTest UnitTest {..} = Engine.runAiFunc @bs (makeCtxt $ makeUnitTestPrompt fileName testFileName unitTestName unitTestSummary) MediumIntelligenceRequired allTools exampleUnitTestDone validateUnitTest (configTaskMaxFailures cfg)
+    let makeUnitTest UnitTest {..} = Engine.runAiFunc @bs (makeCtxt $ makeUnitTestPrompt fileName testFileName unitTestName unitTestSummary) MediumIntelligenceRequired Engine.allTools exampleUnitTestDone validateUnitTest (configTaskMaxFailures cfg)
     forM_ fileUnitTests.unitTests $ \test -> do
       memoise (configCacheDir cfg) ("test_creator_" <> testFileName <> "_" <> test.unitTestName) test unitTestName makeUnitTest
       liftIO $ putTextLn $ "Made test " <> test.unitTestName <> " for " <> testFileName
@@ -406,7 +398,7 @@ makeFile background extraFiles pf = do
           }
   isBuildable <- BS.isBuildableFile @bs pf.name
   when isBuildable $ do
-    let runner fileName = Engine.runAiFunc @bs (makeCtxt fileName) MediumIntelligenceRequired allTools exampleCreatedFiles validateCreatedFiles (configTaskMaxFailures cfg)
+    let runner fileName = Engine.runAiFunc @bs (makeCtxt fileName) MediumIntelligenceRequired Engine.allTools exampleCreatedFiles validateCreatedFiles (configTaskMaxFailures cfg)
     createdFiles <- memoise (configCacheDir cfg) "file_creator" pf.name id runner
     forM_ createdFiles $ \x -> modify' $ updateFileDesc (createdFileName x) (createdFileSummary x)
     makeUnitTests @bs background pf
@@ -427,7 +419,7 @@ makeRefactorFileTask background initialDeps fileName desiredChanges refactorUnit
             exampleChange = ModifiedFile "someFile.go" "Update the file to add ... so that it ..."
             validateChange = Engine.combineValidatorsSameRes validateAlwaysPassIfCompileTestsFine (validateFileModifiedWithAi @bs fileName)
         liftIO $ putTextLn $ "Running file modification task: " <> show description
-        Engine.runAiFunc @bs ctxt MediumIntelligenceRequired allTools exampleChange validateChange (configTaskMaxFailures cfg)
+        Engine.runAiFunc @bs ctxt MediumIntelligenceRequired Engine.allTools exampleChange validateChange (configTaskMaxFailures cfg)
   modifications <- forM desiredChanges $ \x -> do
     modification <- memoise (configCacheDir cfg) ("file_modifier_" <> fileName) x (\desc -> desc.name) makeChange
     putTextLn $ "Done task: " <> show x
@@ -485,7 +477,7 @@ makeRefactorFilesProject projectTexts refactorCfg = do
                 <> "Each task should list other task dependencies if any, and there should be no circular dependencies."
                 <> "If there's something relevant for later that you can't encode well in the return value, please AppendFile=<[{\"fileName\": \"journal.txt\", \"rawTextName\": \"journalUpdateTextBoxName\"}]> it to the journal."
         setupOpenFiles fileName
-        Engine.runAiFunc @bs ctxt MediumIntelligenceRequired (Tools.ToolAppendFile : readOnlyTools) exampleProposedChanges validateThingsWithDependencies (configTaskMaxFailures cfg)
+        Engine.runAiFunc @bs ctxt MediumIntelligenceRequired (Tools.ToolAppendFile : Engine.readOnlyTools) exampleProposedChanges validateThingsWithDependencies (configTaskMaxFailures cfg)
   plannedTasks <- forM_ sourceFileNames $ \fileName -> do
     fileTasks <- memoise (configCacheDir cfg) "file_dependencies" fileName id getChangesTask
     return $ FileProposedChanges fileName fileTasks
@@ -503,7 +495,7 @@ makeRefactorFilesProject projectTexts refactorCfg = do
           [ FileProposedChanges "someFile.go" exampleThingsWithDependencies,
             FileProposedChanges "someOtherFile.go" exampleThingsWithDependencies
           ]
-      refineChangesTask () = Engine.runAiFunc @bs combineCtxt HighIntelligenceRequired (Tools.ToolAppendFile : readOnlyTools) combineExample validateAlwaysPass (configTaskMaxFailures cfg)
+      refineChangesTask () = Engine.runAiFunc @bs combineCtxt HighIntelligenceRequired (Tools.ToolAppendFile : Engine.readOnlyTools) combineExample Engine.validateAlwaysPass (configTaskMaxFailures cfg)
   modify' clearOpenFiles
   forM_ (journalFileName : refactorCfg.bigRefactorInitialOpenFiles) $ \x -> Tools.openFile @bs Tools.DoFocusOpenedFile x cfg
   plannedTasksRefined <- memoise (configCacheDir cfg) "all_file_dependencies" () (const "") refineChangesTask
@@ -523,7 +515,7 @@ makeRefactorFilesProject projectTexts refactorCfg = do
                 ThingWithDependencies "someOtherFile.go" "This file contains functionality for something different ..." ["someFile.go"]
               ]
           }
-      getExtraFilesTask () = Engine.runAiFunc @bs extraFilesCtxt HighIntelligenceRequired readOnlyTools exampleExtraFiles validateFileNamesNoNestedPaths (configTaskMaxFailures cfg)
+      getExtraFilesTask () = Engine.runAiFunc @bs extraFilesCtxt HighIntelligenceRequired Engine.readOnlyTools exampleExtraFiles validateFileNamesNoNestedPaths (configTaskMaxFailures cfg)
   extraFilesNeeded <- memoise (configCacheDir cfg) "all_extra_files" () (const "") getExtraFilesTask
   let makeFileBackground = background <> "\n You are currently working on adding some extra files that are necessary as part of the refactoring."
   forM_ extraFilesNeeded (makeFile @bs makeFileBackground refactorCfg.bigRefactorInitialOpenFiles)
@@ -548,7 +540,7 @@ makeRefactorFilesProject projectTexts refactorCfg = do
                 ThingWithDependencies "someOtherFile.go" "This file contains functionality for something different...  (this part isn't important here as it's not used)" ["someFile.go"]
               ]
           }
-      getFileDependenciesTask () = Engine.runAiFunc @bs getFileDependenciesCtxt HighIntelligenceRequired readOnlyTools getFileDependenciesExample getFileDependenciesValidator (configTaskMaxFailures cfg)
+      getFileDependenciesTask () = Engine.runAiFunc @bs getFileDependenciesCtxt HighIntelligenceRequired Engine.readOnlyTools getFileDependenciesExample getFileDependenciesValidator (configTaskMaxFailures cfg)
   fileDependencies <- memoise (configCacheDir cfg) "all_file_final_dependencies" () (const "") getFileDependenciesTask
   let docDeps = map (`ExistingFile` "") refactorCfg.bigRefactorInitialOpenFiles
   forM_ fileDependencies $ \x -> do
@@ -571,7 +563,7 @@ makeCreateFilesProject projectTexts projectCfg = do
       archPrompt = makeArchitectureDesignPrompt
       archCtxt = makeBaseContext background archPrompt
       exampleArch = ThingWithDescription "The architecture of the project will be as follows: ..."
-      archRunner () = Engine.runAiFunc @bs archCtxt HighIntelligenceRequired readOnlyTools exampleArch validateAlwaysPass (configTaskMaxFailures cfg)
+      archRunner () = Engine.runAiFunc @bs archCtxt HighIntelligenceRequired Engine.readOnlyTools exampleArch Engine.validateAlwaysPass (configTaskMaxFailures cfg)
   plannedArch <- memoise (configCacheDir cfg) "architecture" () (const "") archRunner
 
   let ctxt = makeBaseContext (background <> "\n The architecture will be as follows: \n" <> plannedArch.description) makeFilenamesPrompt
@@ -582,7 +574,7 @@ makeCreateFilesProject projectTexts projectCfg = do
                 ThingWithDependencies "someOtherFile.go" "This file contains functionality for something different ..." ["someFile.go"]
               ]
           }
-      runner () = Engine.runAiFunc @bs ctxt HighIntelligenceRequired readOnlyTools examplePlannedFiles validateFileNamesNoNestedPaths (configTaskMaxFailures cfg)
+      runner () = Engine.runAiFunc @bs ctxt HighIntelligenceRequired Engine.readOnlyTools examplePlannedFiles validateFileNamesNoNestedPaths (configTaskMaxFailures cfg)
   plannedFiles <- memoise (configCacheDir cfg) "file_planner" () (const "") runner
   forM_ plannedFiles (makeFile @bs ctxt.contextBackground [])
 
@@ -652,7 +644,7 @@ makeTargetedRefactorProject projectTexts refactorCfg = do
                 <> "Each task should list other task dependencies if any, and there should be no circular dependencies."
                 <> "If there's something relevant for later that you can't encode well in the return value, please AppendFile=<[{\"fileName\": \"journal.txt\", \"rawTextName\": \"journalUpdateTextBoxName\"}]> it to the journal."
             taskBackground = background <> "\nYour task for this file is: " <> rCfg.refactorTask
-            getChangesTask fileName = Engine.runAiFunc @bs (mkCtxt fileName) HighIntelligenceRequired (Tools.ToolAppendFile : readOnlyTools) exampleTasks validateThingsWithDependencies (configTaskMaxFailures cfg)
+            getChangesTask fileName = Engine.runAiFunc @bs (mkCtxt fileName) HighIntelligenceRequired (Tools.ToolAppendFile : Engine.readOnlyTools) exampleTasks validateThingsWithDependencies (configTaskMaxFailures cfg)
         setupOpenFiles relFiles
         plannedTasks <- memoise (configCacheDir cfg) "file_tasks" rCfg.refactorFile id getChangesTask
         st <- get
@@ -699,7 +691,7 @@ makeFileAnalysisProject projectTexts = do
                 <> name
                 <> " matches the specification, and return any ways it fails to satisfy it. Please also return detailed notes on its behaviour, for reference when checking other files."
             exampleRes = FileAnalysisResult (fileName <> "doesn't meet the spec completely because it's supposed to ..., but it doesn't, and ...") "The file fulfills the following spec-relevant behaviours:"
-            getChangesTask name = Engine.runAiFunc @bs (mkCtxt name) MediumIntelligenceRequired readOnlyTools exampleRes validateAlwaysPass (configTaskMaxFailures cfg)
+            getChangesTask name = Engine.runAiFunc @bs (mkCtxt name) MediumIntelligenceRequired Engine.readOnlyTools exampleRes Engine.validateAlwaysPass (configTaskMaxFailures cfg)
         setupOpenFile fileName
         fileRes <- memoise (configCacheDir cfg) "file_analysis" fileName id getChangesTask
         return (fileName, fileRes)
@@ -710,7 +702,7 @@ makeFileAnalysisProject projectTexts = do
           $ "You previously analysed files in the project to identify any way they failed to match the spec. Now, based on the result of your analysis (which was per-file), can you see any other ways in which overall the project fails to match the spec? The analysis was:\n"
           <> summariesCat
       exampleCombinedRes = ThingWithDescription "Overall the project doesn't have any files that fulfil the ... requirement completely because ..."
-      getCombinedSummary () = Engine.runAiFunc @bs combinedSummaryCtxt HighIntelligenceRequired readOnlyTools exampleCombinedRes validateAlwaysPass (configTaskMaxFailures cfg)
+      getCombinedSummary () = Engine.runAiFunc @bs combinedSummaryCtxt HighIntelligenceRequired Engine.readOnlyTools exampleCombinedRes Engine.validateAlwaysPass (configTaskMaxFailures cfg)
   modify' clearOpenFiles
   combinedSummary <- memoise (configCacheDir cfg) "file_analysis_combined" () show getCombinedSummary
   let summaryFileName = "specComplianceSummary.txt"
@@ -852,8 +844,8 @@ makeCreateBasedOnSpecProject projectTexts specFileName projectCfg = do
           }
 
       -- If you want to allow journaling while chunking the spec,
-      -- you can add `Tools.ToolAppendFile` to readOnlyTools:
-      chunkingTools = Tools.ToolAppendFile : readOnlyTools
+      -- you can add `Tools.ToolAppendFile` to Engine.readOnlyTools:
+      chunkingTools = Tools.ToolAppendFile : Engine.readOnlyTools
 
       getSegmentPlans () =
         Engine.runAiFunc @bs
@@ -932,9 +924,9 @@ makeCreateBasedOnSpecProject projectTexts specFileName projectCfg = do
         Engine.runAiFunc @bs
           archCtxt
           HighIntelligenceRequired
-          readOnlyTools
+          Engine.readOnlyTools
           exampleArch
-          validateAlwaysPass
+          Engine.validateAlwaysPass
           (configTaskMaxFailures cfg)
 
   plannedArch <- memoise (configCacheDir cfg) "architecture" () (const "") archRunner
@@ -966,7 +958,7 @@ makeCreateBasedOnSpecProject projectTexts specFileName projectCfg = do
         Engine.runAiFunc @bs
           filePlanCtxt
           HighIntelligenceRequired
-          readOnlyTools
+          Engine.readOnlyTools
           examplePlannedFiles
           validateFileNamesNoNestedPaths
           (configTaskMaxFailures cfg)
@@ -1009,7 +1001,7 @@ fixFailedTestsAndCompilationSimple background = do
           let exampleUnitTestDone = UnitTestDone True
               ctxt = makeBaseContext background ("YOUR CURRENT TASK: " <> task)
           putTextLn $ "Running test fix: " <> task
-          Engine.runAiFunc @bs ctxt MediumIntelligenceRequired allTools exampleUnitTestDone validateUnitTest (configTaskMaxFailures cfg)
+          Engine.runAiFunc @bs ctxt MediumIntelligenceRequired Engine.allTools exampleUnitTestDone validateUnitTest (configTaskMaxFailures cfg)
           return ()
 
 -- | A plan of how to fix each file that is failing compilation/tests
@@ -1159,9 +1151,9 @@ fixFailedTestsAndCompilation background relevantFiles = do
         Engine.runAiFunc @bs
           planContext
           HighIntelligenceRequired
-          readOnlyTools
+          Engine.readOnlyTools
           examplePlan
-          validateAlwaysPass
+          Engine.validateAlwaysPass
           (configTaskMaxFailures cfg)
 
       -- 3) For each failing file, attempt a fix
@@ -1196,7 +1188,7 @@ fixFailedTestsAndCompilation background relevantFiles = do
             fixContext
             MediumIntelligenceRequired
             -- Tools for editing/writing code:
-            allTools
+            Engine.allTools
             exampleFixConfirmation
             (validateSingleFileFix @bs fPlan.failingFileName)
             (configTaskMaxFailures cfg)
@@ -1245,7 +1237,7 @@ makePromptResponseProject projectTexts = do
         -- Combine project summary and assistant role for the final background
         background = baseBackground <> "\n\n" <> assistantRole
 
-        tools = allTools
+        tools = Engine.allTools
         -- Example response for the LLM call structure.
         exampleResp = SimpleResponse { response = "This is an example response text." }
 
@@ -1264,13 +1256,13 @@ makePromptResponseProject projectTexts = do
                 -- Use the pre-computed background
                 ctxt = makeBaseContext background userTask
 
-            -- No validation needed beyond successful JSON parsing, hence validateAlwaysPass.
+            -- No validation needed beyond successful JSON parsing, hence Engine.validateAlwaysPass.
             llmResult <- Engine.runAiFunc @bs
                            ctxt
                            MediumIntelligenceRequired -- Adjust intelligence as needed
                            tools
                            exampleResp
-                           validateAlwaysPass
+                           Engine.validateAlwaysPass
                            (configTaskMaxFailures cfg)
 
             -- Print the LLM's response
