@@ -25,7 +25,7 @@ import ShapeChecker (checkShapesMatch)
 import Text.Regex.Base (makeRegexM)
 import Text.Regex.TDFA (Regex, match)
 
-data Tool = ToolOpenFile | ToolFocusFile | ToolCloseFile | ToolAppendFile | ToolReplaceFile | ToolInsertInFile | ToolEditFile | ToolEditFileByMatch | ToolRevertFile | ToolFileLineOp | ToolPanic | ToolSummariseAction | ToolReturn
+data Tool = ToolOpenFile | ToolFocusFile | ToolCloseFile | ToolAppendFile | ToolReplaceFile | ToolInsertInFile | ToolEditFile | ToolEditFileByMatch | ToolRevertFile | ToolFileLineOp | ToolAddDependency | ToolPanic | ToolSummariseAction | ToolReturn
   deriving (Eq, Ord, Show)
 
 isMutation :: Tool -> Bool
@@ -34,7 +34,7 @@ isMutation ToolPanic = False
 isMutation ToolSummariseAction = False
 isMutation _ = True
 
-data ToolCall a = ToolCallOpenFile [OpenFileArg] | ToolCallFocusFile [FocusFileArg] | ToolCallCloseFile [CloseFileArg] | ToolCallAppendFile [AppendFileArg] | ToolCallReplaceFile [AppendFileArg] | ToolCallEditFile [EditFileArg] | ToolCallEditFileByMatch [EditFileByMatchArg] | ToolCallRevertFile [RevertFileArg] | ToolCallInsertInFile [InsertInFileArg] | ToolCallFileLineOp [FileLineOpArg] | ToolCallPanic PanicArg | ToolCallSummariseAction [SummariseActionArg] | ToolCallReturn a
+data ToolCall a = ToolCallOpenFile [OpenFileArg] | ToolCallFocusFile [FocusFileArg] | ToolCallCloseFile [CloseFileArg] | ToolCallAppendFile [AppendFileArg] | ToolCallReplaceFile [AppendFileArg] | ToolCallEditFile [EditFileArg] | ToolCallEditFileByMatch [EditFileByMatchArg] | ToolCallRevertFile [RevertFileArg] | ToolCallInsertInFile [InsertInFileArg] | ToolCallFileLineOp [FileLineOpArg] | ToolCallAddDependency [AddDependencyArg]|  ToolCallPanic PanicArg | ToolCallSummariseAction [SummariseActionArg] | ToolCallReturn a
   deriving (Generic, Eq, Ord, Show)
 
 instance (ToJSON a) => ToJSON (ToolCall a)
@@ -55,6 +55,7 @@ toolCallTool (ToolCallPanic _) = ToolPanic
 toolCallTool (ToolCallSummariseAction _) = ToolSummariseAction
 toolCallTool (ToolCallReturn _) = ToolReturn
 toolCallTool (ToolCallFileLineOp _) = ToolFileLineOp
+toolCallTool (ToolCallAddDependency _) = ToolAddDependency
 
 getReturn :: [ToolCall a] -> Maybe a
 getReturn [] = Nothing
@@ -115,6 +116,10 @@ mergeToolCalls =
         ToolCallFileLineOp _ ->
           [ ToolCallFileLineOp
               (concat [as | ToolCallFileLineOp as <- grp])
+          ]
+        ToolCallAddDependency _ ->
+          [ ToolCallAddDependency
+              (concat [as | ToolCallAddDependency as <- grp])
           ]
         -- We do not merge these, so just leave them untouched:
         ToolCallPanic _ -> grp
@@ -233,6 +238,14 @@ instance ToJSON FileLineOpArg
 
 instance FromJSON FileLineOpArg
 
+data AddDependencyArg = AddDependencyArg
+  { dependencyName :: Text
+  }
+  deriving (Generic, Show, Eq, Ord)
+
+instance ToJSON AddDependencyArg
+instance FromJSON AddDependencyArg
+
 -- Note: reverse sort so later line numbers are modified first,
 -- to avoid the meaning of line numbers changing
 validateAndSortFileLineArgs :: [FileLineOpArg] -> Either Text [FileLineOpArg]
@@ -326,7 +339,7 @@ toolName :: Tool -> Text
 toolName x = T.drop 4 $ show x
 
 toolSummary :: Text
-toolSummary = "You have the following tools available to you, that you may call with JSON args. Line numbers are included for your focused OpenFiles to simplify your task, but are not present in the files on disk (so don't explicitly write line numbers to disk!). Only a limited number of source files can be 'focused' (shown in full detail) at a time; to avoid overwhelming the context, the rest will only show function types and struct definitions. You may append to an open file that's not focused, but not do any line-number-based edits (as you can't see function bodies in an unfocused file). For tools that modify files, after modification the file will be compiled if a source file, and run if it's a unit test file. \n IMPORTANT NOTE: for Append/Edit/InsertIn file, you don't provide the text as part of the json, instead you set \"rawTextName\": \"someRawTextBox\", and then afterwards include the raw string literal in C++ style RAWTEXT[someRawTextBox]=R\"r( ...the actual text... )r\". This is to avoid the need for JSON-escaping the code/text; you instead directly include the unescaped text in between the R\"r( and )r\". It allows allows multiple commands to refer to the same raw text box where necessary (e.g. if inserting the same code in multiple places). Note that LINE NUMBERS START AT ZERO, and appear at the START of the line, not the end. Also PLEASE NOTE: you can't make overlapping line-based edits, as order of operations for overlapping edits is undefined."
+toolSummary = "You have the following tools available to you, that you may call with JSON args. Line numbers are included for your focused OpenFiles to simplify your task, but are not present in the files on disk (so don't explicitly write line numbers to disk!). Only a limited number of source files can be 'focused' (shown in full detail) at a time; to avoid overwhelming the context, the rest will only show function types and struct definitions. You may append to an open file that's not focused, but not do any line-number-based edits (as you can't see function bodies in an unfocused file). For tools that modify files, after modification the file will be compiled if a source file, and run if it's a unit test file. \n IMPORTANT NOTE: for Append/Edit/InsertIn file, you don't provide the text as part of the json, instead you set \"rawTextName\": \"someRawTextBox\", and then afterwards include the raw string literal in C++ style RAWTEXT[someRawTextBox]=R\"r( ...the actual text... )r\". This is to avoid the need for JSON-escaping the code/text; you instead directly include the unescaped text in between the R\"r( and )r\". It allows allows multiple commands to refer to the same raw text box where necessary (e.g. if inserting the same code in multiple places). Note that LINE NUMBERS START AT ZERO, and appear at the START of the line, not the end. Also PLEASE NOTE: you can't make overlapping line-based edits, as order of operations for overlapping edits is undefined. Upon any change to a file, the build system will run automatically (e.g. go generate -> go build -> go fmt -> go test, or equivalents for whatever language the project is in)."
 
 -- | Compile a Text regex with error reporting using regex-tdfa.
 compileRegex :: Text -> Either Text Regex
@@ -451,6 +464,7 @@ toolArgFormatAndDesc ToolReplaceFile = (toJ AppendFileArg {fileName = "somefile.
 toolArgFormatAndDesc ToolEditFile = (toJ EditFileArg {fileName = "somefile.txt", startLineNum = 5, endLineNum = 10, rawTextName = "codeBoxToReplaceWith"}, mkSampleCodeBox "codeBoxToReplaceWith", "Replace text in [startLineNum, endLineNum] with the text you provide. Note if making multiple edits to the same file, the start/end line numbers of different edits cannot overlap. IMPORTANT: if you insert more lines than you're replacing, the rest will be inserted, not replaced. So inserting 2 lines at at startLineNum=15 endLineNum=15 will only replace the existing line 15 in the file, and add the second provided line after that, it won't replace lines 15 and 16. Note too that the line-numbers are provided to you at the START of the line in every file. Remember line numbers start at zero, and that multiple edits cannot overlap!")
 toolArgFormatAndDesc ToolEditFileByMatch = (toJ EditFileByMatchArg {fileName = "somefile.txt", startLineMatchesRegex = "int[[:space:]]*some_func(.*){", startClosestToLineNum = 5, endLineMatchesRegex = "^}", endClosestToLineNum = 20, rawTextName = "codeBoxToReplaceWith"}, mkSampleCodeBox "codeBoxToReplaceWith", "Finds lines matching the startLineNumMatchesRegex and endLineMatchesRegex, and replaces them and the lines between them with with the text you provide. Where multiple matches are present, the match closest to startClosestToLineNum/endClosestToLineNum will be used. Note if making multiple edits to the same file, the regions edited cannot overlap. Note also the regex is simple DFA, and does not support fancy PCRE features, or character classes like \\s, only posix classes like [:space:] are supported. Finally, note that the /* lineNum */ comments are purely to assist you and not present on disk, so your regex shouldn't assume they exist. Remember multiple edits cannot overlap!")
 toolArgFormatAndDesc ToolInsertInFile = (toJ InsertInFileArg {fileName = "somefile.txt", lineNum = 17, rawTextName = "codeToInsertBox"}, mkSampleCodeBox "codeToInsertBox", "Insert the provided text into the file at lineNum, not replacing/overwriting the content on that line (instead it's moved to below the inserted text). Note that this cannot overlap with lines modified by an Edit tool, as order of operations is undefined.")
+toolArgFormatAndDesc ToolAddDependency = (toJ AddDependencyArg {dependencyName = "github.com/xitongsys/parquet-go"}, "", "Add the dependency in the appropriate manner for the build system. E.g. golang will go get dependencyName, Rust will cargo add dependencyName.")
 toolArgFormatAndDesc ToolRevertFile = (toJ RevertFileArg {fileName = "someFile.txt"}, "", "Revert un-added changes in an open file; changes are committed when compilation and unit tests succeed, so will revert to the last version of the file before compilation or unit tests failed. Use this if you get the file in a state you can't recover it from.")
 toolArgFormatAndDesc ToolPanic = (toJ PanicArg {reason = "This task is impossible for me to do because ..."}, "", "Call this if you can't complete the task due to it being impossible or not having enough information. Also call this if you want to add a new dependency that's not present, as currently there's no tool for you to do that.")
 toolArgFormatAndDesc ToolSummariseAction = (toJ SummariseActionArg {  actionSummary = "Adding the field blah to someType",
@@ -469,7 +483,7 @@ returnValueToDescription :: (ToJSON a) => a -> Text
 returnValueToDescription example = do
   let exampleTxt = toJ example
   let fmt = "You must return the output in a format like the following: " <> mkToolCallSyntax ToolReturn exampleTxt
-  fmt <> " \n You must either return a value or call a tool. Because you're part of an automated process, you cannot prompt the user for information, so panic if you don't know how to proceed."
+  fmt <> " \n You must either return a value or call a tool. Because you're part of an automated process, you cannot prompt the user for information, so panic if you don't know how to proceed. Please do NOT use ```json syntax, as it's not supported."
 
 toolsToDescription :: [Tool] -> Text
 toolsToDescription tools = toolSummary <> "\nAll available tools: \n" <> T.unlines (map toolToDescription tools) <> "\n Multiple tool calls are supported, you can either do ToolName=<[{jsonArgs}]>, ToolName=<[{otherJsonArgs}]>, or ToolName=<[{jsonArgs}, {otherJsonArgs}]>; both are supported. (Replace ToolName here with the actual name of a tool; ToolName itself is not a tool!). Remember that the latest state of the files to modify is in the OpenFiles section. Please include one SummariseAction call in each response to capture your intent, and try to limit the number of file edits/modifications per response, to minimise the number of potential compilation errors/unit test failures that need to be fixed at once."
@@ -831,6 +845,7 @@ processToolArgs rawTexts tool@ToolInsertInFile args = ToolCallInsertInFile <$> p
 processToolArgs rawTexts tool@ToolRevertFile args = ToolCallRevertFile <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolSummariseAction args = ToolCallSummariseAction <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolFileLineOp args = ToolCallFileLineOp <$> processArgsOfType tool rawTexts args
+processToolArgs rawTexts tool@ToolAddDependency args = ToolCallAddDependency <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolPanic args = ToolCallPanic <$> processArgOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolReturn args = ToolCallReturn <$> processArgOfType tool rawTexts args
 
@@ -1175,6 +1190,19 @@ runTool _ (ToolCallRevertFile args) origCtxt = do
       Nothing
       ctxt
   foldlM (\acc f -> f acc) initialCtxt ctxtUpdates
+runTool _ (ToolCallAddDependency args) origCtxt = do
+  ctxtUpdates <- forM args $ \(AddDependencyArg depName) -> pure $ \ctxt -> do
+    res <- BS.addDependency @bs depName
+    case res of
+      Nothing -> do
+        let msg = "Successfully added dependency " <> depName
+        liftIO $ Logging.logInfo "AddDependency" msg
+        pure $ mkSuccess ctxt OtherMsg msg (EvtAddDependency depName Succeeded)
+      Just err -> do
+        let errMsg = "Failed to add dependency " <> depName <> " due to error " <> err
+        liftIO $ Logging.logInfo "AddDependency" errMsg
+        pure $ mkError ctxt OtherMsg errMsg (EvtAddDependency depName (FailedWithError errMsg))
+  foldlM (\acc f -> f acc) origCtxt ctxtUpdates
 runTool _ (ToolCallSummariseAction args) ctxt = pure $ foldl (\acc evt -> addEvtToContext acc (EvtAiAction evt)) ctxt args 
 runTool _ (ToolCallPanic arg) _ = throwError $ "AI panicked due to reason= " <> show arg
 runTool _ (ToolCallReturn arg) ctxt = pure $ addToContextUser ctxt OtherMsg ("Attempted to return value: " <> show arg)

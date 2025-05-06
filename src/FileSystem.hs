@@ -2,7 +2,7 @@
 
 module FileSystem (replaceInFile, readFileToText, readFileToTextMayThrow, readFileToTextAndOpen, appendToFile, ensureLineNumbers, toFilePath, getFileNames, fileExistsOnDisk, clearFileOnDisk, runProcessWithTimeout, getFileNamesRecursive, handleExitCode, runAll, gitInit, gitAddAndCommit, ensureNoLineNumbers, addLineNumbersToText, addTenthLineNumbersToText, updateOpenedFile, reloadOpenFiles, gitSetupUser, gitRevertFile, tryFileOp, checkBinaryOnPath) where
 
-import Control.Concurrent.Async (concurrently)
+import Control.Concurrent.Async (concurrently) 
 import Control.Exception (IOException, bracket, try)
 import Control.Monad (foldM)
 import Control.Monad.Catch qualified as Catch
@@ -402,7 +402,13 @@ runProcessWithTimeout timeout workDir newEnv cmd args = do
       Proc.terminateProcess ph
 
 handleExitCode :: Text -> Either Text (Exit.ExitCode, Text, Text) -> IO (Either Text ())
-handleExitCode opName res = do
+handleExitCode opName res = handleExitCodeInner opName (Just maxErrLinesToShow) res
+
+handleExitCodeInner :: Text -> Maybe Int -> Either Text (Exit.ExitCode, Text, Text) -> IO (Either Text ())
+handleExitCodeInner opName mayMaxLinesToShow res = do
+  let maybeTruncateText = case mayMaxLinesToShow of
+        Just maxLines -> truncateText maxLines
+        Nothing -> id
   case res of
     Left err -> pure $ Left err
     Right (exitCode, stdoutRes, stderrRes) ->
@@ -416,9 +422,9 @@ handleExitCode opName res = do
             <> " with exit code "
             <> show code
             <> "\nstdout:\n"
-            <> truncateText maxErrLinesToShow stdoutRes
+            <> maybeTruncateText stdoutRes
             <> "\nstderr:\n"
-            <> truncateText maxErrLinesToShow stderrRes
+            <> maybeTruncateText stderrRes
 
 gitInit :: FilePath -> IO (Either Text ())
 gitInit path = DIR.withCurrentDirectory path $ do

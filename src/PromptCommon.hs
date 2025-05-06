@@ -415,7 +415,7 @@ makeRefactorFileTask background initialDeps fileName desiredChanges refactorUnit
   let dependencies = [(fileName, Tools.DoFocusOpenedFile), (journalFileName, Tools.DoFocusOpenedFile)] ++ map (\(x, shouldFocus) -> (x.existingFileName, shouldFocus)) initialDeps
   forM_ dependencies $ \(x, shouldFocus) -> Tools.openFile @bs shouldFocus x cfg
   let makeChange description = do
-        let ctxt = makeBaseContext background $ "Your task is to refactor the file " <> fileName <> " to make the change: " <> show description
+        let ctxt = makeBaseContext background $ "Your task is to refactor the file " <> fileName <> " to make the change: " <> (summary description) <> ". Do NOT make other changes yet."
             exampleChange = ModifiedFile "someFile.go" "Update the file to add ... so that it ..."
             validateChange = Engine.combineValidatorsSameRes validateAlwaysPassIfCompileTestsFine (validateFileModifiedWithAi @bs fileName)
         liftIO $ putTextLn $ "Running file modification task: " <> show description
@@ -641,7 +641,7 @@ makeTargetedRefactorProject projectTexts refactorCfg = do
                 <> " to achieve the objective: "
                 <> rCfg.refactorTask
                 <> "."
-                <> "Each task should list other task dependencies if any, and there should be no circular dependencies."
+                <> "Each task should list other task dependencies if any, and there should be no circular dependencies. Don't include tasks like running the build system and unit tests; they will run automatically after file changes."
                 <> "If there's something relevant for later that you can't encode well in the return value, please AppendFile=<[{\"fileName\": \"journal.txt\", \"rawTextName\": \"journalUpdateTextBoxName\"}]> it to the journal."
             taskBackground = background <> "\nYour task for this file is: " <> rCfg.refactorTask
             getChangesTask fileName = Engine.runAiFunc @bs (mkCtxt fileName) HighIntelligenceRequired (Tools.ToolAppendFile : Engine.readOnlyTools) exampleTasks validateThingsWithDependencies (configTaskMaxFailures cfg)
@@ -682,6 +682,7 @@ makeFileAnalysisProject projectTexts = do
   let background = projectTexts.projectSummaryText
       setupOpenFile fileName = do
         modify' clearOpenFiles
+        forM_ sourceFileNames $ \x -> Tools.openFile @bs Tools.DontFocusOpenedFile x cfg
         Tools.openFile @bs Tools.DoFocusOpenedFile fileName cfg
       getSummary :: Text -> AppM (Text, FileAnalysisResult)
       getSummary fileName = do
@@ -1233,9 +1234,10 @@ makePromptResponseProject projectTexts = do
 
     -- Prepare the context background including project summary
     let baseBackground = projectTexts.projectSummaryText
-        assistantRole = "You are a helpful AI assistant aware of the project context (source files listed above). Please respond directly and concisely to the user's input below."
+        --assistantRole = "You are a helpful AI assistant aware of the project context (source files listed above). Please respond directly and concisely to the user's input below."
         -- Combine project summary and assistant role for the final background
-        background = baseBackground <> "\n\n" <> assistantRole
+        --background = baseBackground <> "\n\n" <> assistantRole
+        background = baseBackground
 
         tools = Engine.allTools
         -- Example response for the LLM call structure.
@@ -1245,6 +1247,8 @@ makePromptResponseProject projectTexts = do
     liftIO $ putTextLn "Enter your text prompt below (end input with an empty line)."
     liftIO $ putTextLn "Press Ctrl+C to exit the application."
 
+    contextRef <- liftIO $ newIORef Nothing
+
     -- Loop indefinitely until user interruption (e.g., Ctrl+C)
     forever $ do
         -- Read potentially multi-line input from the user
@@ -1252,13 +1256,17 @@ makePromptResponseProject projectTexts = do
 
         -- Only proceed if the user entered some text
         unless (null userLines) $ do
+
+            mCurrentCtxt <- liftIO $ readIORef contextRef
             let userTask = T.unlines userLines
                 -- Use the pre-computed background
-                ctxt = makeBaseContext background userTask
+                ctxtForThisTurn = case mCurrentCtxt of
+                  Just existingCtxt -> addToContextUser existingCtxt OtherMsg userTask
+                  Nothing -> makeBaseContext background userTask
 
             -- No validation needed beyond successful JSON parsing, hence Engine.validateAlwaysPass.
-            llmResult <- Engine.runAiFunc @bs
-                           ctxt
+            (llmResult, ctxtAfter) <- Engine.runAiFuncKeepingContext @bs
+                           ctxtForThisTurn
                            MediumIntelligenceRequired -- Adjust intelligence as needed
                            tools
                            exampleResp
@@ -1268,3 +1276,4 @@ makePromptResponseProject projectTexts = do
             -- Print the LLM's response
             liftIO $ putTextLn $ "\nLLM Response:\n" <> llmResult.response
             liftIO $ putTextLn "" -- Add spacing before the next prompt
+            liftIO $ writeIORef contextRef (Just ctxtAfter)

@@ -22,7 +22,7 @@ import Relude
 import Tools qualified
 
 allTools :: [Tools.Tool]
-allTools = [Tools.ToolOpenFile, Tools.ToolFocusFile, Tools.ToolCloseFile, Tools.ToolAppendFile, Tools.ToolInsertInFile, Tools.ToolEditFileByMatch, Tools.ToolSummariseAction, Tools.ToolPanic, Tools.ToolReturn]
+allTools = [Tools.ToolOpenFile, Tools.ToolFocusFile, Tools.ToolCloseFile, Tools.ToolAppendFile, Tools.ToolInsertInFile, Tools.ToolEditFileByMatch, Tools.ToolAddDependency, Tools.ToolSummariseAction, Tools.ToolPanic, Tools.ToolReturn]
 
 readOnlyTools :: [Tools.Tool]
 readOnlyTools = [Tools.ToolOpenFile, Tools.ToolFocusFile, Tools.ToolCloseFile, Tools.ToolSummariseAction, Tools.ToolPanic, Tools.ToolReturn]
@@ -113,11 +113,10 @@ handleConsecutiveCompileFailures origCtxt = do
       -- 1. Check for Progress
       let progressCheckContext = makeBaseContext origCtxt.contextBackground $
             "The last " <> show (length recentErrors) <> " compilation attempts failed. Please analyze the error messages to determine if any progress is being made (e.g., different errors, fewer errors, fixing previous issues).\n" <>
-            "Recent Errors (newest last):\n" <> T.unlines (map (\(i, e) -> T.pack (show i) <> ": " <> truncateText 5 e) $ zip [1..] recentErrors) <> "\n" <>
+            "Recent Errors (newest last):\n" <> T.unlines (map (\(i :: Int, e) -> T.pack (show i) <> ": " <> truncateText 5 e) $ zip [1..] recentErrors) <> "\n" <>
             "Current Error:\n" <> currentError <> "\n"
           exampleProgress = CompileProgressResult True "Syntax error fixed, now facing a type error."
-
-      progressResult <- runAiFunc @bs progressCheckContext LowIntelligenceRequired readOnlyTools exampleProgress validateAlwaysPass (configTaskMaxFailures cfg)
+      (progressResult, _) <- runAiFuncInner @bs IsNestedAiFuncTrue IsCloseFileTaskFalse progressCheckContext LowIntelligenceRequired readOnlyTools exampleProgress validateAlwaysPass (configTaskMaxFailures cfg)
 
       if progressResult.progressMade
         then do
@@ -139,7 +138,7 @@ handleConsecutiveCompileFailures origCtxt = do
                 "Please identify a small list of file names that are most relevant to understanding and fixing this error (e.g., the file with the error, files defining types/functions mentioned in the error)."
               exampleRelevantFiles = RelevantFilesResult ["main.go", "utils.go"]
 
-          relevantFilesResult <- runAiFunc @bs relevantFilesContext HighIntelligenceRequired readOnlyTools exampleRelevantFiles validateRelevantFilesExist (configTaskMaxFailures cfg)
+          (relevantFilesResult, _) <- runAiFuncInner @bs IsNestedAiFuncTrue IsCloseFileTaskFalse relevantFilesContext HighIntelligenceRequired readOnlyTools exampleRelevantFiles validateRelevantFilesExist (configTaskMaxFailures cfg)
 
           -- 3. Get Solution Plan (using a temporary context/state view for file focus)
           -- We don't modify the main state here, just the context view for the AI call.
@@ -161,7 +160,7 @@ handleConsecutiveCompileFailures origCtxt = do
              Tools.openFile @bs Tools.DoFocusOpenedFile fn cfg
 
           -- Now call the AI with the files focused in the actual state
-          solutionResult <- runAiFunc @bs solutionContext HighIntelligenceRequired readOnlyTools exampleSolution validateAlwaysPass (configTaskMaxFailures cfg)
+          (solutionResult, _) <- runAiFuncInner @bs IsNestedAiFuncTrue IsCloseFileTaskFalse solutionContext HighIntelligenceRequired readOnlyTools exampleSolution validateAlwaysPass (configTaskMaxFailures cfg)
 
           if solutionResult.hasSolution
             then do
@@ -261,22 +260,23 @@ mergeAdjacentRoleMessages (msg1 : msg2 : rest)
        in mergeAdjacentRoleMessages (mergedMsg : rest)
   | otherwise = msg1 : mergeAdjacentRoleMessages (msg2 : rest)
 
-getTask :: AppState -> IsCloseFileTask -> Text -> Text
-getTask st isCloseFileTask mainTask = do
+getTask :: AppState -> IsNestedAiFunc -> IsCloseFileTask -> Text -> Text
+getTask st isNestedAiFunc isCloseFileTask mainTask = do
   let res = stateCompileTestRes st
-  "YOUR CURRENT TASK: " <> case (compileRes res, testRes res, isCloseFileTask) of
-    (_, _, IsCloseFileTaskTrue) -> "Please close the least important open file, to free up space in the context. The task you were working on when the context got too large is as follows; you should close the file least relevant to it: " <> mainTask
-    (Nothing, Nothing, IsCloseFileTaskFalse) -> mainTask
-    (Just _, _, IsCloseFileTaskFalse) -> "Fix the project build error. The error is described above. The task you were working on when compilation failed:\n " <> mainTask
-    (Nothing, Just _, IsCloseFileTaskFalse) -> "Fix the error that occurred building or running the tests. The error is described above. The task you were working on when compilation failed:\n " <> mainTask
+  "YOUR CURRENT TASK: " <> case (compileRes res, testRes res, isCloseFileTask, isNestedAiFunc) of
+    (_, _, IsCloseFileTaskTrue, _) -> "Please close the least important open file, to free up space in the context. The task you were working on when the context got too large is as follows; you should close the file least relevant to it: " <> mainTask
+    (Nothing, Nothing, IsCloseFileTaskFalse, _) -> mainTask
+    (Just _, _, IsCloseFileTaskFalse, IsNestedAiFuncFalse) -> "Fix the project build error. The error is described above. The task you were working on when compilation failed:\n " <> mainTask
+    (Nothing, Just _, IsCloseFileTaskFalse, IsNestedAiFuncFalse) -> "Fix the error that occurred building or running the tests. The error is described above. The task you were working on when compilation failed:\n " <> mainTask
+    (_, _, IsCloseFileTaskFalse, IsNestedAiFuncTrue) -> mainTask
 
-contextToMessages :: forall bs a. (BS.BuildSystem bs, ToJSON a) => Context -> [Tools.Tool] -> AppState -> IsCloseFileTask -> a -> AppM [Message]
-contextToMessages Context {..} tools theState isCloseFileTask exampleReturn = do
+contextToMessages :: forall bs a. (BS.BuildSystem bs, ToJSON a) => Context -> [Tools.Tool] -> AppState -> IsNestedAiFunc -> IsCloseFileTask -> a -> AppM [Message]
+contextToMessages Context {..} tools theState isNestedAiFunc isCloseFileTask exampleReturn = do
   openFilesDesc <- getOpenFilesDesc
   compileTestResDesc <- compileTestDesc $ stateCompileTestRes theState
   let messagesToUse = takeEnd (numOldMessagesToKeepInContext + 1) contextRest
       messages = map snd messagesToUse
-      taskDesc = getTask theState isCloseFileTask contextTask
+      taskDesc = getTask theState isNestedAiFunc isCloseFileTask contextTask
       returnValueDesc = Tools.returnValueToDescription exampleReturn
       allTexts =
         [ contextBackground,
@@ -284,10 +284,10 @@ contextToMessages Context {..} tools theState isCloseFileTask exampleReturn = do
           openFilesDesc,
           evtsDesc,
           toolDesc,
-          returnValueDesc,
           compileTestResDesc,
           taskDesc,
-          respReqsDesc
+          respReqsDesc,
+          returnValueDesc
         ]
    in pure $ mergeAdjacentRoleMessages $ Message {role = roleName RoleUser, content = T.unlines allTexts} : messages
   where
@@ -303,7 +303,7 @@ contextToMessages Context {..} tools theState isCloseFileTask exampleReturn = do
     getOpenFilesDesc :: AppM Text
     getOpenFilesDesc = do
       renderedFiles <- mapM (renderOpenFile render) $ stateOpenFiles theState
-      pure $ "All currently open files (note these always represent the latest version on disk, even though they may appear in the context before the messages containing changes made to them): \n " <> unlines renderedFiles
+      pure $ "All currently open files (note these always represent the latest version on disk, even though they may appear in the context before the messages containing changes made to them. Also note that unfocused source files only show datatype and function definitions, not bodies, to save space in context):\n\n" <> unlines renderedFiles
     filesDesc = "All available files: \n " <> unlines (map renderExistingFile $ stateFiles theState)
     compileTestDesc ctRes = do
       let compDesc = case ctRes.compileRes of
@@ -411,6 +411,9 @@ validateFileClosed ctxt fc@(FileClosed fileName) = do
 data IsCloseFileTask = IsCloseFileTaskTrue | IsCloseFileTaskFalse
   deriving (Eq, Ord, Show)
 
+data IsNestedAiFunc = IsNestedAiFuncTrue | IsNestedAiFuncFalse
+  deriving (Eq, Ord, Show)
+
 toolCallsMissingRequiredSummary :: [(Tools.Tool, [AET.Object])]  -> Bool
 toolCallsMissingRequiredSummary calls = do
   let tools = map fst calls
@@ -426,11 +429,26 @@ runAiFunc ::
   (Context -> a -> AppM (Either (MsgKind, Text) b)) ->
   RemainingFailureTolerance ->
   AppM b
-runAiFunc = runAiFuncInner @bs IsCloseFileTaskFalse
+runAiFunc ctxt intReq tools example postProcessor failureTolerance = do
+  (res, _) <- runAiFuncInner @bs IsNestedAiFuncFalse IsCloseFileTaskFalse ctxt intReq tools example postProcessor failureTolerance
+  return res
+
+runAiFuncKeepingContext ::
+  forall bs a b.
+  (FromJSON a, ToJSON a, Show a, BS.BuildSystem bs) =>
+  Context ->
+  IntelligenceRequired ->
+  [Tools.Tool] ->
+  a ->
+  (Context -> a -> AppM (Either (MsgKind, Text) b)) ->
+  RemainingFailureTolerance ->
+  AppM (b, Context)
+runAiFuncKeepingContext = runAiFuncInner @bs IsNestedAiFuncFalse IsCloseFileTaskFalse 
 
 runAiFuncInner ::
   forall bs a b.
   (FromJSON a, ToJSON a, Show a, BS.BuildSystem bs) =>
+  IsNestedAiFunc ->
   IsCloseFileTask ->
   Context ->
   IntelligenceRequired ->
@@ -438,12 +456,12 @@ runAiFuncInner ::
   a ->
   (Context -> a -> AppM (Either (MsgKind, Text) b)) ->
   RemainingFailureTolerance ->
-  AppM b
-runAiFuncInner isCloseFileTask initialCtxt intReq tools exampleReturn postProcessor remainingErrs = do
+  AppM (b, Context)
+runAiFuncInner isNestedAiFunc isCloseFileTask initialCtxt intReq tools exampleReturn postProcessor remainingErrs = do
   when (remainingErrs <= 0) $ throwError "Aborting as reached max number of errors"
   when (notElem Tools.ToolReturn tools) $ throwError "Missing Return tool!"
   when ((any Tools.isMutation tools) && notElem Tools.ToolSummariseAction tools) $ throwError "Missing SummariseAction tool!"
-  origCtxt <- runActionWithoutModifyingState $ handleConsecutiveCompileFailures @bs initialCtxt
+  origCtxt <- if isNestedAiFunc == IsNestedAiFuncTrue then pure initialCtxt else runActionWithoutModifyingState $ handleConsecutiveCompileFailures @bs initialCtxt
   cfg <- ask
   theState <- get
   let -- (RemainingFailureTolerance failureToleranceInt) = configTaskMaxFailures cfg
@@ -453,7 +471,7 @@ runAiFuncInner isCloseFileTask initialCtxt intReq tools exampleReturn postProces
       truncateOldAiMessages = truncateOldMessages "assistant" numRecentAiMessagesNotToTruncate shortenedMessageLength
       aiTruncatedCtxt = updateContextMessages origCtxt' truncateOldAiMessages
       ctxt = updateContextMessages aiTruncatedCtxt shortenOldErrorMessages
-  messages <- contextToMessages @bs ctxt tools theState isCloseFileTask exampleReturn
+  messages <- contextToMessages @bs ctxt tools theState isNestedAiFunc isCloseFileTask exampleReturn
   (res, queryStats) <- runPromptWithSyntaxErrorCorrection intReq tools exampleReturn messages
   when (prompt_tokens queryStats > configModelMaxInputTokens cfg && isCloseFileTask == IsCloseFileTaskFalse) $ do
     st <- get
@@ -467,7 +485,7 @@ runAiFuncInner isCloseFileTask initialCtxt intReq tools exampleReturn postProces
         fileCloseContext = (addErrorToContext baseCtxt msg OtherMsg)
         maxErrs = configTaskMaxFailures cfg
     liftIO $ Logging.logInfo "ContextReduction" $ "Telling model to reduce context size; msg: " <> msg
-    closedFile <- runAiFuncInner @bs IsCloseFileTaskTrue fileCloseContext MediumIntelligenceRequired [Tools.ToolCloseFile, Tools.ToolReturn] fileClosedRes validateFileClosed maxErrs
+    closedFile <- runAiFuncInner @bs isNestedAiFunc IsCloseFileTaskTrue fileCloseContext MediumIntelligenceRequired [Tools.ToolCloseFile, Tools.ToolReturn] fileClosedRes validateFileClosed maxErrs
     liftIO $ Logging.logInfo "ContextReduction" $ "Successfully closed file: " <> show closedFile
   liftIO $ Logging.logInfo "AiResponse" (show res)
   let aiMsg = content res
@@ -481,9 +499,9 @@ runAiFuncInner isCloseFileTask initialCtxt intReq tools exampleReturn postProces
     (Right callsRaw, Right _) | toolCallsMissingRequiredSummary callsRaw -> addErrorAndRecurse ("Made state-changing tool calls but didn't include SummariseAction=<[{...}]> call") ctxtWithAiMsg SyntaxError OtherMsg
     (Right callsRaw, Right rawTextBlocks) | otherwise -> handleToolCalls ctxtWithAiMsg callsRaw rawTextBlocks
   where
-    recur recurCtxt remainingErrs' = runAiFuncInner @bs isCloseFileTask recurCtxt intReq tools exampleReturn postProcessor remainingErrs'
+    recur recurCtxt remainingErrs' = runAiFuncInner @bs isNestedAiFunc isCloseFileTask recurCtxt intReq tools exampleReturn postProcessor remainingErrs'
 
-    handleToolCalls :: Context -> [(Tools.Tool, [AET.Object])] -> Tools.RawTexts -> AppM b
+    handleToolCalls :: Context -> [(Tools.Tool, [AET.Object])] -> Tools.RawTexts -> AppM (b, Context)
     handleToolCalls ctxtWithAiMsg callsRaw rawTextBlocks =
       Tools.processToolsArgs callsRaw rawTextBlocks >>= \case
         (errs, []) -> addErrorAndRecurse ("Error in function calls/return logic: " <> T.intercalate "," errs) ctxtWithAiMsg SyntaxError OtherMsg
@@ -497,7 +515,8 @@ runAiFuncInner isCloseFileTask initialCtxt intReq tools exampleReturn postProces
           case (Tools.getReturn calls, numNewErrs + length errs > 0) of
             (Just ret, False) -> do
               liftIO $ Logging.logInfo "RunAiFunc" "Running validator/postprocessor to attempt return"
-              postProcessor finalCtxt ret >>= either (handleReturnError finalCtxt) pure
+              let addCtxt addedCtxt x = pure (x, addedCtxt)
+              postProcessor finalCtxt ret >>= either (handleReturnError finalCtxt) (addCtxt finalCtxt)
             _ -> recur finalCtxt (configTaskMaxFailures cfg)
 
     addErrorAndRecurse errMsg theCtxt errKind msgKind = do
@@ -513,7 +532,7 @@ runAiFuncInner isCloseFileTask initialCtxt intReq tools exampleReturn postProces
     addErrorToContext theCtx err msgKind =
       addToContext theCtx msgKind Message {role = roleName RoleUser, content = err}
 
-    handleReturnError :: Context -> (MsgKind, Text) -> AppM b
+    handleReturnError :: Context -> (MsgKind, Text) -> AppM (b, Context)
     handleReturnError theCtxt (kind, err) =
       addErrorAndRecurse ("Error with return value: " <> err) theCtxt SemanticError kind
 

@@ -176,6 +176,9 @@ instance BuildSystem CPlusPlusLang where
   minimiseFile _ = do
     throwError "File minimisation not supported for C++ yet"
 
+  addDependency _ = do
+    throwError "Dependency adding not supported for C++ yet"
+
 sampleTestFile :: Text
 sampleTestFile =
   [r|

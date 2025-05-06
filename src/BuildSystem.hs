@@ -15,6 +15,7 @@ class BuildSystem (a :: Type) where
   getIgnoredDirs :: AppM [Text]
   getFormatChecker :: Config -> AppM (IO (Maybe Text))
   minimiseFile :: Text -> AppM (Either Text Text)
+  addDependency :: Text -> AppM (Maybe Text)
 
 data NullBuildSystem = NullBuildSystem
 
@@ -26,3 +27,4 @@ instance BuildSystem NullBuildSystem where
   getIgnoredDirs = throwError "getIgnoredDirs called on NullBuildSystem"
   getFormatChecker _ = throwError "getFormatChecker called on NullBuildSystem"
   minimiseFile _ = throwError "minimiseFile called on NullBuildSystem"
+  addDependency _ = throwError "addDependency called on NullBuildSystem"

@@ -46,7 +46,8 @@ data TracedEvent =
   EvtCloseFile Text EventResult |
   EvtFileOp Text EventResult |
   EvtCompileProject EventResult |
-  EvtTestProject EventResult | 
+  EvtTestProject EventResult |
+  EvtAddDependency Text EventResult |
   EvtApproachCorrection Text
   deriving (Generic, Eq, Ord, Show)
 
