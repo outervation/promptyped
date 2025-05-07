@@ -7,6 +7,7 @@
 module Tools where
 
 import BuildSystem qualified as BS
+import TerminalInput qualified
 import Control.Monad.Except
 import Core
 import Data.Aeson as AE
@@ -25,16 +26,17 @@ import ShapeChecker (checkShapesMatch)
 import Text.Regex.Base (makeRegexM)
 import Text.Regex.TDFA (Regex, match)
 
-data Tool = ToolOpenFile | ToolFocusFile | ToolCloseFile | ToolAppendFile | ToolReplaceFile | ToolInsertInFile | ToolEditFile | ToolEditFileByMatch | ToolRevertFile | ToolFileLineOp | ToolAddDependency | ToolPanic | ToolSummariseAction | ToolReturn
+data Tool = ToolOpenFile | ToolFocusFile | ToolCloseFile | ToolAppendFile | ToolReplaceFile | ToolInsertInFile | ToolEditFile | ToolEditFileByMatch | ToolRevertFile | ToolFileLineOp | ToolAddDependency | ToolPanic | ToolEscalate | ToolSummariseAction | ToolReturn
   deriving (Eq, Ord, Show)
 
 isMutation :: Tool -> Bool
 isMutation ToolReturn = False
 isMutation ToolPanic = False
+isMutation ToolEscalate = False
 isMutation ToolSummariseAction = False
 isMutation _ = True
 
-data ToolCall a = ToolCallOpenFile [OpenFileArg] | ToolCallFocusFile [FocusFileArg] | ToolCallCloseFile [CloseFileArg] | ToolCallAppendFile [AppendFileArg] | ToolCallReplaceFile [AppendFileArg] | ToolCallEditFile [EditFileArg] | ToolCallEditFileByMatch [EditFileByMatchArg] | ToolCallRevertFile [RevertFileArg] | ToolCallInsertInFile [InsertInFileArg] | ToolCallFileLineOp [FileLineOpArg] | ToolCallAddDependency [AddDependencyArg]|  ToolCallPanic PanicArg | ToolCallSummariseAction [SummariseActionArg] | ToolCallReturn a
+data ToolCall a = ToolCallOpenFile [OpenFileArg] | ToolCallFocusFile [FocusFileArg] | ToolCallCloseFile [CloseFileArg] | ToolCallAppendFile [AppendFileArg] | ToolCallReplaceFile [AppendFileArg] | ToolCallEditFile [EditFileArg] | ToolCallEditFileByMatch [EditFileByMatchArg] | ToolCallRevertFile [RevertFileArg] | ToolCallInsertInFile [InsertInFileArg] | ToolCallFileLineOp [FileLineOpArg] | ToolCallAddDependency [AddDependencyArg]| ToolCallPanic PanicArg | ToolCallEscalate EscalateArg | ToolCallSummariseAction [SummariseActionArg] | ToolCallReturn a
   deriving (Generic, Eq, Ord, Show)
 
 instance (ToJSON a) => ToJSON (ToolCall a)
@@ -52,6 +54,7 @@ toolCallTool (ToolCallEditFileByMatch _) = ToolEditFileByMatch
 toolCallTool (ToolCallInsertInFile _) = ToolInsertInFile
 toolCallTool (ToolCallRevertFile _) = ToolRevertFile
 toolCallTool (ToolCallPanic _) = ToolPanic
+toolCallTool (ToolCallEscalate _) = ToolEscalate
 toolCallTool (ToolCallSummariseAction _) = ToolSummariseAction
 toolCallTool (ToolCallReturn _) = ToolReturn
 toolCallTool (ToolCallFileLineOp _) = ToolFileLineOp
@@ -123,6 +126,7 @@ mergeToolCalls =
           ]
         -- We do not merge these, so just leave them untouched:
         ToolCallPanic _ -> grp
+        ToolCallEscalate _ -> grp
         ToolCallReturn _ -> grp
 
 getFileName :: Object -> Maybe String
@@ -335,6 +339,14 @@ data PanicArg = PanicArg
 instance ToJSON PanicArg
 instance FromJSON PanicArg
 
+data EscalateArg = EscalateArg
+  { escalationReason :: Text
+  }
+  deriving (Generic, Show, Eq, Ord)
+
+instance ToJSON EscalateArg
+instance FromJSON EscalateArg
+
 toolName :: Tool -> Text
 toolName x = T.drop 4 $ show x
 
@@ -466,7 +478,8 @@ toolArgFormatAndDesc ToolEditFileByMatch = (toJ EditFileByMatchArg {fileName = "
 toolArgFormatAndDesc ToolInsertInFile = (toJ InsertInFileArg {fileName = "somefile.txt", lineNum = 17, rawTextName = "codeToInsertBox"}, mkSampleCodeBox "codeToInsertBox", "Insert the provided text into the file at lineNum, not replacing/overwriting the content on that line (instead it's moved to below the inserted text). Note that this cannot overlap with lines modified by an Edit tool, as order of operations is undefined.")
 toolArgFormatAndDesc ToolAddDependency = (toJ AddDependencyArg {dependencyName = "github.com/xitongsys/parquet-go"}, "", "Add the dependency in the appropriate manner for the build system. E.g. golang will go get dependencyName, Rust will cargo add dependencyName.")
 toolArgFormatAndDesc ToolRevertFile = (toJ RevertFileArg {fileName = "someFile.txt"}, "", "Revert un-added changes in an open file; changes are committed when compilation and unit tests succeed, so will revert to the last version of the file before compilation or unit tests failed. Use this if you get the file in a state you can't recover it from.")
-toolArgFormatAndDesc ToolPanic = (toJ PanicArg {reason = "This task is impossible for me to do because ..."}, "", "Call this if you can't complete the task due to it being impossible or not having enough information. Also call this if you want to add a new dependency that's not present, as currently there's no tool for you to do that.")
+toolArgFormatAndDesc ToolPanic = (toJ PanicArg {reason = "This task is impossible for me to do because ..."}, "", "Call this if you can't complete the task due to it being impossible or not having enough information. Also call this if the task needs a tool that you don't have.")
+toolArgFormatAndDesc ToolEscalate = (toJ PanicArg {reason = "I can't solve the compilation error _____ by myself, I've tried approaches foo, blah and blaz but nothing helped"}, "", "Call this if you need help with the task and are unable to do it yourself, to request help from a human or more powerful model.")
 toolArgFormatAndDesc ToolSummariseAction = (toJ SummariseActionArg {  actionSummary = "Adding the field blah to someType",
   actionReason = "The spec requires someType to have that field",
   actionFuturePlanSummary = "Implement functionality blaz that requires blah field on someType"}, "", "Call this once in every response that's not just a plain return, to allow keeping a record of your actions and future plans, to keep on track and avoid getting caught in cycles. Please keep the summary as brief as possible.")
@@ -847,6 +860,7 @@ processToolArgs rawTexts tool@ToolSummariseAction args = ToolCallSummariseAction
 processToolArgs rawTexts tool@ToolFileLineOp args = ToolCallFileLineOp <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolAddDependency args = ToolCallAddDependency <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolPanic args = ToolCallPanic <$> processArgOfType tool rawTexts args
+processToolArgs rawTexts tool@ToolEscalate args = ToolCallEscalate <$> processArgOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolReturn args = ToolCallReturn <$> processArgOfType tool rawTexts args
 
 processToolsArgsNoPartial :: (FromJSON a, Show a) => [(Tool, [AET.Object])] -> RawTexts -> AppM (Either Text [ToolCall a])
@@ -1205,6 +1219,14 @@ runTool _ (ToolCallAddDependency args) origCtxt = do
   foldlM (\acc f -> f acc) origCtxt ctxtUpdates
 runTool _ (ToolCallSummariseAction args) ctxt = pure $ foldl (\acc evt -> addEvtToContext acc (EvtAiAction evt)) ctxt args 
 runTool _ (ToolCallPanic arg) _ = throwError $ "AI panicked due to reason= " <> show arg
+runTool _ (ToolCallEscalate arg) ctxt = do
+  putTextLn $ "Escalation requested; please provide a solution to the following problem, terminating input with two newlines: "<> escalationReason arg
+  userLines <- liftIO TerminalInput.readLinesUntilEmpty
+  let userResp = T.unlines userLines
+      evt = EvtEscalation (escalationReason arg) userResp
+      ctxt' = (addToContextUser ctxt OtherMsg ("Supervisor provided the following response to escalation request: " <> userResp)) `addEvtToContext` evt
+  liftIO $ Logging.logInfo "Escalate" (show evt)
+  pure ctxt'
 runTool _ (ToolCallReturn arg) ctxt = pure $ addToContextUser ctxt OtherMsg ("Attempted to return value: " <> show arg)
 
 data MockCreatedFile = MockCreatedFile

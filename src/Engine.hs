@@ -44,7 +44,7 @@ maxConsecutiveCompileErrors :: Int
 maxConsecutiveCompileErrors = 5
 
 numRecentEventsToShow :: Int
-numRecentEventsToShow = 100
+numRecentEventsToShow = 50
 
 data CompileProgressResult = CompileProgressResult
   { progressMade :: Bool,
@@ -170,11 +170,8 @@ handleConsecutiveCompileFailures origCtxt = do
               -- Add the intervention message and event to the *original* context
               let updatedCtxt = addEvtToContext (addToContextUser origCtxt OtherMsg interventionMessage) (EvtApproachCorrection solutionResult.compileErrorSolution)
               pure updatedCtxt
-            else do
-              let abortMsg = "Aborting: Max consecutive compile errors (" <> show consecutiveFails <> ") reached without progress, and AI could not suggest a specific fix."
-              putTextLn abortMsg
-              liftIO $ Logging.logError "CompileFailureIntervention" abortMsg
-              throwError abortMsg
+            else Tools.runTool @bs @() [] (Tools.ToolCallEscalate (Tools.EscalateArg "Unable to fix compilation; please suggest how to fix it")) origCtxt
+
 
 updateStats :: GenerationStats -> UsageData -> Int64 -> AppM ()
 updateStats generation usage timeTaken = do

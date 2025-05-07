@@ -48,7 +48,8 @@ data TracedEvent =
   EvtCompileProject EventResult |
   EvtTestProject EventResult |
   EvtAddDependency Text EventResult |
-  EvtApproachCorrection Text
+  EvtApproachCorrection Text |
+  EvtEscalation Text Text
   deriving (Generic, Eq, Ord, Show)
 
 newtype RemainingFailureTolerance = RemainingFailureTolerance Int
