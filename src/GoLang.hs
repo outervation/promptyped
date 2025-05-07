@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes #-}
 
 module GoLang where
 
@@ -12,9 +11,9 @@ import Data.Time.Clock (NominalDiffTime, secondsToNominalDiffTime)
 import FileSystem (checkBinaryOnPath, gitInit, gitSetupUser, handleExitCode, runAll, runProcessWithTimeout, toFilePath, readFileToText)
 import Relude
 import System.Directory qualified as Dir
+import Data.List qualified as L
 import System.Exit qualified as Exit
 import System.FilePath qualified as FP
-import Text.RawString.QQ (r)
 
 maxTestFailLinesToShowFullOutput :: Int
 maxTestFailLinesToShowFullOutput = 600
@@ -26,8 +25,8 @@ eitherToMaybe _ = Nothing
 -- | Extracts Go test names from lines like "--- FAIL: TestName (duration)"
 -- Example input line: "--- FAIL: TestFeatureCursor_T1_Calculation (0.01s)"
 -- Example output: "TestFeatureCursor_T1_Calculation"
-extractFailedGoTests :: Text -> [Text]
-extractFailedGoTests output =
+extractFailedGoTestsSimple :: Text -> [Text]
+extractFailedGoTestsSimple output =
   mapMaybe parseFailLine (T.lines output)
   where
     parseFailLine :: Text -> Maybe Text
@@ -42,9 +41,73 @@ extractFailedGoTests output =
             _              -> Nothing -- Unexpected format after "--- FAIL:"
         Nothing -> Nothing -- Line doesn't start with "--- FAIL:" (after initial stripping)
 
+-- | Extracts Go test names from lines like "--- FAIL: TestName (duration)"
+-- | and from timeout reports like:
+-- |   panic: test timed out after 10s
+-- |           running tests:
+-- |                   TestRunApplication_BasicDataFlow (10s)
+extractFailedGoTests :: Text -> [Text]
+extractFailedGoTests output =
+  -- nub to remove duplicates, reverse because foldl' builds the list backwards
+  L.nub . reverse . snd $ foldl' processLine (False, []) (T.lines output)
+  where
+    -- State: (isCurrentlyParsingTimeoutList, accumulatedTests)
+    -- isCurrentlyParsingTimeoutList: True if we've seen "panic...running tests:" and expect indented test names.
+    processLine :: (Bool, [Text]) -> Text -> (Bool, [Text])
+    processLine (inTimeoutList, acc) currentLine =
+      let sCurrentLine = T.strip currentLine
+          hasLeadingSpace = T.length currentLine > T.length (T.stripStart currentLine)
+
+          -- 1. Accumulate tests from "--- FAIL:" lines. This happens independently.
+          accAfterFailCheck =
+            case T.stripPrefix "--- FAIL:" sCurrentLine of
+              Just restAfterFailMarker ->
+                case T.words (T.strip restAfterFailMarker) of
+                  (testName : _) -> testName : acc
+                  _              -> acc -- Malformed "--- FAIL:"
+              Nothing -> acc
+
+          -- 2. Handle timeout logic and determine the next state for inTimeoutList.
+          (nextInTimeoutList, finalAcc) =
+            if T.pack "panic: test timed out" `T.isInfixOf` currentLine then
+              -- This line starts a new timeout sequence.
+              -- The accumulator (accAfterFailCheck) already includes any "--- FAIL:" from this exact line (unlikely).
+              (True, accAfterFailCheck)
+            else if inTimeoutList then
+              -- We are currently in a timeout sequence (because a previous line was a "panic").
+              if hasLeadingSpace then
+                -- This line is indented. It might be "running tests:" or a timed-out test name.
+                if T.pack "running tests:" == sCurrentLine then
+                  (True, accAfterFailCheck) -- Confirmed "running tests:", stay in timeout list.
+                else if not (T.null sCurrentLine) && -- Ensure not an empty stripped line
+                         T.last sCurrentLine == ')' &&
+                         T.isInfixOf (T.pack "(") sCurrentLine &&
+                         not (T.pack "--- FAIL:" `T.isInfixOf` sCurrentLine) then -- Make sure it's not a --- FAIL line
+                  -- This looks like an indented test name, e.g., "TestName (duration)"
+                  case T.splitOn (T.pack "(") sCurrentLine of
+                    (namePart : _) ->
+                      let testName = T.strip namePart
+                      in if not (T.null testName) then
+                           (True, testName : accAfterFailCheck) -- Add timed-out test, stay in list.
+                         else
+                           (True, accAfterFailCheck) -- Empty name part, stay in list.
+                    _ -> (True, accAfterFailCheck) -- No '(', stay in list (should be caught by isInfixOf).
+                else
+                  -- Indented line, but not "running tests:" or a recognized test name format.
+                  -- Assume it's other log output within the timeout block; stay in the timeout list.
+                  (True, accAfterFailCheck)
+              else
+                -- Unindented line while inTimeoutList: this terminates the current timeout test list.
+                (False, accAfterFailCheck)
+            else
+              -- Not a "panic" line, and not currently in a timeout list.
+              (False, accAfterFailCheck)
+
+      in (nextInTimeoutList, finalAcc)
+
 tmpp :: IO [Text]
 tmpp = do
-  contents <- readFileToText "/home/dfxs/tmpout.txt"
+  contents <- readFileToText "/home/dfxs/tmpout2.txt"
   --putTextLn contents
   return $ extractFailedGoTests contents
 
@@ -93,7 +156,7 @@ setupDirectoryGo cfg projectCfg = do
 
     addDocs :: IO (Either Text ())
     addDocs = do
-      forM_ (projectInitialFiles projectCfg) $ \(name, txt) -> TIO.writeFile name txt
+      forM_ (projectInitialFiles projectCfg) $ uncurry TIO.writeFile
       TIO.writeFile "main.go" "package main \n \n func main() { }"
       return $ Right ()
 
@@ -123,13 +186,18 @@ buildProjectGo timeout dir newEnv = Dir.withCurrentDirectory dir $ do
   let buildIt = do
         buildResult <- runProcessWithTimeout timeout "." newEnv "go" ["build", "./..."]
         handleExitCode "'go build'" buildResult
+      buildTests = do
+        let lineToSkip x = "no tests to run" `T.isInfixOf` x || "no test files" `T.isInfixOf` x
+            removeNoTestLines txt = unlines $ filter (not . lineToSkip) $ lines txt
+        buildTestsResult <- runProcessWithTimeout timeout "." newEnv "go" ["test", "-run=^$", "./..."]
+        first removeNoTestLines <$> handleExitCode "'go test -run=^$'" buildTestsResult
       fmtIt = do
         fmtResult <- runProcessWithTimeout timeout "." newEnv "go" ["fmt", "./..."]
         handleExitCode "'go fmt'" fmtResult
       generateIt = do
         generateResult <- runProcessWithTimeout timeout "." newEnv "go" ["generate", "./..."]
         handleExitCode "'go generate'" generateResult
-  eitherToMaybe <$> runAll [generateIt, buildIt, fmtIt]
+  eitherToMaybe <$> runAll [generateIt, buildIt, buildTests, fmtIt]
 
 runTestsGoOld ::
   -- | Timeout in seconds
@@ -151,7 +219,7 @@ runTestsGo ::
   IO (Maybe Text)
 runTestsGo timeout dir newEnv = Dir.withCurrentDirectory dir $ do
   putTextLn $ "Running initial Go tests in dir " <> toText dir
-  let initialArgs = ["test", "-timeout", "30s", "./..."] 
+  let initialArgs = ["test", "-timeout", "10s", "./..."] 
   initialTestResult <- runProcessWithTimeout timeout "." newEnv "go" initialArgs
 
   case initialTestResult of
@@ -169,7 +237,7 @@ runTestsGo timeout dir newEnv = Dir.withCurrentDirectory dir $ do
           let opNameInitial = "'go test ./...'" 
 
           if totalLines <= maxTestFailLinesToShowFullOutput then do
-            putTextLn $ "Initial Go tests failed. Output is small, reporting directly."
+            putTextLn "Initial Go tests failed. Output is small, reporting directly."
             eitherToMaybe <$> handleExitCode opNameInitial (Right (initialExitCode, initialStdout, initialStderr))
           else do
             putTextLn $ "Initial Go tests failed. Output has " <> T.pack (show totalLines) <> " lines. Attempting to extract and re-run just one test."
@@ -181,6 +249,7 @@ runTestsGo timeout dir newEnv = Dir.withCurrentDirectory dir $ do
                 let err = "Could not extract specific failed test names (might be a compile error or different output format). Please panic!"
                 pure $ Just err
                 --pure $ eitherToMaybe $ handleExitCode opNameInitial (initialExitCode, initialStdout, initialStderr)
+              [_] -> eitherToMaybe <$> handleExitCode opNameInitial (Right (initialExitCode, initialStdout, initialStderr))
 
               tests -> do
                 -- Go's -run flag takes a regex. Join test names with '|' for an OR match.
@@ -189,7 +258,7 @@ runTestsGo timeout dir newEnv = Dir.withCurrentDirectory dir $ do
                 -- but typically Go test names are alphanumeric + underscores.
                 -- For simplicity, we assume test names don't need further regex escaping here.
                 let runRegex = "^(" <> T.intercalate "|" tests <> ")$"
-                let rerunArgs = ["test", "-run", T.unpack runRegex, "-timeout", "30s", "./..."] 
+                let rerunArgs = ["test", "-run", T.unpack runRegex, "-timeout", "10s", "./..."] 
                 let opNameRerun = "'go test -run=" <> runRegex <> "'"
 
                 putTextLn $ "Re-running failed tests with: go " <> unwords (map T.pack rerunArgs)
@@ -217,7 +286,7 @@ minimiseGoFileIO baseDir path env = Dir.withCurrentDirectory baseDir $ do
   let timeout = 5
   res <- runProcessWithTimeout timeout "." env "gofile_summariser" [path]
   case res of
-    Left err -> pure . Left $ "Error minimising Go file " <> (T.pack path) <> ": " <> err
+    Left err -> pure . Left $ "Error minimising Go file " <> T.pack path <> ": " <> err
     Right (exitCode, stdoutRes, stderrRes) ->
       case exitCode of
         Exit.ExitSuccess -> pure $ Right stdoutRes
@@ -225,7 +294,7 @@ minimiseGoFileIO baseDir path env = Dir.withCurrentDirectory baseDir $ do
           pure
             . Left
             $ "Failed to minimise go file "
-            <> (T.pack path)
+            <> T.pack path
             <> " with exit code "
             <> show code
             <> "\nstdout:\n"
@@ -239,7 +308,7 @@ minimiseGoFile path = do
   envVars <- getEnvVars
   unless (isGoFileExtension path) $ throwError $ "Error: can only minimise Go source files, not " <> path
   minimiserExists <- liftIO $ checkBinaryOnPath "gofile_summariser" envVars
-  unless minimiserExists $ throwError $ "Error: missing gofile_summariser binary on path; need to go install https://github.com/outervation/gofile_summariser"
+  unless minimiserExists $ throwError "Error: missing gofile_summariser binary on path; need to go install https://github.com/outervation/gofile_summariser"
   let baseDir = configBaseDir cfg
       filePath = toFilePath cfg path
   res <- liftIO $ minimiseGoFileIO baseDir filePath envVars

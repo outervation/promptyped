@@ -264,10 +264,10 @@ getTask :: AppState -> IsNestedAiFunc -> IsCloseFileTask -> Text -> Text
 getTask st isNestedAiFunc isCloseFileTask mainTask = do
   let res = stateCompileTestRes st
   "YOUR CURRENT TASK: " <> case (compileRes res, testRes res, isCloseFileTask, isNestedAiFunc) of
-    (_, _, IsCloseFileTaskTrue, _) -> "Please close the least important open file, to free up space in the context. The task you were working on when the context got too large is as follows; you should close the file least relevant to it: " <> mainTask
+    (_, _, IsCloseFileTaskTrue, _) -> "Please close the least important open file, to free up space in the context. The task you were working on when the context got too large is as follows; you should close the file least relevant to it: " <> mainTask 
     (Nothing, Nothing, IsCloseFileTaskFalse, _) -> mainTask
-    (Just _, _, IsCloseFileTaskFalse, IsNestedAiFuncFalse) -> "Fix the project build error. The error is described above. The task you were working on when compilation failed:\n " <> mainTask
-    (Nothing, Just _, IsCloseFileTaskFalse, IsNestedAiFuncFalse) -> "Fix the error that occurred building or running the tests. The error is described above. The task you were working on when compilation failed:\n " <> mainTask
+    (Just _, _, IsCloseFileTaskFalse, IsNestedAiFuncFalse) -> "Fix the project build error. The error is described above. The task you were working on when compilation failed (don't work on it now, just fix the build):\n\"" <> mainTask <> "\""
+    (Nothing, Just _, IsCloseFileTaskFalse, IsNestedAiFuncFalse) -> "Fix the error that occurred building or running the tests. The error is described above. The task you were working on when compilation failed (don't work on it now, just fix the tests):\n\"" <> mainTask <> "\""
     (_, _, IsCloseFileTaskFalse, IsNestedAiFuncTrue) -> mainTask
 
 contextToMessages :: forall bs a. (BS.BuildSystem bs, ToJSON a) => Context -> [Tools.Tool] -> AppState -> IsNestedAiFunc -> IsCloseFileTask -> a -> AppM [Message]
