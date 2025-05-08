@@ -9,9 +9,11 @@ module Tools where
 import BuildSystem qualified as BS
 import TerminalInput qualified
 import Control.Monad.Except
+import Control.Monad (foldM)
 import Core
 import Data.Aeson as AE
 import Data.Aeson.KeyMap qualified as KM
+import Data.Map qualified as M
 import Data.Aeson.Types qualified as AET
 import Data.ByteString.Lazy qualified as LBS
 import Data.List as L
@@ -647,6 +649,89 @@ parseRawTexts input = go input []
 tmpp :: Text
 tmpp = "EditFileByMatch=<[{\n  \"fileName\": \"binanceFuturesSubscriber_test.go\",\n  \"startClosestToLineNum\": 273,\n  \"startLineMatchesRegex\": \"^// Test that a LevelNewQty message has the Side field set\",\n  \"endClosestToLineNum\": 285,\n  \"endLineMatchesRegex\": \"^\\\\s*}\\\\s*$\",\n  \"rawTextName\": \"replaceLevelNewQtyBlock\"\n}]>\nRAWTEXT[replaceLevelNewQtyBlock]=R\"r(\t// Test that a LevelNewQty message has the Side field set by using the helper function.\n\tdummyLevelNewQty := NewLevelNewQty(\"binance_cfutures\", \"BTCUSDT\", 0, 10000.5, 5, 1, 1630001000, 1630001001, \"\")\n\tif dummyLevelNewQty.Side == \"\" {\n\t\tt.Errorf(\"Side field not set in LevelNewQty message\")\n\t}\n)r\"\n  \nReturn=<[{\"fileFixConfirmed\": true, \"rationale\": \"Changed the test in TestAddedFieldsFutures to use the NewLevelNewQty constructor so that a missing side defaults to 'bid'. This ensures that the LevelNewQty message has a non-empty Side field as expected by the specification.\"}]>"
 
+findJsonContentInBlocks :: Text -> [Text]
+findJsonContentInBlocks text = go text []
+  where
+    go :: Text -> [Text] -> [Text]
+    go currentText acc =
+      case T.breakOn "```json" currentText of
+        (_, "") -> reverse acc -- No more "```json" start markers found
+        (_beforeBlock, textStartingWithMarker) ->
+          let textAfterMarker = T.drop (T.length "```json") textStartingWithMarker
+          in case T.breakOn "```" textAfterMarker of
+               (_, "") -> reverse acc -- No closing "```" found for the last block (malformed or end of input)
+               (jsonContent, textAfterClosingMarker) ->
+                 -- jsonContent is the raw text between "```json" and the next "```"
+                 -- textAfterClosingMarker starts with "```" followed by the rest of the input
+                 let nextSearchText = T.drop (T.length "```") textAfterClosingMarker
+                 in go nextSearchText (jsonContent : acc)
+
+tmppGem :: Text
+tmppGem = "```json\n[\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": {\n      \"fileName\": \"internal/features/label_cursor.go\",\n      \"startClosestToLineNum\": 359,\n      \"startLineMatchesRegex\": \"[[:space:]]*labelF16 := float16.Float16\\\\(labelValue64\\\\)\",\n      \"endClosestToLineNum\": 360,\n      \"endLineMatchesRegex\": \"[[:space:]]*labelF16 := float16.Float16\\\\(labelValue64\\\\)\",\n      \"rawTextName\": \"correct_float16_conversion_1\"\n    }\n  },\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": {\n      \"fileName\": \"internal/features/label_cursor.go\",\n      \"startClosestToLineNum\": 366,\n      \"startLineMatchesRegex\": \"[[:space:]]*tempMap\\\\[instrument\\\\] = float16.Float16\\\\(0.0\\\\) // Assign 0.0 label\",\n      \"endClosestToLineNum\": 367,\n      \"endLineMatchesRegex\": \"[[:space:]]*tempMap\\\\[instrument\\\\] = float16.Float16\\\\(0.0\\\\) // Assign 0.0 label\",\n      \"rawTextName\": \"correct_float16_conversion_0\"\n    }\n  },\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": {\n      \"fileName\": \"internal/features/label_cursor.go\",\n      \"startClosestToLineNum\": 325,\n      \"startLineMatchesRegex\": \"[[:space:]]*tempMap\\\\[instrument\\\\] = float16.Float16\\\\(0.0\\\\) // Assign 0.0 to temp map\",\n      \"endClosestToLineNum\": 326,\n      \"endLineMatchesRegex\": \"[[:space:]]*tempMap\\\\[instrument\\\\] = float16.Float16\\\\(0.0\\\\) // Assign 0.0 to temp map\",\n      \"rawTextName\": \"correct_float16_conversion_0\"\n    }\n  },\n  {\n    \"tool_name\": \"SummariseAction\",\n    \"args\": {\n      \"actionSummary\": \"Correct float64 to float16 conversion in MidPriceMoveLabelCursor.Advance by using float16.Fromfloat32.\",\n      \"actionReason\": \"The direct cast `float16.Float16(float64_val)` was incorrect, leading to wrong float16 bit patterns (e.g., 1.0 becoming 0x0001 instead of 0x3C00). This caused test failures where labels were not matching expected values.\",\n      \"actionFuturePlanSummary\": \"Re-run tests. If label cursor tests still fail, investigate mock setups for BookManager in featureCursorState and the labelCursor's internalBookManager, as well as the logic for populating `midPriceAtT`.\"\n    }\n  }\n]\n```"
+
+extractJsonToolCallsGeminiFormat :: Text -> Either Text (M.Map T.Text [AET.Object])
+extractJsonToolCallsGeminiFormat fullText =
+  let jsonContentStrings = findJsonContentInBlocks fullText
+
+      parseAndCollectBlocks :: [Text] -> Either Text (M.Map T.Text [AET.Object])
+      parseAndCollectBlocks [] = Right M.empty
+      parseAndCollectBlocks (currentJsonContentStr : restJsonContentStrs) = do
+        -- Aeson's decoders can handle leading/trailing whitespace in the input string
+        -- if the core content is valid JSON.
+        decodedValue <- case AE.eitherDecodeStrict' (TE.encodeUtf8 currentJsonContentStr) of
+          Left err -> Left (
+            "Invalid JSON in a ```json block: " <> T.pack err <>
+            ". Block content (first 200 chars): " <> T.take 200 currentJsonContentStr <> "..."
+            )
+          Right val -> Right val
+
+        toolCallsInBlock <- case decodedValue of
+          AE.Array arrItems -> do 
+            let items = V.toList arrItems
+                
+                processJsonItem :: M.Map T.Text [AET.Object] -> AE.Value -> Either Text (M.Map T.Text [AET.Object])
+                processJsonItem accMap item =
+                  case item of
+                    AE.Object obj ->
+                      -- Extract tool_name (must be Text)
+                      case KM.lookup "tool_name" obj of
+                        Just (AE.String theToolName) ->
+                          -- Extract args (must be Object)
+                          case KM.lookup "args" obj of
+                            Just (AE.Object argsObj) ->
+                              Right (M.insertWith (++) theToolName [argsObj] accMap)
+                            Just _ -> Left (
+                              "Field 'args' for tool '" <> theToolName <> "' is not a JSON object. Item: " <>
+                              T.pack (show item)
+                              )
+                            Nothing -> Left (
+                              "Missing 'args' field for tool '" <> theToolName <> "'. Item: " <>
+                              T.pack (show item)
+                              )
+                        Just _ -> Left (
+                          "'tool_name' field is not a string. Item: " <> T.pack (show item)
+                          )
+                        Nothing -> Left (
+                          "Missing 'tool_name' field in JSON object. Item: " <> T.pack (show item)
+                          )
+                    _ -> Left (
+                      "Item in JSON array is not an object: " <> T.pack (show item)
+                      )
+            foldM processJsonItem M.empty items
+
+          _ -> Left (
+            "Content of ```json block is not a JSON array. Content (first 200 chars): " <>
+            T.take 200 currentJsonContentStr <> "..."
+            )
+        
+        -- Recursively process remaining blocks and merge results
+        restToolCallsMap <- parseAndCollectBlocks restJsonContentStrs
+        Right (M.unionWith (++) toolCallsInBlock restToolCallsMap)
+
+  in if null jsonContentStrings
+     then Right M.empty -- No ```json blocks found
+     else parseAndCollectBlocks jsonContentStrings
+
 extractFnCalls :: Text -> Text -> Either Text [AET.Object]
 extractFnCalls fullText fnName =
   let ------------------------------------------------------------------------
@@ -733,8 +818,8 @@ extractFnCalls fullText fnName =
 --    just yields an empty list for that tool, which we omit in the final result.
 --------------------------------------------------------------------------------
 
-findToolsCalled :: Text -> [Tool] -> Either Text [(Tool, [AET.Object])]
-findToolsCalled txt tools =
+findToolsCalledOld :: Text -> [Tool] -> Either Text [(Tool, [AET.Object])]
+findToolsCalledOld txt tools =
   let -- For each tool, try extracting all JSON objects
       attempts :: [(Tool, Either Text [AET.Object])]
       attempts =

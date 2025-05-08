@@ -242,7 +242,7 @@ runTestsGo timeout dir newEnv = Dir.withCurrentDirectory dir $ do
           else do
             putTextLn $ "Initial Go tests failed. Output has " <> T.pack (show totalLines) <> " lines. Attempting to extract and re-run just one test."
             --let failedTests = nub $ extractFailedGoTests combinedOutput
-            let failedTests = take 1 $ extractFailedGoTests combinedOutput
+            let failedTests = sort $ extractFailedGoTests combinedOutput
 
             case failedTests of
               [] -> do
@@ -251,7 +251,8 @@ runTestsGo timeout dir newEnv = Dir.withCurrentDirectory dir $ do
                 --pure $ eitherToMaybe $ handleExitCode opNameInitial (initialExitCode, initialStdout, initialStderr)
               [_] -> eitherToMaybe <$> handleExitCode opNameInitial (Right (initialExitCode, initialStdout, initialStderr))
 
-              tests -> do
+              multipleTests -> do
+                let tests = take 1 multipleTests
                 -- Go's -run flag takes a regex. Join test names with '|' for an OR match.
                 -- Wrap with ^ and $ for exact matches of the test names.
                 -- We need to escape characters that are special in regex if they appear in test names,
