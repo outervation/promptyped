@@ -669,6 +669,9 @@ findJsonContentInBlocks text = go text []
 tmppGem :: Text
 tmppGem = "```json\n[\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": {\n      \"fileName\": \"internal/features/label_cursor.go\",\n      \"startClosestToLineNum\": 359,\n      \"startLineMatchesRegex\": \"[[:space:]]*labelF16 := float16.Float16\\\\(labelValue64\\\\)\",\n      \"endClosestToLineNum\": 360,\n      \"endLineMatchesRegex\": \"[[:space:]]*labelF16 := float16.Float16\\\\(labelValue64\\\\)\",\n      \"rawTextName\": \"correct_float16_conversion_1\"\n    }\n  },\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": {\n      \"fileName\": \"internal/features/label_cursor.go\",\n      \"startClosestToLineNum\": 366,\n      \"startLineMatchesRegex\": \"[[:space:]]*tempMap\\\\[instrument\\\\] = float16.Float16\\\\(0.0\\\\) // Assign 0.0 label\",\n      \"endClosestToLineNum\": 367,\n      \"endLineMatchesRegex\": \"[[:space:]]*tempMap\\\\[instrument\\\\] = float16.Float16\\\\(0.0\\\\) // Assign 0.0 label\",\n      \"rawTextName\": \"correct_float16_conversion_0\"\n    }\n  },\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": {\n      \"fileName\": \"internal/features/label_cursor.go\",\n      \"startClosestToLineNum\": 325,\n      \"startLineMatchesRegex\": \"[[:space:]]*tempMap\\\\[instrument\\\\] = float16.Float16\\\\(0.0\\\\) // Assign 0.0 to temp map\",\n      \"endClosestToLineNum\": 326,\n      \"endLineMatchesRegex\": \"[[:space:]]*tempMap\\\\[instrument\\\\] = float16.Float16\\\\(0.0\\\\) // Assign 0.0 to temp map\",\n      \"rawTextName\": \"correct_float16_conversion_0\"\n    }\n  },\n  {\n    \"tool_name\": \"SummariseAction\",\n    \"args\": {\n      \"actionSummary\": \"Correct float64 to float16 conversion in MidPriceMoveLabelCursor.Advance by using float16.Fromfloat32.\",\n      \"actionReason\": \"The direct cast `float16.Float16(float64_val)` was incorrect, leading to wrong float16 bit patterns (e.g., 1.0 becoming 0x0001 instead of 0x3C00). This caused test failures where labels were not matching expected values.\",\n      \"actionFuturePlanSummary\": \"Re-run tests. If label cursor tests still fail, investigate mock setups for BookManager in featureCursorState and the labelCursor's internalBookManager, as well as the logic for populating `midPriceAtT`.\"\n    }\n  }\n]\n```"
 
+tmppGem2 :: Text
+tmppGem2 = "``json\n[\n  {\n    \"tool_name\": \"FocusFile\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main.go\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"FocusFile\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main_test.go\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main.go\",\n        \"startClosestToLineNum\": 196,\n        \"startLineMatchesRegex\": \"func startReaderManager\\\\(ctx context.Context, appWg \\\\*sync.WaitGroup, cfg \\\\*config.Config, mdp metadata.MetadataProvider, logger \\\\*slog.Logger, rFactory readerFactory\\\\) \\\\[\\\\]<-chan \\\\*types.MarketEvent {\",\n        \"endClosestToLineNum\": 199,\n        \"endLineMatchesRegex\": \"func startReaderManager\\\\(ctx context.Context, appWg \\\\*sync.WaitGroup, cfg \\\\*config.Config, mdp metadata.MetadataProvider, logger \\\\*slog.Logger, rFactory readerFactory\\\\) \\\\[\\\\]<-chan \\\\*types.MarketEvent {\",\n        \"rawTextName\": \"startReaderManagerSignatureChange\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"InsertInFile\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main.go\",\n        \"lineNum\": 213,\n        \"rawTextName\": \"usePredefinedLogic\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main.go\",\n        \"startClosestToLineNum\": 264,\n        \"startLineMatchesRegex\": \"r, err := rFactory\\\\(sourceCfg, cfg, mdp\\\\) // Use the passed factory\",\n        \"endClosestToLineNum\": 271,\n        \"endLineMatchesRegex\": \"continue\",\n        \"rawTextName\": \"readerInstantiationLogic\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main.go\",\n        \"startClosestToLineNum\": 103,\n        \"startLineMatchesRegex\": \"readerOutputChans := startReaderManager\\\\(mainCtx, &appWg, cfg, mdp, appLogger, reader.NewReader\\\\)\",\n        \"endClosestToLineNum\": 103,\n        \"endLineMatchesRegex\": \"readerOutputChans := startReaderManager\\\\(mainCtx, &appWg, cfg, mdp, appLogger, reader.NewReader\\\\)\",\n        \"rawTextName\": \"runApplicationCallSiteUpdate\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main_test.go\",\n        \"startClosestToLineNum\": 419,\n        \"startLineMatchesRegex\": \"// Define the mock reader factory for this test\",\n        \"endClosestToLineNum\": 486,\n        \"endLineMatchesRegex\": \"readerOutputChans := startReaderManager\\\\(mainAppCtx, &internalAppWg, cfg, mdp, util.Log, mockReaderFactory\\\\)\",\n        \"rawTextName\": \"testMockReaderInstantiationAndUpdateCall\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"SummariseAction\",\n    \"args\": [\n      {\n        \"actionSummary\": \"Modified `startReaderManager` to accept pre-instantiated readers and updated `main.go` and `main_test.go` accordingly.\",\n        \"actionReason\": \"The task required allowing tests to inject mock readers more directly into `startReaderManager`.\",\n        \"actionFuturePlanSummary\": \"Verify test pass and ensure no regressions.\"\n      }\n    ]\n  }\n]\n```"
+
 extractJsonToolCallsGeminiFormat :: Text -> Either Text (M.Map T.Text [AET.Object])
 extractJsonToolCallsGeminiFormat fullText =
   let jsonContentStrings = findJsonContentInBlocks fullText
@@ -860,6 +863,81 @@ findToolsCalledOld txt tools =
           if null parseErrors
             then second (const parsedOK) (findErroneousToolNameCall txt)
             else Left (T.intercalate ", " parseErrors)
+
+findToolsCalled :: Text -> [Tool] -> Either Text [(Tool, [AET.Object])]
+findToolsCalled txt tools =
+  let
+    -- 1. Attempt to extract Gemini format calls once
+    geminiResults :: Either Text (M.Map T.Text [AET.Object])
+    geminiResults = extractJsonToolCallsGeminiFormat txt
+
+    -- Store any global error from the Gemini extraction itself
+    geminiGlobalError :: [Text]
+    geminiGlobalError = case geminiResults of
+                          Left err -> [err]
+                          Right _  -> []
+
+    -- 2. For each tool, try extracting with extractFnCalls and merge with Gemini results
+    attempts :: [(Tool, Either Text [AET.Object])]
+    attempts =
+      [ let tName = toolName tool
+            -- Regular function call extraction
+            fnCallAttempt :: Either Text [AET.Object]
+            fnCallAttempt = extractFnCalls txt tName
+
+            -- Objects for this tool from Gemini format (if Gemini extraction was successful)
+            geminiObjsForTool :: [AET.Object]
+            geminiObjsForTool = case geminiResults of
+                                  Right gMap -> fromMaybe [] (M.lookup tName gMap)
+                                  Left _     -> [] -- Gemini extraction failed, so no objects from it here.
+                                                  -- The error is captured in geminiGlobalError.
+
+            -- Merge: if fnCallAttempt is Right, append geminiObjsForTool.
+            -- If fnCallAttempt is Left, it remains Left (error is preserved).
+            combinedAttempt :: Either Text [AET.Object]
+            combinedAttempt = fmap (++ geminiObjsForTool) fnCallAttempt
+        in (tool, combinedAttempt)
+      | tool <- tools
+      ]
+
+    -- 3. Filter out tools that had no occurrences (Right []) after merging
+    relevant :: [(Tool, Either Text [AET.Object])]
+    relevant =
+      [ (tool, eObjs)
+      | (tool, eObjs) <- attempts,
+        case eObjs of
+          Right [] -> False -- no occurrences (even after merge) => ignore
+          _        -> True  -- either an error, or we got some objects
+      ]
+
+    -- 4. Partition into parse errors (from fnCallAttempt part) and successes
+    (fnCallParseErrors, parsedOK) =
+      partitionEithers
+        [ case eObjs of
+            Left err   -> Left err
+            Right objs -> Right (tool, objs)
+        | (tool, eObjs) <- relevant
+        ]
+
+    -- Combine global Gemini errors with specific function call errors
+    allParseErrors :: [Text]
+    allParseErrors = geminiGlobalError ++ fnCallParseErrors
+
+  in case parsedOK of
+       [] ->
+         -- No tools successfully parsed (either no relevant tools or all had errors)
+         if null allParseErrors
+           then Right [] -- No relevant tools found, and no errors
+           else Left (T.intercalate "\n---\n" allParseErrors) -- Report all accumulated errors
+       _ ->
+         -- At least one tool successfully parsed
+         if null allParseErrors
+           then -- No extraction errors at all, proceed with findErroneousToolNameCall check
+             case findErroneousToolNameCall txt of
+               Left specificErr -> Left specificErr -- This specific error takes precedence
+               Right _          -> Right parsedOK   -- All clear, return successfully parsed tools
+           else -- We have extraction errors, report them
+             Left (T.intercalate "\n---\n" allParseErrors)
 
 data TmppRet = TmppRet
   { fileFixConfirmed :: Bool,
