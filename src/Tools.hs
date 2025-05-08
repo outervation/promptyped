@@ -670,7 +670,7 @@ tmppGem :: Text
 tmppGem = "```json\n[\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": {\n      \"fileName\": \"internal/features/label_cursor.go\",\n      \"startClosestToLineNum\": 359,\n      \"startLineMatchesRegex\": \"[[:space:]]*labelF16 := float16.Float16\\\\(labelValue64\\\\)\",\n      \"endClosestToLineNum\": 360,\n      \"endLineMatchesRegex\": \"[[:space:]]*labelF16 := float16.Float16\\\\(labelValue64\\\\)\",\n      \"rawTextName\": \"correct_float16_conversion_1\"\n    }\n  },\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": {\n      \"fileName\": \"internal/features/label_cursor.go\",\n      \"startClosestToLineNum\": 366,\n      \"startLineMatchesRegex\": \"[[:space:]]*tempMap\\\\[instrument\\\\] = float16.Float16\\\\(0.0\\\\) // Assign 0.0 label\",\n      \"endClosestToLineNum\": 367,\n      \"endLineMatchesRegex\": \"[[:space:]]*tempMap\\\\[instrument\\\\] = float16.Float16\\\\(0.0\\\\) // Assign 0.0 label\",\n      \"rawTextName\": \"correct_float16_conversion_0\"\n    }\n  },\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": {\n      \"fileName\": \"internal/features/label_cursor.go\",\n      \"startClosestToLineNum\": 325,\n      \"startLineMatchesRegex\": \"[[:space:]]*tempMap\\\\[instrument\\\\] = float16.Float16\\\\(0.0\\\\) // Assign 0.0 to temp map\",\n      \"endClosestToLineNum\": 326,\n      \"endLineMatchesRegex\": \"[[:space:]]*tempMap\\\\[instrument\\\\] = float16.Float16\\\\(0.0\\\\) // Assign 0.0 to temp map\",\n      \"rawTextName\": \"correct_float16_conversion_0\"\n    }\n  },\n  {\n    \"tool_name\": \"SummariseAction\",\n    \"args\": {\n      \"actionSummary\": \"Correct float64 to float16 conversion in MidPriceMoveLabelCursor.Advance by using float16.Fromfloat32.\",\n      \"actionReason\": \"The direct cast `float16.Float16(float64_val)` was incorrect, leading to wrong float16 bit patterns (e.g., 1.0 becoming 0x0001 instead of 0x3C00). This caused test failures where labels were not matching expected values.\",\n      \"actionFuturePlanSummary\": \"Re-run tests. If label cursor tests still fail, investigate mock setups for BookManager in featureCursorState and the labelCursor's internalBookManager, as well as the logic for populating `midPriceAtT`.\"\n    }\n  }\n]\n```"
 
 tmppGem2 :: Text
-tmppGem2 = "``json\n[\n  {\n    \"tool_name\": \"FocusFile\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main.go\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"FocusFile\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main_test.go\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main.go\",\n        \"startClosestToLineNum\": 196,\n        \"startLineMatchesRegex\": \"func startReaderManager\\\\(ctx context.Context, appWg \\\\*sync.WaitGroup, cfg \\\\*config.Config, mdp metadata.MetadataProvider, logger \\\\*slog.Logger, rFactory readerFactory\\\\) \\\\[\\\\]<-chan \\\\*types.MarketEvent {\",\n        \"endClosestToLineNum\": 199,\n        \"endLineMatchesRegex\": \"func startReaderManager\\\\(ctx context.Context, appWg \\\\*sync.WaitGroup, cfg \\\\*config.Config, mdp metadata.MetadataProvider, logger \\\\*slog.Logger, rFactory readerFactory\\\\) \\\\[\\\\]<-chan \\\\*types.MarketEvent {\",\n        \"rawTextName\": \"startReaderManagerSignatureChange\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"InsertInFile\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main.go\",\n        \"lineNum\": 213,\n        \"rawTextName\": \"usePredefinedLogic\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main.go\",\n        \"startClosestToLineNum\": 264,\n        \"startLineMatchesRegex\": \"r, err := rFactory\\\\(sourceCfg, cfg, mdp\\\\) // Use the passed factory\",\n        \"endClosestToLineNum\": 271,\n        \"endLineMatchesRegex\": \"continue\",\n        \"rawTextName\": \"readerInstantiationLogic\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main.go\",\n        \"startClosestToLineNum\": 103,\n        \"startLineMatchesRegex\": \"readerOutputChans := startReaderManager\\\\(mainCtx, &appWg, cfg, mdp, appLogger, reader.NewReader\\\\)\",\n        \"endClosestToLineNum\": 103,\n        \"endLineMatchesRegex\": \"readerOutputChans := startReaderManager\\\\(mainCtx, &appWg, cfg, mdp, appLogger, reader.NewReader\\\\)\",\n        \"rawTextName\": \"runApplicationCallSiteUpdate\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main_test.go\",\n        \"startClosestToLineNum\": 419,\n        \"startLineMatchesRegex\": \"// Define the mock reader factory for this test\",\n        \"endClosestToLineNum\": 486,\n        \"endLineMatchesRegex\": \"readerOutputChans := startReaderManager\\\\(mainAppCtx, &internalAppWg, cfg, mdp, util.Log, mockReaderFactory\\\\)\",\n        \"rawTextName\": \"testMockReaderInstantiationAndUpdateCall\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"SummariseAction\",\n    \"args\": [\n      {\n        \"actionSummary\": \"Modified `startReaderManager` to accept pre-instantiated readers and updated `main.go` and `main_test.go` accordingly.\",\n        \"actionReason\": \"The task required allowing tests to inject mock readers more directly into `startReaderManager`.\",\n        \"actionFuturePlanSummary\": \"Verify test pass and ensure no regressions.\"\n      }\n    ]\n  }\n]\n```"
+tmppGem2 = "```json\n[\n  {\n    \"tool_name\": \"FocusFile\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main.go\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"FocusFile\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main_test.go\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main.go\",\n        \"startClosestToLineNum\": 196,\n        \"startLineMatchesRegex\": \"func startReaderManager\\\\(ctx context.Context, appWg \\\\*sync.WaitGroup, cfg \\\\*config.Config, mdp metadata.MetadataProvider, logger \\\\*slog.Logger, rFactory readerFactory\\\\) \\\\[\\\\]<-chan \\\\*types.MarketEvent {\",\n        \"endClosestToLineNum\": 199,\n        \"endLineMatchesRegex\": \"func startReaderManager\\\\(ctx context.Context, appWg \\\\*sync.WaitGroup, cfg \\\\*config.Config, mdp metadata.MetadataProvider, logger \\\\*slog.Logger, rFactory readerFactory\\\\) \\\\[\\\\]<-chan \\\\*types.MarketEvent {\",\n        \"rawTextName\": \"startReaderManagerSignatureChange\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"InsertInFile\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main.go\",\n        \"lineNum\": 213,\n        \"rawTextName\": \"usePredefinedLogic\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main.go\",\n        \"startClosestToLineNum\": 264,\n        \"startLineMatchesRegex\": \"r, err := rFactory\\\\(sourceCfg, cfg, mdp\\\\) // Use the passed factory\",\n        \"endClosestToLineNum\": 271,\n        \"endLineMatchesRegex\": \"continue\",\n        \"rawTextName\": \"readerInstantiationLogic\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main.go\",\n        \"startClosestToLineNum\": 103,\n        \"startLineMatchesRegex\": \"readerOutputChans := startReaderManager\\\\(mainCtx, &appWg, cfg, mdp, appLogger, reader.NewReader\\\\)\",\n        \"endClosestToLineNum\": 103,\n        \"endLineMatchesRegex\": \"readerOutputChans := startReaderManager\\\\(mainCtx, &appWg, cfg, mdp, appLogger, reader.NewReader\\\\)\",\n        \"rawTextName\": \"runApplicationCallSiteUpdate\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main_test.go\",\n        \"startClosestToLineNum\": 419,\n        \"startLineMatchesRegex\": \"// Define the mock reader factory for this test\",\n        \"endClosestToLineNum\": 486,\n        \"endLineMatchesRegex\": \"readerOutputChans := startReaderManager\\\\(mainAppCtx, &internalAppWg, cfg, mdp, util.Log, mockReaderFactory\\\\)\",\n        \"rawTextName\": \"testMockReaderInstantiationAndUpdateCall\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"SummariseAction\",\n    \"args\": [\n      {\n        \"actionSummary\": \"Modified `startReaderManager` to accept pre-instantiated readers and updated `main.go` and `main_test.go` accordingly.\",\n        \"actionReason\": \"The task required allowing tests to inject mock readers more directly into `startReaderManager`.\",\n        \"actionFuturePlanSummary\": \"Verify test pass and ensure no regressions.\"\n      }\n    ]\n  }\n]\n```"
 
 extractJsonToolCallsGeminiFormat :: Text -> Either Text (M.Map T.Text [AET.Object])
 extractJsonToolCallsGeminiFormat fullText =
@@ -689,9 +689,9 @@ extractJsonToolCallsGeminiFormat fullText =
           Right val -> Right val
 
         toolCallsInBlock <- case decodedValue of
-          AE.Array arrItems -> do 
+          AE.Array arrItems -> do
             let items = V.toList arrItems
-                
+
                 processJsonItem :: M.Map T.Text [AET.Object] -> AE.Value -> Either Text (M.Map T.Text [AET.Object])
                 processJsonItem accMap item =
                   case item of
@@ -699,26 +699,42 @@ extractJsonToolCallsGeminiFormat fullText =
                       -- Extract tool_name (must be Text)
                       case KM.lookup "tool_name" obj of
                         Just (AE.String theToolName) ->
-                          -- Extract args (must be Object)
+                          -- Extract args (can be Object or Array of one Object)
                           case KM.lookup "args" obj of
-                            Just (AE.Object argsObj) ->
+                            Just (AE.Object argsObj) -> -- Case 1: args is a JSON Object
                               Right (M.insertWith (++) theToolName [argsObj] accMap)
-                            Just _ -> Left (
-                              "Field 'args' for tool '" <> theToolName <> "' is not a JSON object. Item: " <>
-                              T.pack (show item)
+
+                            Just (AE.Array arrArgs) -> -- Case 2: args is a JSON Array
+                              case V.toList arrArgs of
+                                [AE.Object singleArgObj] -> -- Array must contain a single JSON Object
+                                  Right (M.insertWith (++) theToolName [singleArgObj] accMap)
+                                actualArrayContents -> Left (
+                                  "Field 'args' for tool '" <> theToolName <>
+                                  "' is an array, but it does not contain a single JSON object. " <>
+                                  "Actual 'args' array content (first 200 chars): " <> T.take 200 (T.pack (show actualArrayContents)) <> "..." <>
+                                  ". Full tool call item (first 200 chars): " <> T.take 200 (T.pack (show item)) <> "..."
+                                  )
+
+                            Just otherArgsValue -> Left ( -- args is neither Object nor Array, or an unhandled Array structure
+                              "Field 'args' for tool '" <> theToolName <>
+                              "' is not a JSON object or an array of a single JSON object. " <>
+                              "Instead, 'args' was (first 200 chars): " <> T.take 200 (T.pack (show otherArgsValue)) <> "..." <>
+                              ". Full tool call item (first 200 chars): " <> T.take 200 (T.pack (show item)) <> "..."
                               )
                             Nothing -> Left (
-                              "Missing 'args' field for tool '" <> theToolName <> "'. Item: " <>
-                              T.pack (show item)
+                              "Missing 'args' field for tool '" <> theToolName <> "'. Item (first 200 chars): " <>
+                              T.take 200 (T.pack (show item)) <> "..."
                               )
-                        Just _ -> Left (
-                          "'tool_name' field is not a string. Item: " <> T.pack (show item)
+                        Just otherToolNameValue -> Left (
+                          "'tool_name' field is not a string. Found: " <> T.take 200 (T.pack (show otherToolNameValue)) <>
+                          ". Item (first 200 chars): " <> T.take 200 (T.pack (show item)) <> "..."
                           )
                         Nothing -> Left (
-                          "Missing 'tool_name' field in JSON object. Item: " <> T.pack (show item)
+                          "Missing 'tool_name' field in JSON object. Item (first 200 chars): " <>
+                          T.take 200 (T.pack (show item)) <> "..."
                           )
                     _ -> Left (
-                      "Item in JSON array is not an object: " <> T.pack (show item)
+                      "Item in JSON array is not an object: " <> T.take 200 (T.pack (show item)) <> "..."
                       )
             foldM processJsonItem M.empty items
 
@@ -726,7 +742,7 @@ extractJsonToolCallsGeminiFormat fullText =
             "Content of ```json block is not a JSON array. Content (first 200 chars): " <>
             T.take 200 currentJsonContentStr <> "..."
             )
-        
+
         -- Recursively process remaining blocks and merge results
         restToolCallsMap <- parseAndCollectBlocks restJsonContentStrs
         Right (M.unionWith (++) toolCallsInBlock restToolCallsMap)
@@ -734,6 +750,7 @@ extractJsonToolCallsGeminiFormat fullText =
   in if null jsonContentStrings
      then Right M.empty -- No ```json blocks found
      else parseAndCollectBlocks jsonContentStrings
+
 
 extractFnCalls :: Text -> Text -> Either Text [AET.Object]
 extractFnCalls fullText fnName =
@@ -820,49 +837,6 @@ extractFnCalls fullText fnName =
 --    Left with the concatenated errors. If a tool does not appear at all, it
 --    just yields an empty list for that tool, which we omit in the final result.
 --------------------------------------------------------------------------------
-
-findToolsCalledOld :: Text -> [Tool] -> Either Text [(Tool, [AET.Object])]
-findToolsCalledOld txt tools =
-  let -- For each tool, try extracting all JSON objects
-      attempts :: [(Tool, Either Text [AET.Object])]
-      attempts =
-        [ (tool, extractFnCalls txt (toolName tool))
-        | tool <- tools
-        ]
-
-      -- We only keep entries for which we either got a parse error or at least
-      -- one object. If we got `Right []`, that means the tool never appeared
-      -- in the text at all, so we can safely ignore it in the final result.
-      relevant =
-        [ (tool, eObjs)
-        | (tool, eObjs) <- attempts,
-          case eObjs of
-            Right [] -> False -- no occurrences => ignore
-            _ -> True -- either an error, or we got some objects
-        ]
-
-      -- Now partition them into parse errors and successes.
-      (parseErrors, parsedOK) =
-        partitionEithers
-          [ case eObjs of
-              Left err -> Left err
-              Right objs -> Right (tool, objs)
-          | (tool, eObjs) <- relevant
-          ]
-   in case parsedOK of
-        [] ->
-          -- Means either no tools matched or all had parse errors.  If we
-          -- want to distinguish "no matches at all" from "all parse
-          -- errors," we can do so here.  For simplicity, say:
-          if null parseErrors
-            then Right []
-            else Left (T.intercalate ", " parseErrors)
-        _ ->
-          -- We do have at least one success. If any had errors, produce a
-          -- combined error. Otherwise return all successes.
-          if null parseErrors
-            then second (const parsedOK) (findErroneousToolNameCall txt)
-            else Left (T.intercalate ", " parseErrors)
 
 findToolsCalled :: Text -> [Tool] -> Either Text [(Tool, [AET.Object])]
 findToolsCalled txt tools =
