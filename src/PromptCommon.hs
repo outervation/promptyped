@@ -690,7 +690,7 @@ makeFileAnalysisProject projectTexts = do
               makeBaseContext background
                 $ "Please check if "
                 <> name
-                <> " matches the specification, and return any ways it fails to satisfy it. Please also return detailed notes on its behaviour, for reference when checking other files."
+                <> " matches the specification, and return any ways it fails to satisfy it. Please also return detailed notes on its behaviour, for reference when checking other files. Double-check too that the logic there makes sense / has no bugs, and report anything that seems dubious/illogical."
             exampleRes = FileAnalysisResult (fileName <> "doesn't meet the spec completely because it's supposed to ..., but it doesn't, and ...") "The file fulfills the following spec-relevant behaviours:"
             getChangesTask name = Engine.runAiFunc @bs (mkCtxt name) MediumIntelligenceRequired Engine.readOnlyTools exampleRes Engine.validateAlwaysPass (configTaskMaxFailures cfg)
         setupOpenFile fileName
