@@ -336,6 +336,8 @@ instance BuildSystem GoLang where
 
   isBuildableFile fileName = pure $ isGoFileExtension fileName
 
+  isTestFile fileName = pure $ isGoFileExtension fileName && "_test.go" `T.isSuffixOf` fileName
+
   getIgnoredDirs = pure ["build", ".git", "contrib"]
 
   getFormatChecker cfg = do

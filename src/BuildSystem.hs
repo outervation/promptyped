@@ -12,6 +12,7 @@ class BuildSystem (a :: Type) where
   testProject :: Config -> AppM (Maybe Text)
   setupProject :: Config -> ProjectConfig -> AppM (Maybe Text)
   isBuildableFile :: Text -> AppM Bool
+  isTestFile :: Text -> AppM Bool
   getIgnoredDirs :: AppM [Text]
   getFormatChecker :: Config -> AppM (IO (Maybe Text))
   minimiseFile :: Text -> AppM (Either Text Text)
@@ -24,6 +25,7 @@ instance BuildSystem NullBuildSystem where
   testProject _ = throwError "TestProject called on NullBuildSystem"
   setupProject _ _ = throwError "SetupProject called on NullBuildSystem"
   isBuildableFile _ = throwError "IsBuildableFile called on NullBuildSystem"
+  isTestFile _ = throwError "IsTestFile called on NullBuildSystem"
   getIgnoredDirs = throwError "getIgnoredDirs called on NullBuildSystem"
   getFormatChecker _ = throwError "getFormatChecker called on NullBuildSystem"
   minimiseFile _ = throwError "minimiseFile called on NullBuildSystem"

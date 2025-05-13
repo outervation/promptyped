@@ -166,6 +166,7 @@ instance BuildSystem CPlusPlusLang where
   setupProject cfg projectCfg = liftIO $ setupDirectoryCpp $ configBaseDir cfg
 
   isBuildableFile fileName = pure $ isCPlusPlusFileExtension fileName
+  isTestFile fileName = pure $ isCPlusPlusFileExtension fileName && "_test." `T.isInfixOf` fileName
 
   getIgnoredDirs = pure ["build", ".git", "contrib"]
 

@@ -79,7 +79,7 @@ makeTaskFromConfig aCfg mCfg = do
   let projectFn :: AppM ()
       projectFn = case projectKind aCfg of
         RefactorProject -> case bigRefactorCfg aCfg of
-          Just refactorCfg -> withBuildSystem (getBuildSystem GoLang) $ \(_ :: Proxy bs) -> makeRefactorFilesProject @bs projectTexts refactorCfg
+          Just refactorCfg -> withBuildSystem (getBuildSystem GoLang) $ \(_ :: Proxy bs) -> makeTargetedRefactorFilesProject @bs projectTexts refactorCfg
           Nothing -> throwError "Missing big refactor config!"
         TargetedRefactorProject -> case targetedRefactorCfg aCfg of
           Just refactorCfg -> withBuildSystem (getBuildSystem GoLang) $ \(_ :: Proxy bs) -> makeTargetedRefactorProject @bs projectTexts refactorCfg
