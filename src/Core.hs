@@ -558,6 +558,10 @@ fileFocused :: Text -> AppState -> Bool
 fileFocused fileName st =
   any (\file -> openFileName file == fileName && openFileFocused file) (stateOpenFiles st)
 
+focusedFileNames :: AppState -> [Text]
+focusedFileNames st =
+  map openFileName $ filter (\file -> openFileFocused file) (stateOpenFiles st)
+
 data TimeOverflowException = TimeOverflowException
   deriving (Show, Typeable)
 
