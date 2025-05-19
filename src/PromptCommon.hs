@@ -230,7 +230,7 @@ validateFileModifiedWithAi fileName origCtxt x = do
   let tools = [Tools.ToolReturn, Tools.ToolPanic]
       exampleReturn = AiChangeVerificationResult True "Task completed successfuly!"
       background = "You are an AI agent responsible for checking other agents' output."
-      task = "You are reponsible for determining whether the below file modification task was indeed done to file " <> fileName <> ". Please do so based on what you can see in the file, and return the result in the format specified, with \"changeAlreadyBeenMade\": true if you see the task has indeed been done, and false if it's clear that the requested file modification hasn't been made, along with a \"messagToLlm\", that in the case the change hasn't been made should inform the LLM why the task it claims to have been completed has not been done. Don't check for correctness, i.e. an implementation of the change with a small bug or two should still pass, as they'll be handled later. Do however check that the change is actually present, not just that it left a comment saying it did the change. For a refactoring task make sure it's done completely, with nothing left to do, not partially. If it did more than asked, that's okay as long as the changes it made looks reasonably helpful/necessary towards achieving the task. The task that was supposed to have been done:\n" <> origCtxt.contextTask
+      task = "You are reponsible for determining whether the below file modification task was indeed done to file " <> fileName <> ". Please do so based on what you can see in the file, and return the result in the format specified, with \"changeAlreadyBeenMade\": true if you see the task has indeed been done, and false if it's clear that the requested file modification hasn't been made, along with a \"messagToLlm\", that in the case the change hasn't been made should inform the LLM why the task it claims to have been completed has not been done. Don't check for correctness, i.e. an implementation of the change with a small bug or two should still pass, as they'll be handled later (however you should reject a change that does something obviously stupid). Do however check that the change is actually present, not just that it left a comment saying it did the change. For a refactoring task make sure it's done completely, with nothing left to do, not partially. If it did more than asked, that's okay as long as the changes it made looks reasonably helpful/necessary towards achieving the task. The task that was supposed to have been done:\n" <> origCtxt.contextTask
       ctxt = makeBaseContext background task
   verificationRes <- Engine.runAiFunc @bs ctxt MediumIntelligenceRequired tools exampleReturn validateAiChangeVerificationResult (configTaskMaxFailures cfg)
   liftIO $ putTextLn $ "Got result from AI check of modification:\n" <> origCtxt.contextTask <> "\nResult is: " <> show verificationRes
@@ -581,12 +581,13 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
       objectiveShortName = refactorCfg.bigRefactorOverallTaskShortName
       refactorBackground = makeRefactorBackgroundPrompt task
       background = projectTexts.projectSummaryText <> "\n" <> refactorBackground
+      maxFocused = cfg.configMaxNumFocusedFiles
 
   -- 2. Identify Relevant Files for Initial Focus (LLM Call 1)
   let relevantFilesCtxt =
         makeBaseContext background
           $ "Given the overall refactoring objective (" <> objectiveShortName <> ": " <> task <> "),"
-          <> " and considering all source files are currently open (most unfocused, some like '" <> journalFileName <> "' and initial dependencies might be focused), please identify a list of filenames that are most relevant and should be focused for closer inspection (including any already-focused files that should still be focused). These files will be brought into focus to aid in detailed planning. "
+          <> " and considering all source files are currently open (most unfocused, some like '" <> journalFileName <> "' and initial dependencies might be focused), please identify a list of at most " <> show maxFocused <> " filenames that are most relevant and should be focused for closer inspection (including any already-focused files that should still be focused). These files will be brought into focus to aid in detailed planning. "
           <> "Return a JSON object with a single key 'relevantFileNames' containing a list of these filenames. "
           <> "The available source files are: " <> T.intercalate ", " allSourceFileNames <> "."
           <> " Consider also these initially opened files: " <> T.intercalate ", " refactorCfg.bigRefactorInitialOpenFiles <> "."
@@ -684,7 +685,7 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
             ( "Considering the overall refactoring objective (" <> objectiveShortName <> ": " <> task <> "),"
                 <> " and now specifically planning modifications for file `" <> fileNameToModify <> "` (which is focused). "
                 <> "What specific refactoring tasks are needed *for this file* (`" <> fileNameToModify <> "`)? "
-                <> "Also, list any other files (dependencies) from the project that are directly relevant to performing these tasks on `" <> fileNameToModify <> "`."
+                <> "Also, list any other files (dependencies) from the project that are directly relevant to performing these tasks on `" <> fileNameToModify <> "`; do not mention external dependencies."
                 <> "Specify if unit tests for `" <> fileNameToModify <> "` should be updated as part of these changes (`refactorUpdateTests`)."
                 <> "The 'refactorFile' field in your response MUST be '" <> fileNameToModify <> "'. "
                 <> "Available source files for dependencies include: " <> T.intercalate ", " allSourceFileNames <> "."
@@ -909,7 +910,7 @@ makeTargetedRefactorProject projectTexts refactorCfg = do
                 <> " to achieve the objective: "
                 <> rCfg.refactorTask
                 <> "."
-                <> "Each task should list other task dependencies if any, and there should be no circular dependencies. Don't include tasks like running the build system and unit tests; they will run automatically after file changes."
+                <> "Each task should list other task dependencies if any, and there should be no circular dependencies (dependencies here means other tasks, not imports). Don't include tasks like running the build system and unit tests; they will run automatically after file changes."
                 <> "If there's something relevant for later that you can't encode well in the return value, please AppendFile=<[{\"fileName\": \"journal.txt\", \"rawTextName\": \"journalUpdateTextBoxName\"}]> it to the journal."
             taskBackground = background <> "\nYour task for this file is: " <> rCfg.refactorTask
             getChangesTask fileName = Engine.runAiFunc @bs (mkCtxt fileName) HighIntelligenceRequired (Tools.ToolAppendFile : Engine.readOnlyTools) exampleTasks validateThingsWithDependencies (configTaskMaxFailures cfg)
