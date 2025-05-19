@@ -219,11 +219,16 @@ runTestsGo ::
   IO (Maybe Text)
 runTestsGo timeout dir newEnv = Dir.withCurrentDirectory dir $ do
   putTextLn $ "Running initial Go tests in dir " <> toText dir
-  let initialArgs = ["test", "-timeout", "10s", "./..."] 
+  let initialArgs = ["test", "-timeout", "10s", "./..."]
+  -- initialTestResult :: IO (Either Text (Exit.ExitCode, Text, Text))
   initialTestResult <- runProcessWithTimeout timeout "." newEnv "go" initialArgs
 
   case initialTestResult of
-    Left procErr -> pure $ Just procErr
+    Left procErrText -> do
+      -- This error is from runProcessWithTimeout itself (e.g., timeout, command not found)
+      let errMsg = "Initial Go tests ('go test ./...') execution failed: " <> procErrText
+      putTextLn errMsg
+      pure $ Just errMsg
 
     Right (initialExitCode, initialStdout, initialStderr) ->
       case initialExitCode of
@@ -234,44 +239,78 @@ runTestsGo timeout dir newEnv = Dir.withCurrentDirectory dir $ do
         Exit.ExitFailure _ -> do
           let combinedOutput = initialStdout <> "\n" <> initialStderr
           let totalLines = length $ T.lines combinedOutput
-          let opNameInitial = "'go test ./...'" 
+          let opNameInitial = "'go test ./...'"
 
           if totalLines <= maxTestFailLinesToShowFullOutput then do
             putTextLn "Initial Go tests failed. Output is small, reporting directly."
+            -- Pass the Right part of the result (successful execution, but failed test)
+            -- to handleExitCode.
             eitherToMaybe <$> handleExitCode opNameInitial (Right (initialExitCode, initialStdout, initialStderr))
           else do
-            putTextLn $ "Initial Go tests failed. Output has " <> T.pack (show totalLines) <> " lines. Attempting to extract and re-run just one test."
-            --let failedTests = nub $ extractFailedGoTests combinedOutput
-            let failedTests = sort $ extractFailedGoTests combinedOutput
+            putTextLn $ "Initial Go tests failed. Output has " <> T.pack (show totalLines) <> " lines (" <> T.pack (show maxTestFailLinesToShowFullOutput) <> " max for full). Attempting to extract and re-run."
+            let failedTests = sort $ L.nub $ extractFailedGoTests combinedOutput
 
             case failedTests of
               [] -> do
-                let err = "Could not extract specific failed test names (might be a compile error or different output format). Please panic!"
-                pure $ Just err
-                --pure $ eitherToMaybe $ handleExitCode opNameInitial (initialExitCode, initialStdout, initialStderr)
-              [_] -> eitherToMaybe <$> handleExitCode opNameInitial (Right (initialExitCode, initialStdout, initialStderr))
+                let err = "Could not extract specific failed test names (might be a compile error or different output format from initial run). Reporting full initial failure."
+                putTextLn err
+                eitherToMaybe <$> handleExitCode opNameInitial (Right (initialExitCode, initialStdout, initialStderr))
 
-              multipleTests -> do
-                let tests = take 1 multipleTests
-                -- Go's -run flag takes a regex. Join test names with '|' for an OR match.
-                -- Wrap with ^ and $ for exact matches of the test names.
-                -- We need to escape characters that are special in regex if they appear in test names,
-                -- but typically Go test names are alphanumeric + underscores.
-                -- For simplicity, we assume test names don't need further regex escaping here.
-                let runRegex = "^(" <> T.intercalate "|" tests <> ")$"
-                let rerunArgs = ["test", "-run", T.unpack runRegex, "-timeout", "10s", "./..."] 
-                let opNameRerun = "'go test -run=" <> runRegex <> "'"
+              [_oneTestFromExtraction] -> do
+                 -- Even if one test is extracted, if the initial failure was large,
+                 -- re-running just one might hide interactions. Report original.
+                 putTextLn $ "Initial Go tests failed (large output), and only one specific test name (" <> _oneTestFromExtraction <> ") was extracted. Reporting the original full failure as it's more informative than a potentially successful single re-run or a single re-run failure out of its original context."
+                 eitherToMaybe <$> handleExitCode opNameInitial (Right (initialExitCode, initialStdout, initialStderr))
 
-                putTextLn $ "Re-running failed tests with: go " <> unwords (map T.pack rerunArgs)
-                rerunResult <- runProcessWithTimeout timeout "." newEnv "go" rerunArgs
+              multipleFailingTests -> do
+                putTextLn $ "Extracted " <> T.pack (show $ length multipleFailingTests) <> " potentially failing tests: " <> T.intercalate ", " multipleFailingTests <> ". Attempting to re-run them one by one."
+                tryRerunOneByOne timeout newEnv multipleFailingTests
 
-                case rerunResult of
-                  Left rerunProcErr -> do
-                     putTextLn $ "Error occurred trying to re-run failed tests: " <> rerunProcErr
-                     pure $ Just rerunProcErr
-                  Right (rerunExitCode, rerunStdout, rerunStderr) -> do
-                     putTextLn "Reporting result from the re-run of failed tests."
-                     eitherToMaybe <$> handleExitCode opNameRerun (Right (rerunExitCode, rerunStdout, rerunStderr))
+-- Helper function to try re-running tests one by one
+tryRerunOneByOne ::
+  NominalDiffTime ->
+  [(String, String)] ->
+  [Text] -> -- List of test names to try
+  IO (Maybe Text) -- Just errorText if a test fails or process error,
+                  -- or specific message if all pass individually.
+                  -- Nothing should not be returned by this helper if called with non-empty list.
+tryRerunOneByOne _ _ [] = do
+  -- This case is reached if multipleFailingTests was not empty initially,
+  -- but all of them passed when re-run individually.
+  let msg = "Initial tests failed, but all extracted failing tests passed when re-run individually. This suggests a test interaction issue, a problem not reproducible with a single test re-run, or that the extracted test names were not the sole culprits of the original large failure."
+  putTextLn msg
+  pure $ Just msg
+
+tryRerunOneByOne currentTimeout currentNewEnv (testNameToRun : restTestsToTry) = do
+  -- Go's -run flag takes a regex. Wrap with ^ and $ for exact matches.
+  let runRegex = "^(" <> testNameToRun <> ")$"
+  -- Note: T.unpack is important for [String] args
+  let rerunArgs = ["test", "-run", T.unpack runRegex, "-timeout", "10s", "./..."]
+  let opNameRerun = "'go test -run=" <> runRegex <> "'"
+
+  putTextLn $ "Attempting to re-run individually: go " <> T.unwords (map T.pack rerunArgs)
+  -- rerunResultOrError :: Either Text (Exit.ExitCode, Text, Text)
+  rerunResultOrError <- runProcessWithTimeout currentTimeout "." currentNewEnv "go" rerunArgs
+
+  case rerunResultOrError of
+    Left rerunProcErrText -> do
+      -- This is an error from runProcessWithTimeout itself for the re-run attempt
+      let errMsg = "Error (process execution) occurred trying to re-run test " <> testNameToRun <> ": " <> rerunProcErrText
+      putTextLn errMsg
+      pure $ Just errMsg -- Report this process-level error
+
+    Right (rerunExitCode, rerunStdout, rerunStderr) -> do
+      -- The process ran. Now use handleExitCode to check if the *test itself* failed.
+      -- We pass the Right part of rerunResultOrError to handleExitCode.
+      maybeTestFailureErr <- eitherToMaybe <$> handleExitCode opNameRerun (Right (rerunExitCode, rerunStdout, rerunStderr))
+
+      case maybeTestFailureErr of
+        Just errMessageFromHandleExitCode -> do -- This specific test failed when run in isolation
+          putTextLn $ "Test " <> testNameToRun <> " failed when re-run individually. Reporting this failure."
+          pure $ Just errMessageFromHandleExitCode -- Return the error of the first test that fails in isolation
+        Nothing -> do -- This specific test passed when run in isolation
+          putTextLn $ "Test " <> testNameToRun <> " passed when re-run individually. Trying next."
+          tryRerunOneByOne currentTimeout currentNewEnv restTestsToTry -- Recurse with remaining tests
 
 addGoDependency :: NominalDiffTime -> FilePath ->  [(String, String)]  -> Text -> IO (Maybe Text)
 addGoDependency timeout dir newEnv name = Dir.withCurrentDirectory dir $ do
