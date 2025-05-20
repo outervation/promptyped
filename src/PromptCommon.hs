@@ -414,6 +414,7 @@ makeRefactorFileTask background initialDeps fileName desiredChanges refactorUnit
   -- Note: file opened first will appear last (most recent)
   let dependencies = [(fileName, Tools.DoFocusOpenedFile), (journalFileName, Tools.DoFocusOpenedFile)] ++ map (\(x, shouldFocus) -> (x.existingFileName, shouldFocus)) initialDeps
   forM_ dependencies $ \(x, shouldFocus) -> Tools.openFile @bs shouldFocus x cfg
+  closeIrrelevantUnfocusedFiles @bs background desiredChanges fileName
   let makeChange description = do
         let ctxt = makeBaseContext background $ "Your task is to refactor the file " <> fileName <> " to make the change: " <> (summary description) <> ". Do NOT make other changes yet."
             exampleChange = ModifiedFile "someFile.go" "Update the file to add ... so that it ..."
@@ -1546,3 +1547,103 @@ makePromptResponseProject projectTexts = do
             liftIO $ putTextLn $ "\nLLM Response:\n" <> llmResult.response
             liftIO $ putTextLn "" -- Add spacing before the next prompt
             liftIO $ writeIORef contextRef (Just ctxtAfter)
+
+-- | Data type for the LLM to return a list of irrelevant files to close.
+data IrrelevantFilesToClose = IrrelevantFilesToClose
+  { filesToClose :: [Text]
+  }
+  deriving (Generic, Eq, Ord, Show)
+
+instance ToJSON IrrelevantFilesToClose
+instance FromJSON IrrelevantFilesToClose
+
+-- | Validates the LLM's response for irrelevant files.
+-- Checks if the suggested files are currently open.
+validateIrrelevantFilesToClose :: Context -> IrrelevantFilesToClose -> AppM (Either (MsgKind, Text) IrrelevantFilesToClose)
+validateIrrelevantFilesToClose _ returnedData@(IrrelevantFilesToClose toClose) = do
+  st <- get
+  let openFileNames = Set.fromList $ map Core.openFileName (stateOpenFiles st)
+  let notCurrentlyOpen = filter (\fName -> not (Set.member fName openFileNames)) toClose
+  
+  if null notCurrentlyOpen
+    then pure $ Right returnedData
+    else pure $ Left (OtherMsg, "LLM suggested closing files that are not currently open: " <> T.intercalate ", " notCurrentlyOpen)
+
+-- | Helper function to identify and close irrelevant unfocused files.
+-- Takes a background text, a list of changes, and the primary filename being modified.
+-- Queries the LLM to find unfocused files irrelevant to the task, then closes them.
+closeIrrelevantUnfocusedFiles :: forall bs. (BS.BuildSystem bs) 
+                              => Text -- ^ General background for the LLM.
+                              -> [ThingWithDependencies] -- ^ List of changes defining the current task.
+                              -> Text -- ^ The primary filename being modified for the task.
+                              -> AppM ()
+closeIrrelevantUnfocusedFiles llmBackground taskChanges mainFileName = do
+  cfg <- ask
+  st <- get
+
+  let unfocusedOpenFileObjs = filter (not . Core.openFileFocused) (stateOpenFiles st)
+  let unfocusedOpenFileNames = map Core.openFileName unfocusedOpenFileObjs
+
+  if null unfocusedOpenFileNames then do
+    liftIO $ putTextLn "No unfocused files are open. Skipping LLM call to identify irrelevant files."
+    pure ()
+  else do
+    liftIO $ putTextLn $ "Currently unfocused open files: " <> T.intercalate ", " unfocusedOpenFileNames
+
+    let taskSummary = "Your task is to close open files that are completely irrelevant for the main task; the main task (which will be done after the irrelevant files are closed) is:\nTo modify the file '" <> mainFileName <> "' based on the following required changes: " <> Tools.toJ taskChanges <> "."
+    
+    let llmSpecificTaskPrompt =
+          taskSummary <> "\n\n" <>
+          "You can see the full list of currently open files and their focus status. " <>
+          "From the files that are currently open but *not* focused (which are explicitly: " <> T.intercalate ", " unfocusedOpenFileNames <> "), " <>
+          "please identify any of these unfocused files that provide no relevant/useful information/type/function definitions for achieving the main task described above." <>
+          "These irrelevant files can be closed to reduce clutter in the context and improve focus. " <>
+          "Note that unfocused source files only show function types and datatypes, not function bodies. " <>
+          "Return a JSON object with a single key 'filesToClose' containing a list of just the filenames (from the provided unfocused list) that you determine are completely irrelevant; don't try to take any tool actions to actually close the files. " <>
+          "If all unfocused files have some relevance, or if you are unsure, return an empty list for 'filesToClose'."
+
+    let aiContext = makeBaseContext llmBackground llmSpecificTaskPrompt 
+    
+    let exampleReturn = IrrelevantFilesToClose { filesToClose = take (min 1 (length unfocusedOpenFileNames)) unfocusedOpenFileNames }
+    
+    let toolsForLlm = Engine.readOnlyToolsNoFileActions -- LLM should only identify, not perform actions
+
+    liftIO $ putTextLn "Querying LLM to identify irrelevant unfocused files to close..."
+
+    -- Mark it nested so it won't attempt to go into error fixing mode etc.
+    let getIrrelevantFiles () = fst <$> Engine.runAiFuncInner @bs Engine.IsNestedAiFuncTrue Engine.IsCloseFileTaskFalse
+          aiContext
+          MediumIntelligenceRequired -- This task should generally not require high intelligence.
+          toolsForLlm
+          exampleReturn
+          validateIrrelevantFilesToClose
+          (configTaskMaxFailures cfg)
+    irrelevantFilesResult <- memoise (configCacheDir cfg) ("files_to_close_for_" <> mainFileName) () (const "") getIrrelevantFiles
+    let filesIdentifiedByLlm = filesToClose irrelevantFilesResult
+
+    if null filesIdentifiedByLlm
+    then liftIO $ putTextLn "LLM identified no unfocused files as completely irrelevant."
+    else do
+      liftIO $ putTextLn $ "LLM suggested the following unfocused files might be irrelevant: " <> T.intercalate ", " filesIdentifiedByLlm
+      
+      -- Before closing, re-check current state for safety.
+      currentState <- get
+      let currentlyOpenFileObjects = stateOpenFiles currentState
+      
+      let filesToActuallyClose = filter (\fName -> 
+            -- Check if the file is still in the list of open files
+            case find (\opf -> Core.openFileName opf == fName) currentlyOpenFileObjects of
+              Just openFile -> not (Core.openFileFocused openFile) -- And ensure it's still unfocused
+              Nothing       -> False -- File is no longer open
+            ) filesIdentifiedByLlm
+
+      if null filesToActuallyClose
+      then liftIO $ putTextLn "After re-checking, no valid (still open and unfocused) irrelevant files to close. They might have been closed or focused by other operations."
+      else do
+        liftIO $ putTextLn $ "Proceeding to close the following confirmed irrelevant and unfocused files: " <> T.intercalate ", " filesToActuallyClose
+        forM_ filesToActuallyClose $ \fName -> do
+          liftIO $ putTextLn $ "Closing file: " <> fName
+          modify' (Core.closeOpenFile fName) 
+          -- Note: For full event tracing, a `Tools.closeFile` that logs EvtCloseFile could be used here.
+        liftIO $ putTextLn $ "Successfully closed " <> T.pack (show $ length filesToActuallyClose) <> " irrelevant unfocused files."
+

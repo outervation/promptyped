@@ -27,6 +27,8 @@ allTools = [Tools.ToolOpenFile, Tools.ToolFocusFile, Tools.ToolCloseFile, Tools.
 readOnlyTools :: [Tools.Tool]
 readOnlyTools = [Tools.ToolOpenFile, Tools.ToolFocusFile, Tools.ToolCloseFile, Tools.ToolSummariseAction, Tools.ToolPanic, Tools.ToolReturn]
 
+readOnlyToolsNoFileActions :: [Tools.Tool]
+readOnlyToolsNoFileActions = [Tools.ToolSummariseAction, Tools.ToolPanic, Tools.ToolReturn]
 
 shortenedMessageLength :: Int
 shortenedMessageLength = 200
