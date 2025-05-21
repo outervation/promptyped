@@ -152,7 +152,7 @@ handleConsecutiveCompileFailures origCtxt = do
                 "Compilation is stuck. Current error:\n" <> currentError <> "\n\n" <>
                 "Based on the error, the following files were deemed most relevant:\n" <> T.intercalate ", " filesToFocus <> "\n\n" <>
                 "Recent actions taken:\n" <> T.unlines (map show recentEvents) <> "\n\n" <>
-                "Please analyze the error, relevant files, and recent history to suggest a specific, actionable plan to fix the compilation error. Return=<[{ hasSolution: bool, compileErrorSolution: string }]>. If you cannot find a likely solution, set hasSolution to false."
+                "Please analyze the error, relevant files, and recent history to suggest a specific, actionable plan to fix the compilation error. Return=<[{ hasSolution: bool, compileErrorSolution: string }]>. If you cannot find a likely solution, set hasSolution to false. DO NOT try to make any actual code changes yourself."
               solutionContext = makeBaseContext origCtxt.contextBackground solutionPrompt
               exampleSolution = CompileSolutionResult True "Import 'newpkg' in file_a.go and change function signature in file_b.go to accept an integer."
 
@@ -266,7 +266,7 @@ getTask st isNestedAiFunc isCloseFileTask mainTask = do
     (_, _, IsCloseFileTaskTrue, _) -> "Please close the least important open file, to free up space in the context. The task you were working on when the context got too large is as follows; you should close the file least relevant to it: " <> mainTask 
     (Nothing, Nothing, IsCloseFileTaskFalse, _) -> mainTask
     (Just _, _, IsCloseFileTaskFalse, IsNestedAiFuncFalse) -> "Fix the project build error. The error is described above. The task you were working on when compilation failed (don't work on it now, just fix the build):\n\"" <> mainTask <> "\""
-    (Nothing, Just _, IsCloseFileTaskFalse, IsNestedAiFuncFalse) -> "Fix the error that occurred building or running the tests. The error is described above. The task you were working on when compilation failed (don't work on it now, just fix the tests):\n\"" <> mainTask <> "\""
+    (Nothing, Just _, IsCloseFileTaskFalse, IsNestedAiFuncFalse) -> "Fix the error that occurred building or running the tests. The error is described above. The task you were working on when compilation failed (don't work on it now, just fix the tests):\n\"" <> mainTask <> "\"\nPlease DO NOT attempt that task until the tests are fixed."
     (_, _, IsCloseFileTaskFalse, IsNestedAiFuncTrue) -> mainTask
 
 contextToMessages :: forall bs a. (BS.BuildSystem bs, ToJSON a) => Context -> [Tools.Tool] -> AppState -> IsNestedAiFunc -> IsCloseFileTask -> a -> AppM [Message]

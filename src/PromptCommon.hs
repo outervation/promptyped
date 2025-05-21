@@ -409,11 +409,12 @@ data AutoRefactorUnitTests = DoAutoRefactorUnitTests | DontAutoRefactorUnitTests
 makeRefactorFileTask :: forall bs. (BS.BuildSystem bs) => Text -> [(ExistingFile, Tools.FocusOpenedFile)] -> Text -> [ThingWithDependencies] -> AutoRefactorUnitTests -> AppM ()
 makeRefactorFileTask background initialDeps fileName desiredChanges refactorUnitTests = do
   cfg <- ask
-  _ <- Tools.buildAndTest @bs
+  -- _ <- Tools.buildAndTest @bs
   modify' clearOpenFiles
   -- Note: file opened first will appear last (most recent)
   let dependencies = [(fileName, Tools.DoFocusOpenedFile), (journalFileName, Tools.DoFocusOpenedFile)] ++ map (\(x, shouldFocus) -> (x.existingFileName, shouldFocus)) initialDeps
   forM_ dependencies $ \(x, shouldFocus) -> Tools.openFile @bs shouldFocus x cfg
+  Tools.forceFocusFile fileName
   closeIrrelevantUnfocusedFiles @bs background desiredChanges fileName
   let makeChange description = do
         let ctxt = makeBaseContext background $ "Your task is to refactor the file " <> fileName <> " to make the change: " <> (summary description) <> ". Do NOT make other changes yet."
@@ -906,7 +907,7 @@ makeTargetedRefactorProject projectTexts refactorCfg = do
             autoRefactorUnitTests = if rCfg.refactorUpdateTests then DoAutoRefactorUnitTests else DontAutoRefactorUnitTests
             mkCtxt fileName =
               makeBaseContext background
-                $ "Please return a list of tasks that must be done to modify/refactor "
+                $ "Please return a list of tasks (if any; if the task is already done, the list may be empty) that must be done to modify/refactor "
                 <> fileName
                 <> " to achieve the objective: "
                 <> rCfg.refactorTask
@@ -916,6 +917,7 @@ makeTargetedRefactorProject projectTexts refactorCfg = do
             taskBackground = background <> "\nYour task for this file is: " <> rCfg.refactorTask
             getChangesTask fileName = Engine.runAiFunc @bs (mkCtxt fileName) HighIntelligenceRequired (Tools.ToolAppendFile : Engine.readOnlyTools) exampleTasks validateThingsWithDependencies (configTaskMaxFailures cfg)
         setupOpenFiles relFiles
+        Tools.forceFocusFile rCfg.refactorFile
         plannedTasks <- memoise (configCacheDir cfg) "file_tasks" rCfg.refactorFile id getChangesTask
         st <- get
         case getExistingFiles rCfg.refactorFileDependencies st of
@@ -1598,6 +1600,7 @@ closeIrrelevantUnfocusedFiles llmBackground taskChanges mainFileName = do
           "From the files that are currently open but *not* focused (which are explicitly: " <> T.intercalate ", " unfocusedOpenFileNames <> "), " <>
           "please identify any of these unfocused files that provide no relevant/useful information/type/function definitions for achieving the main task described above." <>
           "These irrelevant files can be closed to reduce clutter in the context and improve focus. " <>
+          "Be careful not to unfocus any core types files, e.g. types.go, common.go or the like that are likely to be used somehow. " <>
           "Note that unfocused source files only show function types and datatypes, not function bodies. " <>
           "Return a JSON object with a single key 'filesToClose' containing a list of just the filenames (from the provided unfocused list) that you determine are completely irrelevant; don't try to take any tool actions to actually close the files. " <>
           "If all unfocused files have some relevance, or if you are unsure, return an empty list for 'filesToClose'."
