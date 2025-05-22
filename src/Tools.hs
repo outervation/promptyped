@@ -38,6 +38,12 @@ isMutation ToolEscalate = False
 isMutation ToolSummariseAction = False
 isMutation _ = True
 
+isEditor :: Tool -> Bool
+isEditor ToolEditFile = True
+isEditor ToolEditFileByMatch = True
+isEditor ToolFileLineOp = True
+isEditor _ = False
+
 data ToolCall a = ToolCallOpenFile [OpenFileArg] | ToolCallFocusFile [FocusFileArg] | ToolCallCloseFile [CloseFileArg] | ToolCallAppendFile [AppendFileArg] | ToolCallReplaceFile [AppendFileArg] | ToolCallEditFile [EditFileArg] | ToolCallEditFileByMatch [EditFileByMatchArg] | ToolCallRevertFile [RevertFileArg] | ToolCallInsertInFile [InsertInFileArg] | ToolCallFileLineOp [FileLineOpArg] | ToolCallAddDependency [AddDependencyArg]| ToolCallPanic PanicArg | ToolCallEscalate EscalateArg | ToolCallSummariseAction [SummariseActionArg] | ToolCallReturn a
   deriving (Generic, Eq, Ord, Show)
 

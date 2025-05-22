@@ -434,7 +434,9 @@ makeRefactorFileTask background initialDeps fileName desiredChanges refactorUnit
 data BigRefactorConfig = BigRefactorConfig
   { bigRefactorInitialOpenFiles :: [Text],
     bigRefactorOverallTask :: Text,
-    bigRefactorOverallTaskShortName :: Text
+    bigRefactorOverallTaskShortName :: Text,
+    bigRefactorDoFinalSort :: Bool,
+    bigRefactorSpecFiles :: [Text]
   }
   deriving (Generic, Eq, Ord, Show)
 
@@ -631,7 +633,7 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
             then " and considering all available source files (" <> T.intercalate ", " allSourceFileNames <> "), "
             else " and that the following files are currently focused for inspection: " <> T.intercalate ", " initiallyFocusedFileNames <> ", ")
         <> "please identify a list of filenames that *actually need to be modified* to achieve the objective. "
-        <> "This list can be empty if no direct modifications to existing files are needed (e.g., the refactor only involves adding new files). "
+        <> "This list can be empty if no direct modifications to existing files are needed (e.g., the task only involves adding new files). "
         <> "The available source files for modification consideration include: " <> T.intercalate ", " allSourceFileNames <> "."
         <> (if null refactorCfg.bigRefactorInitialOpenFiles
             then ""
@@ -726,7 +728,7 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
               <> " and the refactoring tasks already planned for existing files (listed below, this list might be empty if no existing files are modified): \n"
               <> (if null tasksForExistingFiles then "No tasks for existing files.\n" else Tools.toJ tasksForExistingFiles <> "\n")
               <> "Please identify if any *new files* need to be created. These could be for new modules, utilities, or to better organize code that doesn't fit well into existing files. "
-              <> "For each new file, provide its name (e.g., 'newUtil.go', no nested paths), a summary of its purpose/content, and any dependencies it would have (on existing project files like "
+              <> "For each new file, provide its name, a summary of its purpose/content, and any dependencies it would have (on existing project files like "
               <> T.intercalate ", " allSourceFileNames
               <> " or other new files you are proposing in this same list). "
               <> "Please also include unit test files for every new file you create (although you may use one test file for multiple new files, where that fits better than one test per file). "
@@ -791,7 +793,7 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
           then pure $ Left (OtherMsg, "Task sorting modified tasks content or did not return all original tasks. The set of tasks must remain identical in content (refactorFile, refactorTask, etc.), only their order should change.")
           else pure $ Right sortedTasks
   
-  sortedTaskItems <- if null allTasksRaw then pure [] else
+  sortedTaskItems <- if null allTasksRaw then pure [] else if not refactorCfg.bigRefactorDoFinalSort then pure allTasksRaw else
     memoise (configCacheDir cfg) ("sorted_tasks_for_refactor_" <> objectiveShortName) () (const "") $ \_ ->
       Engine.runAiFunc @bs sortTasksPrompt HighIntelligenceRequired Engine.readOnlyTools (TargetedRefactorConfigItems allTasksRaw) (validateSortedTasks allTasksRaw) (configTaskMaxFailures cfg)
 
@@ -909,10 +911,11 @@ makeTargetedRefactorProject projectTexts refactorCfg = do
               makeBaseContext background
                 $ "Please return a list of tasks (if any; if the task is already done, the list may be empty) that must be done to modify/refactor "
                 <> fileName
-                <> " to achieve the objective: "
+                <> " to achieve the objective:\n ------ \n"
                 <> rCfg.refactorTask
-                <> "."
-                <> "Each task should list other task dependencies if any, and there should be no circular dependencies (dependencies here means other tasks, not imports). Don't include tasks like running the build system and unit tests; they will run automatically after file changes."
+                <> "\n ------ \n"
+                <> "Each task should list other task dependencies if any, and there should be no circular dependencies (dependencies here means other tasks, not imports). Don't include tasks like running the build system and unit tests; they will run automatically after file changes.\n"
+                <> "Please DO NOT attempt to call any tools to modify files to actually make the code changes, just Return a list of text values in the format specified below describing the individual tasks that need to be done.\n"
                 <> "If there's something relevant for later that you can't encode well in the return value, please AppendFile=<[{\"fileName\": \"journal.txt\", \"rawTextName\": \"journalUpdateTextBoxName\"}]> it to the journal."
             taskBackground = background <> "\nYour task for this file is: " <> rCfg.refactorTask
             getChangesTask fileName = Engine.runAiFunc @bs (mkCtxt fileName) HighIntelligenceRequired (Tools.ToolAppendFile : Engine.readOnlyTools) exampleTasks validateThingsWithDependencies (configTaskMaxFailures cfg)
@@ -1488,6 +1491,7 @@ makePromptResponseProject projectTexts = do
     ignoredDirs <- BS.getIgnoredDirs @bs
     existingFileNames <- liftIO $ FS.getFileNamesRecursive ignoredDirs cfg.configBaseDir
     modify' (updateExistingFiles existingFileNames)
+    _ <- Tools.buildAndTest @bs
     st <- get
 
     -- Define the filter function
@@ -1603,7 +1607,8 @@ closeIrrelevantUnfocusedFiles llmBackground taskChanges mainFileName = do
           "Be careful not to unfocus any core types files, e.g. types.go, common.go or the like that are likely to be used somehow. " <>
           "Note that unfocused source files only show function types and datatypes, not function bodies. " <>
           "Return a JSON object with a single key 'filesToClose' containing a list of just the filenames (from the provided unfocused list) that you determine are completely irrelevant; don't try to take any tool actions to actually close the files. " <>
-          "If all unfocused files have some relevance, or if you are unsure, return an empty list for 'filesToClose'."
+          "If all unfocused files have some relevance, or if you are unsure, return an empty list for 'filesToClose'." <>
+          "DO NOt attempt to make any file changes or call anytools to do so, just return a list in the format below."
 
     let aiContext = makeBaseContext llmBackground llmSpecificTaskPrompt 
     
