@@ -175,14 +175,21 @@ handleConsecutiveCompileFailures origCtxt = do
             else Tools.runTool @bs @() [] (Tools.ToolCallEscalate (Tools.EscalateArg "Unable to fix compilation; please suggest how to fix it")) origCtxt
 
 
-updateStats :: GenerationStats -> UsageData -> Int64 -> AppM ()
-updateStats generation usage timeTaken = do
+getModelTokenMetrics :: GenerationStats -> UsageData -> ModelTokenMetrics
+getModelTokenMetrics generation usage = do
   let ifNZOr x y = if x /= 0 then x else y
-  let metrics =
+      inTokens = ifNZOr (tokens_prompt generation) (prompt_tokens usage)
+      outTokens = ifNZOr (tokens_completion generation) (completion_tokens usage)
+  ModelTokenMetrics inTokens outTokens $ total_cost generation
+  
+updateStats :: IntelligenceRequired -> GenerationStats -> UsageData -> Int64 -> AppM ()
+updateStats intReq generation usage timeTaken = do
+  let tokenMetrics = getModelTokenMetrics generation usage
+      metrics =
         mempty
-          { metricsTokensIn = ifNZOr (tokens_prompt generation) (prompt_tokens usage),
-            metricsTokensOut = ifNZOr (tokens_completion generation) (completion_tokens usage),
-            metricsCost = total_cost generation,
+          { metricsLowInt = if intReq == LowIntelligenceRequired then tokenMetrics else mempty,
+            metricsMediumInt = if intReq == MediumIntelligenceRequired then tokenMetrics else mempty,
+            metricsHighInt = if intReq == HighIntelligenceRequired then tokenMetrics else mempty,
             metricsApiTime = timeTaken
           }
   liftIO $ Logging.logInfo "QueryMetrics" (show metrics)
@@ -203,7 +210,7 @@ runPrompt intReq messages = do
   (mayRes, nanosTaken) <- liftIO timedQuery
   case mayRes of
     Left err -> throwError $ "Error running prompt, with messages " <> show messages <> ": " <> err
-    Right queryResult -> updateStats (stats queryResult) (usage queryResult) nanosTaken >> pure (message queryResult, usage queryResult)
+    Right queryResult -> updateStats intReq (stats queryResult) (usage queryResult) nanosTaken >> pure (message queryResult, usage queryResult)
 
 makeSyntaxErrorCorrectionPrompt :: (ToJSON a) => [OpenFile] -> [Tools.Tool] -> a -> Message -> Text -> [Message]
 makeSyntaxErrorCorrectionPrompt relFiles tools exampleReturn llmMsg err = do

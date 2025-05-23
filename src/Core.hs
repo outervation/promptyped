@@ -280,11 +280,40 @@ isFileForbidden cfg name = do
 --        then Just $ "Filename " <> name <> " is forbidden because it contains '/'; no nested paths are allowed!"
 --        else Nothing
 
+data ModelTokenMetrics = ModelTokenMetrics
+  { tokensIn :: Int,
+    tokensOut :: Int,
+    tokensCost :: Double
+  }
+  deriving (Generic, Eq, Ord, Show)
+
+instance Semigroup ModelTokenMetrics where
+  (<>) (ModelTokenMetrics in1 out1 cost1) (ModelTokenMetrics in2 out2 cost2) =
+    ModelTokenMetrics
+      { tokensIn = in1 + in2,
+        tokensOut = out1 + out2,
+        tokensCost = cost1 + cost2
+      }
+
+instance Monoid ModelTokenMetrics where
+  mempty = ModelTokenMetrics 0 0 0
+
+instance Group ModelTokenMetrics where
+  invert (ModelTokenMetrics tin tout tcost) =
+    ModelTokenMetrics
+      { tokensIn = -tin,
+        tokensOut = -tout,
+        tokensCost = -tcost
+      }
+
+instance ToJSON ModelTokenMetrics
+instance FromJSON ModelTokenMetrics
+
 -- Metrics type for tracking
 data Metrics = Metrics
-  { metricsTokensIn :: Int,
-    metricsTokensOut :: Int,
-    metricsCost :: Double,
+  { metricsLowInt :: ModelTokenMetrics,
+    metricsMediumInt :: ModelTokenMetrics,
+    metricsHighInt :: ModelTokenMetrics,
     metricsApiTime :: Int64,
     metricsCompileTime :: Int64,
     metricsTestTime :: Int64,
@@ -295,15 +324,14 @@ data Metrics = Metrics
   deriving (Generic, Eq, Ord, Show)
 
 instance ToJSON Metrics
-
 instance FromJSON Metrics
 
 instance Semigroup Metrics where
-  (<>) (Metrics in1 out1 cost1 time1 timeComp1 timeTest1 syn1 comp1 test1) (Metrics in2 out2 cost2 time2 timeComp2 timeTest2 syn2 comp2 test2) =
+  (<>) (Metrics lowInt1 medInt1 highInt1 time1 timeComp1 timeTest1 syn1 comp1 test1) (Metrics lowInt2 medInt2 highInt2 time2 timeComp2 timeTest2 syn2 comp2 test2) =
     Metrics
-      { metricsTokensIn = in1 + in2,
-        metricsTokensOut = out1 + out2,
-        metricsCost = cost1 + cost2,
+      { metricsLowInt = lowInt1 <> lowInt2,
+        metricsMediumInt = medInt1 <> medInt2,
+        metricsHighInt = highInt1 <> highInt2,
         metricsApiTime = time1 + time2,
         metricsCompileTime = timeComp1 + timeComp2,
         metricsTestTime = timeTest1 + timeTest2,
@@ -313,14 +341,14 @@ instance Semigroup Metrics where
       }
 
 instance Monoid Metrics where
-  mempty = Metrics 0 0 0 0 0 0 0 0 0
+  mempty = Metrics mempty mempty mempty 0 0 0 0 0 0
 
 instance Group Metrics where
-  invert (Metrics tin tout cost time timeComp timeTest syn comp test) =
+  invert (Metrics lowInt medInt highInt time timeComp timeTest syn comp test) =
     Metrics
-      { metricsTokensIn = -tin,
-        metricsTokensOut = -tout,
-        metricsCost = -cost,
+      { metricsLowInt = invert lowInt,
+        metricsMediumInt = invert medInt,
+        metricsHighInt = invert highInt,
         metricsApiTime = -time,
         metricsCompileTime = -timeComp,
         metricsTestTime = -timeTest,

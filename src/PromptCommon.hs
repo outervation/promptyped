@@ -15,6 +15,7 @@ import Data.Graph
 import Data.Map qualified as Map
 import Data.Set qualified as Set
 import Data.Text qualified as T
+import Data.List qualified as L
 import Engine qualified
 import FileSystem qualified as FS
 import Memoise (memoise)
@@ -573,12 +574,22 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
         return $ buildable && not isTest
   allSourceFileNames <- filterM filterSourceFile $ map Core.existingFileName st.stateFiles
 
-  -- 1. Open all source files unfocused, journal and initial open files focused
-  liftIO $ putTextLn "Opening all source files (unfocused) and journal/initial deps (focused)..."
+  -- 1. Open all source files unfocused, spec files unfocused, journal and initial open files focused
+  liftIO $ putTextLn "Opening all source files (unfocused), spec files (unfocused), and journal/initial deps (focused)..."
   modify' clearOpenFiles
   forM_ allSourceFileNames $ \fileName -> Tools.openFile @bs Tools.DontFocusOpenedFile fileName cfg
+  forM_ refactorCfg.bigRefactorSpecFiles $ \fileName -> Tools.openFile @bs Tools.DontFocusOpenedFile fileName cfg -- spec files
   Tools.openFile @bs Tools.DoFocusOpenedFile journalFileName cfg
   forM_ refactorCfg.bigRefactorInitialOpenFiles $ \fileName -> Tools.openFile @bs Tools.DoFocusOpenedFile fileName cfg
+
+  -- Helper to get all known file names for validation (project files + initial open files + spec files)
+  let getAllKnownValidFileNames :: AppM (Set Text)
+      getAllKnownValidFileNames = do
+        st_local <- get
+        pure $ Set.fromList $
+          (map Core.existingFileName (stateFiles st_local)) ++
+          refactorCfg.bigRefactorInitialOpenFiles ++
+          refactorCfg.bigRefactorSpecFiles
 
   -- Prepare background for LLM
   let task = refactorCfg.bigRefactorOverallTask
@@ -590,22 +601,31 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
   -- 2. Identify Relevant Files for Initial Focus (LLM Call 1)
   let relevantFilesCtxt =
         makeBaseContext background
-          $ "Given the overall refactoring objective (" <> objectiveShortName <> ": " <> task <> "),"
-          <> " and considering all source files are currently open (most unfocused, some like '" <> journalFileName <> "' and initial dependencies might be focused), please identify a list of at most " <> show maxFocused <> " filenames that are most relevant and should be focused for closer inspection (including any already-focused files that should still be focused). These files will be brought into focus to aid in detailed planning. "
-          <> "Return a JSON object with a single key 'relevantFileNames' containing a list of these filenames. "
-          <> "The available source files are: " <> T.intercalate ", " allSourceFileNames <> "."
-          <> " Consider also these initially opened files: " <> T.intercalate ", " refactorCfg.bigRefactorInitialOpenFiles <> "."
+          ( "Given the overall objective (" <> objectiveShortName <> ": " <> task <> "),"
+              <> " and considering all source files are currently open (most unfocused, some like '" <> journalFileName <> "' and initial dependencies might be focused), please identify a list of at most " <> show maxFocused <> " existing filenames that are most relevant and should be focused for closer inspection (including any already-focused files that should still be focused). These files will be brought into focus to aid in detailed planning. "
+              <> "Return a JSON object with a single key 'relevantFileNames' containing a list of these filenames; it may be empty if there are no existing files yet. "
+              <> "The available source files are: " <> T.intercalate ", " allSourceFileNames <> "."
+              <> (if null refactorCfg.bigRefactorInitialOpenFiles
+                  then ""
+                  else " Consider also these initially opened files: " <> T.intercalate ", " refactorCfg.bigRefactorInitialOpenFiles <> ".")
+              <> (if null refactorCfg.bigRefactorSpecFiles
+                  then ""
+                  else " Additionally, the following specification files are open (unfocused) and may provide important context: " <> T.intercalate ", " refactorCfg.bigRefactorSpecFiles <> ".")
+          )
 
-  let exampleRelevantFiles = RelevantFiles { relevantFileNames = take (min 2 (length allSourceFileNames)) allSourceFileNames }
+  let exampleFocusNames = L.nub $
+        take (min 2 (length allSourceFileNames)) allSourceFileNames ++
+        take (min 1 (length refactorCfg.bigRefactorSpecFiles)) refactorCfg.bigRefactorSpecFiles
+  let exampleRelevantFiles = RelevantFiles { relevantFileNames = take maxFocused exampleFocusNames }
+
 
   let validateRelevantFiles :: Context -> RelevantFiles -> AppM (Either (MsgKind, Text) RelevantFiles)
       validateRelevantFiles _ rfs = do
-        st' <- get
-        let projectAndInitialFiles = Set.fromList $ (map Core.existingFileName (stateFiles st')) ++ refactorCfg.bigRefactorInitialOpenFiles
-        let missing = filter (not . (`Set.member` projectAndInitialFiles)) (relevantFileNames rfs)
+        knownFileNames <- getAllKnownValidFileNames
+        let missing = filter (not . (`Set.member` knownFileNames)) (relevantFileNames rfs)
         if null missing
         then pure $ Right rfs
-        else pure $ Left (OtherMsg, "The following relevant files identified by the LLM for initial focus do not exist in the project state or initial open files: " <> T.intercalate ", " missing)
+        else pure $ Left (OtherMsg, "The following relevant files identified by the LLM for initial focus do not exist: " <> T.intercalate ", " missing)
 
   initialFocusResult <- memoise (configCacheDir cfg) ("relevant_files_for_refactor_" <> objectiveShortName) () (const "") $ \_ ->
     Engine.runAiFunc @bs relevantFilesCtxt HighIntelligenceRequired Engine.readOnlyTools exampleRelevantFiles validateRelevantFiles (configTaskMaxFailures cfg)
@@ -619,7 +639,7 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
       mOpenFile <- getOpenFile ffName <$> get
       unless (isJust mOpenFile) $ do
           liftIO $ putTextLn $ "File " <> ffName <> " (for initial focus) was not in the open list. Opening it now."
-          Tools.openFile @bs Tools.DontFocusOpenedFile ffName cfg
+          Tools.openFile @bs Tools.DontFocusOpenedFile ffName cfg -- Open it if somehow not opened, though it should be
       Tools.forceFocusFile ffName -- This will make it focused.
   
   stAfterInitialFocus <- get
@@ -628,7 +648,7 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
 
   -- 4. Identify Files to Actually Modify (LLM Call 2)
   let filesToModifyPromptText =
-        "Given the overall refactoring objective (" <> objectiveShortName <> ": " <> task <> "),"
+        "Given the overall objective (" <> objectiveShortName <> ": " <> task <> "),"
         <> (if null initiallyFocusedFileNames
             then " and considering all available source files (" <> T.intercalate ", " allSourceFileNames <> "), "
             else " and that the following files are currently focused for inspection: " <> T.intercalate ", " initiallyFocusedFileNames <> ", ")
@@ -638,6 +658,9 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
         <> (if null refactorCfg.bigRefactorInitialOpenFiles
             then ""
             else " Also consider these initially opened files: " <> T.intercalate ", " refactorCfg.bigRefactorInitialOpenFiles <> ".")
+        <> (if null refactorCfg.bigRefactorSpecFiles
+            then ""
+            else " The following specification files are also open (unfocused) and might inform which files need changes or provide context: " <> T.intercalate ", " refactorCfg.bigRefactorSpecFiles <> ".")
         <> " Return a JSON object with a single key 'relevantFileNames' containing a list of these filenames (use 'relevantFileNames' as the key, as these are files relevant for modification)."
 
   let filesToModifyCtxt = makeBaseContext background filesToModifyPromptText
@@ -650,12 +673,11 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
 
   let validateFilesToModify :: Context -> RelevantFiles -> AppM (Either (MsgKind, Text) RelevantFiles)
       validateFilesToModify _ rfs = do
-        st' <- get
-        let projectAndInitialFiles = Set.fromList $ (map Core.existingFileName (stateFiles st')) ++ refactorCfg.bigRefactorInitialOpenFiles
-        let missing = filter (not . (`Set.member` projectAndInitialFiles)) (relevantFileNames rfs)
+        knownFileNames <- getAllKnownValidFileNames
+        let missing = filter (not . (`Set.member` knownFileNames)) (relevantFileNames rfs)
         if null missing
         then pure $ Right rfs
-        else pure $ Left (OtherMsg, "The following files identified by LLM for modification do not exist in project or initial files: " <> T.intercalate ", " missing)
+        else pure $ Left (OtherMsg, "The following files identified by LLM for modification do not exist: " <> T.intercalate ", " missing)
 
   filesToModifyLlmResult <- memoise (configCacheDir cfg) ("files_to_modify_for_refactor_" <> objectiveShortName) () (const "") $ \_ ->
     Engine.runAiFunc @bs filesToModifyCtxt HighIntelligenceRequired Engine.readOnlyTools exampleFilesToModify validateFilesToModify (configTaskMaxFailures cfg)
@@ -693,27 +715,34 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
                 <> "Specify if unit tests for `" <> fileNameToModify <> "` should be updated as part of these changes (`refactorUpdateTests`)."
                 <> "The 'refactorFile' field in your response MUST be '" <> fileNameToModify <> "'. "
                 <> "Available source files for dependencies include: " <> T.intercalate ", " allSourceFileNames <> "."
-                <> "Also consider initial open files as potential dependencies: " <> T.intercalate ", " refactorCfg.bigRefactorInitialOpenFiles <> "."
+                <> (if null refactorCfg.bigRefactorInitialOpenFiles
+                    then ""
+                    else " Also consider initial open files as potential dependencies: " <> T.intercalate ", " refactorCfg.bigRefactorInitialOpenFiles <> ".")
+                <> (if null refactorCfg.bigRefactorSpecFiles
+                    then ""
+                    else " The following specification files are also open (unfocused): " <> T.intercalate ", " refactorCfg.bigRefactorSpecFiles <> ". If any spec file is crucial for understanding or implementing the task for `" <> fileNameToModify <> "`, or for verifying its correctness, please list it in `refactorFileDependencies`.")
             )
-
+    let exampleDeps = L.nub $ 
+          take 1 (filter (/= fileNameToModify) allSourceFileNames) ++
+          take 1 (filter (/= fileNameToModify) refactorCfg.bigRefactorInitialOpenFiles) ++
+          take 1 (filter (/= fileNameToModify) refactorCfg.bigRefactorSpecFiles)
     let exampleTargetedRefactorConfigItem = TargetedRefactorConfigItem
           { refactorFile = fileNameToModify
           , refactorTask = "Implement feature X in " <> fileNameToModify <> " by doing Y and Z."
-          , refactorFileDependencies = take 1 $ filter (/= fileNameToModify) (allSourceFileNames ++ refactorCfg.bigRefactorInitialOpenFiles)
-          , refactorUpdateTests = False
+          , refactorFileDependencies = exampleDeps
+          , refactorUpdateTests = False -- LLM will decide this
           }
 
     let validateSingleItem :: Context -> TargetedRefactorConfigItem -> AppM (Either (MsgKind, Text) TargetedRefactorConfigItem)
         validateSingleItem _ item = do
-          st' <- get
-          let projectAndInitialFiles = Set.fromList $ (map Core.existingFileName (stateFiles st')) ++ refactorCfg.bigRefactorInitialOpenFiles
+          knownFileNames <- getAllKnownValidFileNames
           if item.refactorFile /= fileNameToModify
           then pure $ Left (OtherMsg, "Field 'refactorFile' in the response must be '" <> fileNameToModify <> "', but got '" <> item.refactorFile <> "'.")
           else do
-            let missingDeps = filter (not . (`Set.member` projectAndInitialFiles)) item.refactorFileDependencies
+            let missingDeps = filter (not . (`Set.member` knownFileNames)) item.refactorFileDependencies
             if null missingDeps
-            then pure $ Right item { refactorUpdateTests = False} -- Assuming default for refactorUpdateTests
-            else pure $ Left (OtherMsg, "The following dependencies for " <> fileNameToModify <> " do not exist in project state or initial files: " <> T.intercalate ", " missingDeps)
+            then pure $ Right item -- Respect LLM's decision on refactorUpdateTests
+            else pure $ Left (OtherMsg, "The following dependencies for " <> fileNameToModify <> " do not exist: " <> T.intercalate ", " missingDeps)
 
     singleItem <- memoise (configCacheDir cfg) ("targeted_refactor_item_" <> objectiveShortName) fileNameToModify id $ \fileNameKey ->
         Engine.runAiFunc @bs singleFileTaskCtxt HighIntelligenceRequired Engine.readOnlyTools (exampleTargetedRefactorConfigItem { refactorFile = fileNameKey }) validateSingleItem (configTaskMaxFailures cfg)
@@ -724,18 +753,26 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
   liftIO $ putTextLn "Asking LLM to identify any new files that need to be created..."
   let newFilesPrompt =
         makeBaseContext background
-          ( "Given the overall refactoring objective (" <> objectiveShortName <> ": " <> task <> "),"
-              <> " and the refactoring tasks already planned for existing files (listed below, this list might be empty if no existing files are modified): \n"
+          ( "Given the overall objective (" <> objectiveShortName <> ": " <> task <> "),"
+              <> " and the tasks already planned for existing files (listed below, this list might be empty if no existing files are modified): \n"
               <> (if null tasksForExistingFiles then "No tasks for existing files.\n" else Tools.toJ tasksForExistingFiles <> "\n")
               <> "Please identify if any *new files* need to be created. These could be for new modules, utilities, or to better organize code that doesn't fit well into existing files. "
               <> "For each new file, provide its name, a summary of its purpose/content, and any dependencies it would have (on existing project files like "
               <> T.intercalate ", " allSourceFileNames
-              <> " or other new files you are proposing in this same list). "
-              <> "Please also include unit test files for every new file you create (although you may use one test file for multiple new files, where that fits better than one test per file). "
+              <> (if null refactorCfg.bigRefactorInitialOpenFiles then "" else ", initially opened files like " <> T.intercalate ", " refactorCfg.bigRefactorInitialOpenFiles)
+              <> (if null refactorCfg.bigRefactorSpecFiles
+                  then ""
+                  else ", or specification files like " <> T.intercalate ", " refactorCfg.bigRefactorSpecFiles)
+              <> ", or other new files you are proposing in this same list). "
+              <> "If a new file's purpose or content is dictated by a specific spec file, ensure that spec file is listed as a dependency. "
+              <> "Please also include unit test files for every new file you create (although you may use one test file for multiple new files, where that fits better than one test per file). Tests should be positioned in the list right after the files they test."
               <> "If no new files are needed, return an empty list for 'items'.\n"
           )
+  let exampleNewFileDeps = L.nub $
+        take 1 allSourceFileNames ++ 
+        take 1 (filter (`notElem` allSourceFileNames) refactorCfg.bigRefactorSpecFiles)
   let exampleNewFiles = ThingsWithDependencies
-        { items = [ ThingWithDependencies "newAuthHandler.go" "Handles new authentication logic" ["existingRequestParser.go"]
+        { items = [ ThingWithDependencies "newAuthHandler.go" "Handles new authentication logic" exampleNewFileDeps
                   , ThingWithDependencies "newTypes.go" "Defines types for new authentication" []
                   ]
         }
@@ -743,13 +780,20 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
   let validateNewFilesProposal :: Context -> ThingsWithDependencies -> AppM (Either (MsgKind, Text) [ThingWithDependencies])
       validateNewFilesProposal _ proposedNewThings@(ThingsWithDependencies newItems) = do
         currentSt <- get
-        let actualExistingFiles = stateFiles currentSt
-        let existingFileNamesSet = Set.fromList $ map Core.existingFileName actualExistingFiles
-        let duplicateNames = filter (\item -> Set.member item.name existingFileNamesSet) newItems
+        let diskAndSpecFileNames = Set.fromList $
+              (map Core.existingFileName (stateFiles currentSt)) ++
+              refactorCfg.bigRefactorSpecFiles
+
+        let duplicateNames = filter (\item -> Set.member item.name diskAndSpecFileNames) newItems
         if not (null duplicateNames)
-        then pure $ Left (OtherMsg, "Proposed new files conflict with already existing project files: " <> T.intercalate ", " (map (.name) duplicateNames))
+        then pure $ Left (OtherMsg, "Proposed new files conflict with already existing project files or spec files: " <> T.intercalate ", " (map (.name) duplicateNames))
         else do
-          case topologicalSortThingsWithDependencies actualExistingFiles proposedNewThings of
+          let existingFilesForDepCheck =
+                Core.stateFiles currentSt ++
+                (map (\sfName -> Core.ExistingFile sfName "") $
+                 filter (\sfName -> sfName `notElem` map Core.existingFileName (Core.stateFiles currentSt)) refactorCfg.bigRefactorSpecFiles)
+
+          case topologicalSortThingsWithDependencies existingFilesForDepCheck proposedNewThings of
             Left err -> pure $ Left (OtherMsg, "Error in new file dependencies or topology: " <> err)
             Right sortedNewItems -> pure $ Right sortedNewItems
 
@@ -761,7 +805,7 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
         { refactorFile = twd.name
         , refactorTask = "NEW FILE: Create file '" <> twd.name <> "'. Purpose: " <> twd.summary
         , refactorFileDependencies = twd.dependencies
-        , refactorUpdateTests = False -- We want to let the model explicitly specify test files it wants to create
+        , refactorUpdateTests = False -- Let LLM decide on tests for new files, or handle via explicit test creation tasks
         }) newFilesNeededList
 
   let allTasksRaw = tasksForExistingFiles ++ newFileTasks
@@ -771,12 +815,13 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
   
   let sortTasksPrompt =
         makeBaseContext background
-          ( "You are given a list of refactoring tasks for project '" <> objectiveShortName <> "'. Some tasks involve modifying existing files, and some involve creating new files (indicated by 'NEW FILE:' in the task description). "
+          ( "You are given a list tasks for project '" <> objectiveShortName <> "'. Some tasks involve modifying existing files, and some involve creating new files (indicated by 'NEW FILE:' in the task description). "
               <> "The overall objective is: " <> task <> ". \n"
               <> "Please sort these tasks in the order they should be performed. Key considerations for ordering: \n"
               <> "1. A file must be created before it can be modified or depended upon by another task. Tasks prefixed with 'NEW FILE:' are creation tasks. \n"
               <> "2. If task A modifies/creates file F1, and task B modifies/creates file F2 which lists F1 in its 'refactorFileDependencies', task A should generally precede task B. \n"
               <> "3. Consider the 'refactorFileDependencies' field for each task carefully. \n"
+              <> "4. Specification files (" <> T.intercalate ", " refactorCfg.bigRefactorSpecFiles <> ") might be listed in dependencies; they are for reference and do not need to be 'created' by a task unless explicitly stated as a 'NEW FILE' task targeting a spec filename."
               <> "Return the sorted list of tasks in the same format as the input. Do not add, remove, or alter any tasks in terms of their content, only reorder them. Ensure all original tasks are present in the output.\n\n"
               <> "Tasks to sort:\n"
               <> Tools.toJ allTasksRaw
@@ -787,9 +832,9 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
         if length originalTasks /= length sortedTasks
         then pure $ Left (OtherMsg, "Task sorting changed the number of tasks. Original: " <> show (length originalTasks) <> ", Sorted: " <> show (length sortedTasks) <> ". Please ensure all original tasks are returned.")
         else
-          if Set.fromList (map refactorFile originalTasks) /= Set.fromList (map refactorFile sortedTasks) -- Quick check by file names first
+          if Set.fromList (map refactorFile originalTasks) /= Set.fromList (map refactorFile sortedTasks)
           then pure $ Left (OtherMsg, "Task sorting seems to have dropped or added tasks based on 'refactorFile' names. Please verify against the original list.")
-          else if Set.fromList originalTasks /= Set.fromList sortedTasks -- More thorough check
+          else if Set.fromList originalTasks /= Set.fromList sortedTasks
           then pure $ Left (OtherMsg, "Task sorting modified tasks content or did not return all original tasks. The set of tasks must remain identical in content (refactorFile, refactorTask, etc.), only their order should change.")
           else pure $ Right sortedTasks
   
