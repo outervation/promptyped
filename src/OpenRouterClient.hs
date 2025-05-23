@@ -473,7 +473,7 @@ retryWithDelay maxAttempts delayMicros shouldLog action = go maxAttempts
 -- Main query function with generation stats
 sendQuery :: Text -> Text -> Text -> Text -> Text -> Maybe Float -> [Message] -> IO (Either Text QueryResult)
 sendQuery apiSite apiKey siteUrl siteName model temperature msgs = do
-  let shouldStream = apiSite == "openrouter.ai" || apiSite == "api.deepseek.com" || apiSite == "generativelanguage.googleapis.com"
+  let shouldStream = apiSite == "openrouter.ai" || apiSite == "api.deepseek.com" || apiSite /= "generativelanguage.googleapis.com"
       initialQuery = if not shouldStream then sendQueryRaw else sendQueryStreaming
       numAttempts = 5
   Logging.logDebug "sendQuery" (T.unlines $ map renderMessage msgs)
