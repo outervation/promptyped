@@ -1633,7 +1633,8 @@ closeIrrelevantUnfocusedFiles llmBackground taskChanges mainFileName = do
   st <- get
 
   let unfocusedOpenFileObjs = filter (not . Core.openFileFocused) (stateOpenFiles st)
-  let unfocusedOpenFileNames = map Core.openFileName unfocusedOpenFileObjs
+      unfocusedOpenFileNamesInitial = map Core.openFileName unfocusedOpenFileObjs
+      unfocusedOpenFileNames = filter (\x -> not $ T.isInfixOf ".txt" x) unfocusedOpenFileNamesInitial
 
   if null unfocusedOpenFileNames then do
     liftIO $ putTextLn "No unfocused files are open. Skipping LLM call to identify irrelevant files."
@@ -1641,7 +1642,7 @@ closeIrrelevantUnfocusedFiles llmBackground taskChanges mainFileName = do
   else do
     liftIO $ putTextLn $ "Currently unfocused open files: " <> T.intercalate ", " unfocusedOpenFileNames
 
-    let taskSummary = "Your task is to close open files that are completely irrelevant for the main task; the main task (which will be done after the irrelevant files are closed) is:\nTo modify the file '" <> mainFileName <> "' based on the following required changes: " <> Tools.toJ taskChanges <> "."
+    let taskSummary = "Your task is to close open source files (not documentation/spec files) that are completely irrelevant for the main task; the main task (which will be done after the irrelevant files are closed) is:\nTo modify the file '" <> mainFileName <> "' based on the following required changes: " <> Tools.toJ taskChanges <> "."
     
     let llmSpecificTaskPrompt =
           taskSummary <> "\n\n" <>
@@ -1649,7 +1650,7 @@ closeIrrelevantUnfocusedFiles llmBackground taskChanges mainFileName = do
           "From the files that are currently open but *not* focused (which are explicitly: " <> T.intercalate ", " unfocusedOpenFileNames <> "), " <>
           "please identify any of these unfocused files that provide no relevant/useful information/type/function definitions for achieving the main task described above." <>
           "These irrelevant files can be closed to reduce clutter in the context and improve focus. " <>
-          "Be careful not to unfocus any core types files, e.g. types.go, common.go or the like that are likely to be used somehow. " <>
+          "Be careful not to close any core types files, e.g. types.go, common.go, config.go, utils.go or the like that are likely to be widely used. " <>
           "Note that unfocused source files only show function types and datatypes, not function bodies. " <>
           "Return a JSON object with a single key 'filesToClose' containing a list of just the filenames (from the provided unfocused list) that you determine are completely irrelevant; don't try to take any tool actions to actually close the files. " <>
           "If all unfocused files have some relevance, or if you are unsure, return an empty list for 'filesToClose'." <>
