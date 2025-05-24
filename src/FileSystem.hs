@@ -27,7 +27,7 @@ import System.Process qualified as Proc
 import System.Timeout qualified as Timeout
 
 maxErrLinesToShow :: Int
-maxErrLinesToShow = 300
+maxErrLinesToShow = 200
 
 runAll :: [IO (Either Text ())] -> IO (Either Text ())
 runAll = foldM step (Right ())
@@ -403,7 +403,7 @@ runProcessWithTimeout timeout workDir newEnv cmd args = do
 
 handleExitCode :: Text -> Either Text (Exit.ExitCode, Text, Text) -> IO (Either Text ())
 handleExitCode opName res = handleExitCodeInner opName (Just maxErrLinesToShow) res
-
+ 
 handleExitCodeInner :: Text -> Maybe Int -> Either Text (Exit.ExitCode, Text, Text) -> IO (Either Text ())
 handleExitCodeInner opName mayMaxLinesToShow res = do
   let maybeTruncateText = case mayMaxLinesToShow of

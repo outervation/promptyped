@@ -66,7 +66,7 @@ makeTaskFromConfig aCfg mCfg = do
           { projectDependencyNames = tCfg.dependencies,
             projectInitialFiles = [] -- tCfg.initialFiles
           }
-      backgroundTexts = spec
+      backgroundTexts = spec <> "\n\nNOTE: the project/module name is " <> tCfg.projectName <> ", which may be important as e.g. the root for importing from other packages in the same project in Golang.\n\n"
       projectTexts = ProjectTexts {projectSummaryText = backgroundTexts}
       initialState = AppState mempty [] [] mempty
       logDir = T.unpack $ logFileDir aCfg

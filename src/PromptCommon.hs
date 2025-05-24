@@ -231,7 +231,7 @@ validateFileModifiedWithAi fileName origCtxt x = do
   let tools = [Tools.ToolReturn, Tools.ToolPanic]
       exampleReturn = AiChangeVerificationResult True "Task completed successfuly!"
       background = "You are an AI agent responsible for checking other agents' output."
-      task = "You are reponsible for determining whether the below file modification task was indeed done to file " <> fileName <> ". Please do so based on what you can see in the file, and return the result in the format specified, with \"changeAlreadyBeenMade\": true if you see the task has indeed been done, and false if it's clear that the requested file modification hasn't been made, along with a \"messagToLlm\", that in the case the change hasn't been made should inform the LLM why the task it claims to have been completed has not been done. Don't check for correctness, i.e. an implementation of the change with a small bug or two should still pass, as they'll be handled later (however you should reject a change that does something obviously stupid). Do however check that the change is actually present, not just that it left a comment saying it did the change. For a refactoring task make sure it's done completely, with nothing left to do, not partially. If it did more than asked, that's okay as long as the changes it made looks reasonably helpful/necessary towards achieving the task. The task that was supposed to have been done:\n" <> origCtxt.contextTask
+      task = "You are reponsible for determining whether the below file modification task was indeed done to file " <> fileName <> ". Please do so based on what you can see in the file, and return the result in the format specified, with \"changeAlreadyBeenMade\": true if you see the task has indeed been done, and false if it's clear that the requested file modification hasn't been made, along with a \"messagToLlm\", that in the case the change hasn't been made should inform the LLM why the task it claims to have been completed has not been done. Don't check for correctness, i.e. an implementation of the change with a small bug or two should still pass, as they'll be handled later (however you should reject a change that does something obviously stupid). Do however check that the change is actually present, not just that it left a comment saying it did the change. For a refactoring task make sure it's done completely, with nothing left to do, not partially. If it did more than asked, that's okay as long as the changes it made looks reasonably helpful/necessary towards achieving the task. Note that for verifying Go dependencies are added, the base dependency will appear as 'indirect' in go.mod, and the full dependency won't be shown there util the dependency is actually imported and used in a file, so don't expect it to be. The task that was supposed to have been done:\n" <> origCtxt.contextTask
       ctxt = makeBaseContext background task
   verificationRes <- Engine.runAiFunc @bs ctxt MediumIntelligenceRequired tools exampleReturn validateAiChangeVerificationResult (configTaskMaxFailures cfg)
   liftIO $ putTextLn $ "Got result from AI check of modification:\n" <> origCtxt.contextTask <> "\nResult is: " <> show verificationRes
@@ -708,7 +708,7 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
     
     let singleFileTaskCtxt =
           makeBaseContext background
-            ( "Considering the overall refactoring objective (" <> objectiveShortName <> ": " <> task <> "),"
+            ( "Considering the overall objective (" <> objectiveShortName <> ": " <> task <> "),"
                 <> " and now specifically planning modifications for file `" <> fileNameToModify <> "` (which is focused). "
                 <> "What specific refactoring tasks are needed *for this file* (`" <> fileNameToModify <> "`)? "
                 <> "Also, list any other files (dependencies) from the project that are directly relevant to performing these tasks on `" <> fileNameToModify <> "`; do not mention external dependencies."
@@ -756,13 +756,13 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
           ( "Given the overall objective (" <> objectiveShortName <> ": " <> task <> "),"
               <> " and the tasks already planned for existing files (listed below, this list might be empty if no existing files are modified): \n"
               <> (if null tasksForExistingFiles then "No tasks for existing files.\n" else Tools.toJ tasksForExistingFiles <> "\n")
-              <> "Please identify if any *new files* need to be created. These could be for new modules, utilities, or to better organize code that doesn't fit well into existing files. "
+              <> "Please identify if any *new files* need to be created. These could be for new modules, utilities, or to better organize code that doesn't fit well into existing files. If the task is to create the project from scratch, please think deeply about how the project should be structured before deciding on the file structure."
               <> "For each new file, provide its name, a summary of its purpose/content, and any dependencies it would have (on existing project files like "
               <> T.intercalate ", " allSourceFileNames
               <> (if null refactorCfg.bigRefactorInitialOpenFiles then "" else ", initially opened files like " <> T.intercalate ", " refactorCfg.bigRefactorInitialOpenFiles)
               <> (if null refactorCfg.bigRefactorSpecFiles
                   then ""
-                  else ", or specification files like " <> T.intercalate ", " refactorCfg.bigRefactorSpecFiles)
+                  else ", or documentation/specification files like " <> T.intercalate ", " refactorCfg.bigRefactorSpecFiles)
               <> ", or other new files you are proposing in this same list). "
               <> "If a new file's purpose or content is dictated by a specific spec file, ensure that spec file is listed as a dependency. "
               <> "Please also include unit test files for every new file you create (although you may use one test file for multiple new files, where that fits better than one test per file). Tests should be positioned in the list right after the files they test."

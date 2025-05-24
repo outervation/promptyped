@@ -22,7 +22,7 @@ data ModelConfig = ModelConfig
     lowIntModelName :: Text,
     mediumIntModelName :: Text,
     highIntModelName :: Text,
-    taskMaxFailures :: Int,
+    taskMaxFailures :: RemainingFailureTolerance,
     rejectInvalidSyntaxDiffs :: Bool,
     maxNumFocusedFiles :: Int,
     modelTemperature :: Maybe Float,
@@ -68,7 +68,7 @@ instance ToJSON AppConfig
 
 appAndModelConfigToConfig :: AppConfig -> ModelConfig -> Config
 appAndModelConfigToConfig aCfg mCfg =
-  let cannotModifyDepReason = "You should not need to import any extra external libraries for this project, the stdlib can do everything you need."
+  let cannotModifyDepReason = "If you want to add a dependency, you should use the AddDependency tool, not modify the go.sum file directly."
    in Config
         { configApiKey = apiKey mCfg,
           configApiSite = apiSite mCfg,
@@ -83,11 +83,10 @@ appAndModelConfigToConfig aCfg mCfg =
           configGitUserEmail = gitUserEmail aCfg,
           configEnvVars = envVars aCfg,
           configMaxNumFocusedFiles = maxNumFocusedFiles mCfg,
-          configTaskMaxFailures = RemainingFailureTolerance (taskMaxFailures mCfg),
+          configTaskMaxFailures = taskMaxFailures mCfg,
           configRejectInvalidSyntaxDiffs = rejectInvalidSyntaxDiffs mCfg,
           configForbiddenFiles =
-            [ ForbiddenFile "go.mod" cannotModifyDepReason,
-              ForbiddenFile "go.sum" cannotModifyDepReason
+            [ ForbiddenFile "go.sum" cannotModifyDepReason
             ],
           configModelTemperature = modelTemperature mCfg,
           configModelMaxInputTokens = modelMaxInputTokens mCfg

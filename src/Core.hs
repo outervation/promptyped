@@ -52,14 +52,30 @@ data TracedEvent =
   EvtEscalation Text Text
   deriving (Generic, Eq, Ord, Show)
 
-newtype RemainingFailureTolerance = RemainingFailureTolerance Int
-  deriving (Eq, Ord, Show, Num)
+data RemainingFailureTolerance = RemainingFailureTolerance
+  {
+    remainingSyntaxErrorTolerance :: Int,
+    remainingSemanticErrorTolerance :: Int
+  }
+  deriving (Generic, Eq, Ord, Show)
+
+instance FromJSON RemainingFailureTolerance
+instance ToJSON RemainingFailureTolerance
+
+addSyntaxError :: RemainingFailureTolerance -> RemainingFailureTolerance
+addSyntaxError x = x {remainingSyntaxErrorTolerance = remainingSyntaxErrorTolerance x - 1}
+
+addSemanticError :: RemainingFailureTolerance -> RemainingFailureTolerance
+addSemanticError x = x {remainingSemanticErrorTolerance = remainingSemanticErrorTolerance x - 1}
+
+failureToleranceExceeded :: RemainingFailureTolerance -> Bool
+failureToleranceExceeded (RemainingFailureTolerance syn sem) = syn < 0 || sem < 0
 
 instance Semigroup RemainingFailureTolerance where
-  (<>) = (+)
+  (<>) = (\(RemainingFailureTolerance syn1 sem1) (RemainingFailureTolerance syn2 sem2) -> RemainingFailureTolerance (syn1 + syn2) (sem1 + sem2))
 
 instance Monoid RemainingFailureTolerance where
-  mempty = RemainingFailureTolerance 0
+  mempty = RemainingFailureTolerance 0 0
 
 data OpenFile = OpenFile
   { openFileName :: Text,

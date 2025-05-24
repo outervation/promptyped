@@ -466,7 +466,7 @@ runAiFuncInner ::
   RemainingFailureTolerance ->
   AppM (b, Context)
 runAiFuncInner isNestedAiFunc isCloseFileTask initialCtxt intReq tools exampleReturn postProcessor remainingErrs = do
-  when (remainingErrs <= 0) $ throwError "Aborting as reached max number of errors"
+  when (failureToleranceExceeded remainingErrs) $ throwError $ "Aborting as reached max number of errors; " <> show remainingErrs
   when (notElem Tools.ToolReturn tools) $ throwError "Missing Return tool!"
   when ((any Tools.isMutation tools) && notElem Tools.ToolSummariseAction tools) $ throwError "Missing SummariseAction tool!"
   origCtxt <- if isNestedAiFunc == IsNestedAiFuncTrue then pure initialCtxt else runActionWithoutModifyingState $ handleConsecutiveCompileFailures @bs initialCtxt
@@ -493,7 +493,7 @@ runAiFuncInner isNestedAiFunc isCloseFileTask initialCtxt intReq tools exampleRe
         fileCloseContext = (addErrorToContext baseCtxt msg OtherMsg)
         maxErrs = configTaskMaxFailures cfg
     liftIO $ Logging.logInfo "ContextReduction" $ "Telling model to reduce context size; msg: " <> msg
-    closedFile <- runAiFuncInner @bs isNestedAiFunc IsCloseFileTaskTrue fileCloseContext MediumIntelligenceRequired [Tools.ToolCloseFile, Tools.ToolReturn] fileClosedRes validateFileClosed maxErrs
+    closedFile <- runAiFuncInner @bs isNestedAiFunc IsCloseFileTaskTrue fileCloseContext MediumIntelligenceRequired [Tools.ToolCloseFile, Tools.ToolSummariseAction, Tools.ToolReturn] fileClosedRes validateFileClosed maxErrs
     liftIO $ Logging.logInfo "ContextReduction" $ "Successfully closed file: " <> show closedFile
   liftIO $ Logging.logInfo "AiResponse" (show res)
   let aiMsg = content res
@@ -530,10 +530,9 @@ runAiFuncInner isNestedAiFunc isCloseFileTask initialCtxt intReq tools exampleRe
     addErrorAndRecurse errMsg theCtxt errKind msgKind = do
       liftIO $ Logging.logWarn "RunAiFunc" errMsg
       putTextLn $ "Encountered error: " <> errMsg
-      cfg <- ask
       let ctxt' = addErrorToContext theCtxt errMsg msgKind
       when (errKind == SyntaxError) $ modify $ updateStateMetrics (mempty {metricsNumSyntaxErrors = 1})
-      let newErrs = if errKind == SyntaxError then remainingErrs - 1 else configTaskMaxFailures cfg
+      let newErrs = if errKind == SyntaxError then addSyntaxError remainingErrs else addSemanticError remainingErrs
       recur ctxt' newErrs
 
     addErrorToContext :: Context -> Text -> MsgKind -> Context

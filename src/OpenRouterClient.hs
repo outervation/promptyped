@@ -526,7 +526,7 @@ example site apiKey = do
       -- "openai/o1-mini"
       -- "gpt-4o-mini"
       -- "openai/gpt-3.5-turbo"
-      "gemini-2.0-flash-thinking-exp"
+      "gemini-2.5-pro-preview-03-25"
       -- "deepseek-ai/DeepSeek-R1"
       -- "meta-llama/Llama-3.3-70B-Instruct"
       Nothing
