@@ -65,8 +65,13 @@ instance ToJSON RemainingFailureTolerance
 addSyntaxError :: RemainingFailureTolerance -> RemainingFailureTolerance
 addSyntaxError x = x {remainingSyntaxErrorTolerance = remainingSyntaxErrorTolerance x - 1}
 
-addSemanticError :: RemainingFailureTolerance -> RemainingFailureTolerance
-addSemanticError x = x {remainingSemanticErrorTolerance = remainingSemanticErrorTolerance x - 1}
+-- Note: on a semantic error, we reset the syntax error count, as a semantic error
+-- implies that the syntax was correct.
+addSemanticError :: RemainingFailureTolerance -> Config -> RemainingFailureTolerance
+addSemanticError x cfg = do
+  let originalMaxSyntaxErrors = remainingSyntaxErrorTolerance $ configTaskMaxFailures cfg
+  x {remainingSemanticErrorTolerance = remainingSemanticErrorTolerance x - 1,
+     remainingSyntaxErrorTolerance = originalMaxSyntaxErrors}
 
 failureToleranceExceeded :: RemainingFailureTolerance -> Bool
 failureToleranceExceeded (RemainingFailureTolerance syn sem) = syn < 0 || sem < 0

@@ -532,7 +532,8 @@ runAiFuncInner isNestedAiFunc isCloseFileTask initialCtxt intReq tools exampleRe
       putTextLn $ "Encountered error: " <> errMsg
       let ctxt' = addErrorToContext theCtxt errMsg msgKind
       when (errKind == SyntaxError) $ modify $ updateStateMetrics (mempty {metricsNumSyntaxErrors = 1})
-      let newErrs = if errKind == SyntaxError then addSyntaxError remainingErrs else addSemanticError remainingErrs
+      cfg <- ask
+      let newErrs = if errKind == SyntaxError then addSyntaxError remainingErrs else addSemanticError remainingErrs cfg
       recur ctxt' newErrs
 
     addErrorToContext :: Context -> Text -> MsgKind -> Context

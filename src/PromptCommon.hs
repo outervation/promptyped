@@ -1650,7 +1650,7 @@ closeIrrelevantUnfocusedFiles llmBackground taskChanges mainFileName = do
           "From the files that are currently open but *not* focused (which are explicitly: " <> T.intercalate ", " unfocusedOpenFileNames <> "), " <>
           "please identify any of these unfocused files that provide no relevant/useful information/type/function definitions for achieving the main task described above." <>
           "These irrelevant files can be closed to reduce clutter in the context and improve focus. " <>
-          "Be careful not to close any core types files, e.g. types.go, common.go, config.go, utils.go or the like that are likely to be widely used. " <>
+          "Be careful not to close any core types files, e.g. types.go, common.go, config.go, utils.go or the like that are likely to be widely used. Never close main.go!" <>
           "Note that unfocused source files only show function types and datatypes, not function bodies. " <>
           "Return a JSON object with a single key 'filesToClose' containing a list of just the filenames (from the provided unfocused list) that you determine are completely irrelevant; don't try to take any tool actions to actually close the files. " <>
           "If all unfocused files have some relevance, or if you are unsure, return an empty list for 'filesToClose'. Err on the side of caution; if there's even a tiny chance a file might be useful, don't close it!" <>

@@ -298,8 +298,10 @@ buildProjectGo ::
 buildProjectGo timeout dir newEnv = Dir.withCurrentDirectory dir $ do
   putTextLn $ "Building Go project in dir " <> toText dir
   let buildIt = do
-        buildResult <- runProcessWithTimeout timeout "." newEnv "go" ["build", "./..."]
-        handleExitCode "'go build'" buildResult
+        --buildResult <- runProcessWithTimeout timeout "." newEnv "go" ["build", "./..."]
+        --handleExitCode "'go build'" buildResult
+        buildResult <- runProcessWithTimeout timeout "." newEnv "./build_all_go_binaries.sh" []
+        handleExitCode "'build_all_go_binaries.sh'" buildResult
       buildTests = do
         let lineToSkip x = "no tests to run" `T.isInfixOf` x || "no test files" `T.isInfixOf` x
             removeNoTestLines txt = unlines $ filter (not . lineToSkip) $ lines txt
