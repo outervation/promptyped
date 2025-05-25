@@ -16,7 +16,7 @@ import System.Exit qualified as Exit
 import System.FilePath qualified as FP
 
 maxTestFailLinesToShowFullOutput :: Int
-maxTestFailLinesToShowFullOutput = 400
+maxTestFailLinesToShowFullOutput = 600
 
 eitherToMaybe :: Either Text () -> Maybe Text
 eitherToMaybe (Left err) = Just err

@@ -138,7 +138,7 @@ topologicalSortThingsWithDependencies existingFiles (ThingsWithDependencies file
     AcyclicSCC _ -> pure ()
     CyclicSCC cycleGroup ->
       let cycleNames = map (\x -> x.name) cycleGroup
-       in Left $ "Error: Cycle detected in file dependencies: " <> show cycleNames
+       in Left $ "Error: Cycle detected in dependencies: " <> show cycleNames
 
   -- 5. Perform the topological sort
   let sortedVertices = topSort graph
@@ -1653,8 +1653,8 @@ closeIrrelevantUnfocusedFiles llmBackground taskChanges mainFileName = do
           "Be careful not to close any core types files, e.g. types.go, common.go, config.go, utils.go or the like that are likely to be widely used. " <>
           "Note that unfocused source files only show function types and datatypes, not function bodies. " <>
           "Return a JSON object with a single key 'filesToClose' containing a list of just the filenames (from the provided unfocused list) that you determine are completely irrelevant; don't try to take any tool actions to actually close the files. " <>
-          "If all unfocused files have some relevance, or if you are unsure, return an empty list for 'filesToClose'." <>
-          "DO NOt attempt to make any file changes or call anytools to do so, just return a list in the format below."
+          "If all unfocused files have some relevance, or if you are unsure, return an empty list for 'filesToClose'. Err on the side of caution; if there's even a tiny chance a file might be useful, don't close it!" <>
+          "DO NOT attempt to make any file changes or call anytools to do so, just return a list in the format below."
 
     let aiContext = makeBaseContext llmBackground llmSpecificTaskPrompt 
     
