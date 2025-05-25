@@ -46,8 +46,8 @@ extractFailedGoTestsSimple output =
 -- |   panic: test timed out after 10s
 -- |           running tests:
 -- |                   TestRunApplication_BasicDataFlow (10s)
-extractFailedGoTests :: Text -> [Text]
-extractFailedGoTests output =
+extractFailedGoTestsTopLevel :: Text -> [Text]
+extractFailedGoTestsTopLevel output =
   -- nub to remove duplicates, reverse because foldl' builds the list backwards
   L.nub . reverse . snd $ foldl' processLine (False, []) (T.lines output)
   where
@@ -104,6 +104,120 @@ extractFailedGoTests output =
               (False, accAfterFailCheck)
 
       in (nextInTimeoutList, finalAcc)
+
+-- | Extracts Go test names from lines like "--- FAIL: TestName (duration)"
+-- | and from timeout reports like:
+-- |   panic: test timed out after 10s
+-- |           running tests:
+-- |                   TestRunApplication_BasicDataFlow (10s)
+-- | For nested "--- FAIL:" blocks, it extracts only the most deeply nested test name
+-- | from each such block.
+extractFailedGoTests :: Text -> [Text]
+extractFailedGoTests output =
+  -- State for foldl':
+  --   ( Maybe (Int, Text) -- Current deepest FAIL candidate: (indentation, testName)
+  --   , Bool                -- isCurrentlyParsingTimeoutList
+  --   , [Text]              -- accumulatedTests (reversed, new tests are prepended)
+  --   )
+  let initialState = (Nothing, False, [])
+      (finalDeepestFail, _finalInTimeoutList, accumulatedTestsReversed) =
+        foldl' processLine initialState (T.lines output)
+
+      -- After processing all lines, if there's a pending deepest FAIL test candidate
+      -- (i.e., the last test block in the input was a FAIL block), add it to the results.
+      finalAccumulatedTests =
+        case finalDeepestFail of
+          Just (_, testName) -> testName : accumulatedTestsReversed
+          Nothing            -> accumulatedTestsReversed
+  in
+  -- nub to remove duplicates (e.g., if a test is both a FAIL and timed out),
+  -- and reverse to restore original encounter order (though order isn't strictly guaranteed
+  -- between different types of failures or deeply nested items).
+  L.nub . reverse $ finalAccumulatedTests
+
+processLine :: (Maybe (Int, Text), Bool, [Text]) -> Text -> (Maybe (Int, Text), Bool, [Text])
+processLine (mCurrentDeepestFail, inTimeoutList, acc) currentLine =
+  let sCurrentLine = T.strip currentLine -- Stripped line for content checks (e.g., markers)
+      -- Indentation is calculated from the original line to preserve formatting info
+      currentIndent = T.length currentLine - T.length (T.stripStart currentLine)
+      failMarker = T.pack "--- FAIL:"
+      isCurrentFailLine = failMarker `T.isPrefixOf` sCurrentLine
+
+      -- --- Handling of "--- FAIL:" lines (Nested Fail Logic) ---
+
+      -- Determine if the mCurrentDeepestFail (from previous lines) should be flushed.
+      -- A pending deepest FAIL test is flushed (i.e., added to 'acc') if:
+      -- 1. The current line is a new "--- FAIL:" line at an equal or lesser indent
+      --    than the pending one. This means the previous nested block ended.
+      -- 2. The current line is NOT a "--- FAIL:" line, is not empty/whitespace-only,
+      --    and is less indented than the pending FAIL line's declaration. This signals
+      --    the end of that FAIL block's associated log lines.
+      -- 3. The current line indicates a "panic: test timed out". This special event also
+      --    finalizes any pending FAIL block before handling the timeout itself.
+      (accAfterPotentialFlush, mEffectiveDeepestFail) =
+        case mCurrentDeepestFail of
+          Just (prevFailIndent, prevFailTestName) ->
+            -- Check for panic on the raw currentLine as it might not be at the start after stripping.
+            let isPanicLineForFlush = not isCurrentFailLine && T.pack "panic: test timed out" `T.isInfixOf` currentLine
+                shouldFlush =
+                  (isCurrentFailLine && currentIndent <= prevFailIndent) ||
+                  (not isCurrentFailLine && not (T.null sCurrentLine) && currentIndent < prevFailIndent) ||
+                  isPanicLineForFlush
+            in if shouldFlush
+                 then (prevFailTestName : acc, Nothing) -- Flushed: add to acc, reset current deepest for this cycle.
+                 else (acc, mCurrentDeepestFail)       -- Not flushed: carry over acc and current deepest.
+          Nothing -> (acc, Nothing) -- Nothing to flush, acc and current deepest (Nothing) carry over.
+
+      -- Update the deepest FAIL candidate if the current line *is* a "--- FAIL:" line.
+      -- It uses mEffectiveDeepestFail, which is mCurrentDeepestFail or Nothing if it was just flushed.
+      -- If it's a FAIL line, it becomes the new candidate, replacing any mEffectiveDeepestFail.
+      mNextDeepestFail =
+        if isCurrentFailLine then
+          case T.words (T.strip (T.drop (T.length failMarker) sCurrentLine)) of
+            (testName : _) -> Just (currentIndent, testName) -- This FAIL line becomes the new candidate.
+            _              -> mEffectiveDeepestFail         -- Malformed "--- FAIL:", carry over effective candidate.
+        else
+          mEffectiveDeepestFail -- Not a "--- FAIL:" line, carry over effective candidate from flush step.
+
+      -- --- Handling of Timeout Reports ---
+      -- Timeout test names are added directly to the accumulator (accAfterPotentialFlush).
+      (nextInTimeoutList, finalAcc) =
+        let hasLeadingSpace = T.length currentLine > T.length (T.stripStart currentLine)
+            isPanicLine = T.pack "panic: test timed out" `T.isInfixOf` currentLine -- Check on raw currentLine
+        in if isPanicLine then
+             -- A panic line starts a new timeout sequence.
+             -- accAfterPotentialFlush already includes any test name flushed due to this panic line.
+             (True, accAfterPotentialFlush)
+           else if inTimeoutList then
+             -- We are currently in a timeout sequence (because a previous line was a "panic" or "running tests:").
+             if hasLeadingSpace then
+               -- This line is indented. It might be "running tests:" or a timed-out test name.
+               if T.pack "running tests:" == sCurrentLine then
+                 (True, accAfterPotentialFlush) -- Confirmed "running tests:", stay in timeout list.
+               else if not (T.null sCurrentLine) && -- Ensure not an empty stripped line
+                        T.last sCurrentLine == ')' && -- Common pattern: "TestName (duration)"
+                        T.isInfixOf (T.pack "(") sCurrentLine &&
+                        not isCurrentFailLine then -- Make sure it's not a "--- FAIL:" line (those are handled above)
+                 case T.splitOn (T.pack "(") sCurrentLine of
+                   (namePart : _) ->
+                     let timedOutTestName = T.strip namePart
+                     in if not (T.null timedOutTestName) then
+                          (True, timedOutTestName : accAfterPotentialFlush) -- Add timed-out test, stay in list.
+                        else
+                          (True, accAfterPotentialFlush) -- Empty name part after stripping, stay in list.
+                   _ -> (True, accAfterPotentialFlush) -- No '(', or malformed; stay in list.
+               else
+                 -- Indented line, but not "running tests:" or a recognized test name format.
+                 -- Assume it's other log output within the timeout block; stay in the timeout list.
+                 (True, accAfterPotentialFlush)
+             else
+               -- Unindented line while inTimeoutList: this terminates the current timeout test list.
+               (False, accAfterPotentialFlush)
+           else
+             -- Not a "panic" line, and not currently in a timeout list.
+             (False, accAfterPotentialFlush)
+
+  in (mNextDeepestFail, nextInTimeoutList, finalAcc)
 
 tmpp :: IO [Text]
 tmpp = do
@@ -283,7 +397,9 @@ tryRerunOneByOne _ _ [] = do
 
 tryRerunOneByOne currentTimeout currentNewEnv (testNameToRun : restTestsToTry) = do
   -- Go's -run flag takes a regex. Wrap with ^ and $ for exact matches.
-  let runRegex = "^(" <> testNameToRun <> ")$"
+  --let runRegex = "^(" <> testNameToRun <> ")$"
+  -- We just use hte full name, as the regex fails to match nested tests
+  let runRegex = testNameToRun
   -- Note: T.unpack is important for [String] args
   let rerunArgs = ["test", "-run", T.unpack runRegex, "-timeout", "10s", "./..."]
   let opNameRerun = "'go test -run=" <> runRegex <> "'"
