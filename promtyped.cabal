@@ -50,6 +50,7 @@ library
                   raw-strings-qq,
                   regex-base,
                   regex-tdfa,
+                  regex-compat,
                   relude ^>=1.2.0,
                   servant,
                   servant-client,

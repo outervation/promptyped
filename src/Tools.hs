@@ -25,6 +25,7 @@ import FileSystem qualified as FS
 import Logging qualified
 import Relude
 import ShapeChecker (checkShapesMatch)
+import Text.Regex (subRegex, mkRegex)
 import Text.Regex.Base (makeRegexM)
 import Text.Regex.TDFA (Regex, match)
 
@@ -655,15 +656,16 @@ parseRawTexts input = go input []
 tmpp :: Text
 tmpp = "EditFileByMatch=<[{\n  \"fileName\": \"binanceFuturesSubscriber_test.go\",\n  \"startClosestToLineNum\": 273,\n  \"startLineMatchesRegex\": \"^// Test that a LevelNewQty message has the Side field set\",\n  \"endClosestToLineNum\": 285,\n  \"endLineMatchesRegex\": \"^\\\\s*}\\\\s*$\",\n  \"rawTextName\": \"replaceLevelNewQtyBlock\"\n}]>\nRAWTEXT[replaceLevelNewQtyBlock]=R\"r(\t// Test that a LevelNewQty message has the Side field set by using the helper function.\n\tdummyLevelNewQty := NewLevelNewQty(\"binance_cfutures\", \"BTCUSDT\", 0, 10000.5, 5, 1, 1630001000, 1630001001, \"\")\n\tif dummyLevelNewQty.Side == \"\" {\n\t\tt.Errorf(\"Side field not set in LevelNewQty message\")\n\t}\n)r\"\n  \nReturn=<[{\"fileFixConfirmed\": true, \"rationale\": \"Changed the test in TestAddedFieldsFutures to use the NewLevelNewQty constructor so that a missing side defaults to 'bid'. This ensures that the LevelNewQty message has a non-empty Side field as expected by the specification.\"}]>"
 
-findJsonContentInBlocks :: Text -> [Text]
-findJsonContentInBlocks text = go text []
+findJsonContentInBlocks :: Bool -> Text -> [Text]
+findJsonContentInBlocks mustHaveJson text = go text []
   where
     go :: Text -> [Text] -> [Text]
     go currentText acc =
-      case T.breakOn "```json" currentText of
+      let initiator = if mustHaveJson then "```json" else "```" in
+      case T.breakOn initiator currentText of
         (_, "") -> reverse acc -- No more "```json" start markers found
         (_beforeBlock, textStartingWithMarker) ->
-          let textAfterMarker = T.drop (T.length "```json") textStartingWithMarker
+          let textAfterMarker = T.drop (T.length initiator) textStartingWithMarker
           in case T.breakOn "```" textAfterMarker of
                (_, "") -> reverse acc -- No closing "```" found for the last block (malformed or end of input)
                (jsonContent, textAfterClosingMarker) ->
@@ -678,9 +680,39 @@ tmppGem = "```json\n[\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\
 tmppGem2 :: Text
 tmppGem2 = "```json\n[\n  {\n    \"tool_name\": \"FocusFile\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main.go\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"FocusFile\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main_test.go\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main.go\",\n        \"startClosestToLineNum\": 196,\n        \"startLineMatchesRegex\": \"func startReaderManager\\\\(ctx context.Context, appWg \\\\*sync.WaitGroup, cfg \\\\*config.Config, mdp metadata.MetadataProvider, logger \\\\*slog.Logger, rFactory readerFactory\\\\) \\\\[\\\\]<-chan \\\\*types.MarketEvent {\",\n        \"endClosestToLineNum\": 199,\n        \"endLineMatchesRegex\": \"func startReaderManager\\\\(ctx context.Context, appWg \\\\*sync.WaitGroup, cfg \\\\*config.Config, mdp metadata.MetadataProvider, logger \\\\*slog.Logger, rFactory readerFactory\\\\) \\\\[\\\\]<-chan \\\\*types.MarketEvent {\",\n        \"rawTextName\": \"startReaderManagerSignatureChange\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"InsertInFile\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main.go\",\n        \"lineNum\": 213,\n        \"rawTextName\": \"usePredefinedLogic\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main.go\",\n        \"startClosestToLineNum\": 264,\n        \"startLineMatchesRegex\": \"r, err := rFactory\\\\(sourceCfg, cfg, mdp\\\\) // Use the passed factory\",\n        \"endClosestToLineNum\": 271,\n        \"endLineMatchesRegex\": \"continue\",\n        \"rawTextName\": \"readerInstantiationLogic\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main.go\",\n        \"startClosestToLineNum\": 103,\n        \"startLineMatchesRegex\": \"readerOutputChans := startReaderManager\\\\(mainCtx, &appWg, cfg, mdp, appLogger, reader.NewReader\\\\)\",\n        \"endClosestToLineNum\": 103,\n        \"endLineMatchesRegex\": \"readerOutputChans := startReaderManager\\\\(mainCtx, &appWg, cfg, mdp, appLogger, reader.NewReader\\\\)\",\n        \"rawTextName\": \"runApplicationCallSiteUpdate\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": [\n      {\n        \"fileName\": \"cmd/marketdataserver/main_test.go\",\n        \"startClosestToLineNum\": 419,\n        \"startLineMatchesRegex\": \"// Define the mock reader factory for this test\",\n        \"endClosestToLineNum\": 486,\n        \"endLineMatchesRegex\": \"readerOutputChans := startReaderManager\\\\(mainAppCtx, &internalAppWg, cfg, mdp, util.Log, mockReaderFactory\\\\)\",\n        \"rawTextName\": \"testMockReaderInstantiationAndUpdateCall\"\n      }\n    ]\n  },\n  {\n    \"tool_name\": \"SummariseAction\",\n    \"args\": [\n      {\n        \"actionSummary\": \"Modified `startReaderManager` to accept pre-instantiated readers and updated `main.go` and `main_test.go` accordingly.\",\n        \"actionReason\": \"The task required allowing tests to inject mock readers more directly into `startReaderManager`.\",\n        \"actionFuturePlanSummary\": \"Verify test pass and ensure no regressions.\"\n      }\n    ]\n  }\n]\n```"
 
+tmppGem3 :: Text
+tmppGem3 = "The tests are still failing with timeouts in `TestRouting_MatchingLogic`.\nThe `StaticFileServer.ServeHTTP2` method logs show it attempts to send headers and data.\nThe `Stream.SendHeaders` and `Stream.WriteData` methods also log their entry.\nHowever, the `conn.sendHeadersFrame` and `conn.sendDataFrame` are still not being logged as called by the `Stream` methods.\n\nThe code inserted for `Stream.WriteData` has a subtle bug:\n`c.settingsMu.RLock()`\n`peerMaxFrameSize := c.peerMaxFrameSize`\n`c.settingsMu.RUnlock()`\n\n`c` is not defined within `Stream.WriteData`. It should be `s.conn`.\n\nLet's fix this.```\n[\n  {\n    \"tool_name\": \"EditFileByMatch\",\n    \"args\": {\n      \"fileName\": \"internal/http2/stream.go\",\n      \"startClosestToLineNum\": 199,\n      \"startLineMatchesRegex\": \"\\\\s*c\\\\.settingsMu\\\\.RLock\\\\(\\\\)\",\n      \"endClosestToLineNum\": 201,\n      \"endLineMatchesRegex\": \"\\\\s*c\\\\.settingsMu\\\\.RUnlock\\\\(\\\\)\",\n      \"rawTextName\": \"stream_writedata_conn_fix\"\n    }\n  },\n  {\n    \"tool_name\": \"SummariseAction\",\n    \"args\": {\n      \"actionSummary\": \"Correct `Stream.WriteData` to use `s.conn` instead of `c` when accessing connection settings.\",\n      \"actionReason\": \"The previous implementation of `Stream.WriteData` incorrectly used `c.settingsMu` and `c.peerMaxFrameSize` where `c` was undefined. It should have been `s.conn.settingsMu` and `s.conn.peerMaxFrameSize`. This caused a compile error, which implicitly prevented the intended logic for checking `peerMaxFrameSize` from running.\",\n      \"actionFuturePlanSummary\": \"Re-evaluate test logs. If `conn.sendDataFrame` is still not called, investigate other parts of `Stream.WriteData`, particularly flow control logic (even if stubbed) or any other conditions that might prevent the call to `s.conn.sendDataFrame`.\"\n    }\n  }\n]\nRAWTEXT[stream_writedata_conn_fix]=R\"r(\n\ts.conn.settingsMu.RLock() // Use RLock as we are only reading peerMaxFrameSize\n\tpeerMaxFrameSize := s.conn.peerMaxFrameSize\n\ts.conn.settingsMu.RUnlock()\n)r\"\n```"
+
+removeRawTextLiterals :: String -> String
+removeRawTextLiterals input =
+    let
+        -- Regex explanation:
+        -- RAWTEXT          : Literal "RAWTEXT"
+        -- \\[             : Literal "[" (escaped for regex)
+        -- .*             : Any character (except newline by default) zero or more times (for content inside [])
+        -- \\]             : Literal "]" (escaped for regex)
+        -- =                : Literal "="
+        -- R"r             : Literal "R\"r"
+        -- ([\\s\\S]*?)    : Capture group 1:
+        --   [\\s\\S]     : Any whitespace OR non-whitespace character (i.e., any char including newline)
+        --   *?           : Zero or more times, non-greedy (important to stop at the first "r\"")
+        -- r"              : Literal "r\""
+        --
+        -- Note: In Haskell string literals, '\' is an escape char, so '\\' becomes a literal '\' for the regex engine.
+        regexPattern :: String
+        regexPattern = "RAWTEXT\\[.*\\]=R\"r\\((.|\n)*\\)r\""
+
+        regex = mkRegex regexPattern
+
+    in
+        -- subRegex replaces all non-overlapping matches of 'regex' in 'input'
+        -- with the replacement string (here, an empty string "").
+        subRegex regex input ""
+
 extractJsonToolCallsGeminiFormat :: Text -> Either Text (M.Map T.Text [AET.Object])
 extractJsonToolCallsGeminiFormat fullText =
-  let jsonContentStrings = findJsonContentInBlocks fullText
+  let jsonContentStringsAttempt1 = findJsonContentInBlocks True fullText
+      jsonContentStrings = map (T.pack . removeRawTextLiterals . T.unpack) $ if null jsonContentStringsAttempt1 then findJsonContentInBlocks False fullText else jsonContentStringsAttempt1
 
       parseAndCollectBlocks :: [Text] -> Either Text (M.Map T.Text [AET.Object])
       parseAndCollectBlocks [] = Right M.empty
