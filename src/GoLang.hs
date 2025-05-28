@@ -4,6 +4,7 @@ module GoLang where
 
 import BuildSystem
 import Control.Monad.Except
+import System.IO.Error (ioError, userError)
 import Core
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
@@ -104,6 +105,16 @@ extractFailedGoTestsTopLevel output =
               (False, accAfterFailCheck)
 
       in (nextInTimeoutList, finalAcc)
+
+escapeRegexBrackets :: Text -> Text
+escapeRegexBrackets = T.concatMap escapeChar
+  where
+    escapeChar :: Char -> Text
+    escapeChar '(' = T.pack "\\("
+    escapeChar ')' = T.pack "\\)"
+    escapeChar '[' = T.pack "\\["
+    escapeChar ']' = T.pack "\\]"
+    escapeChar c   = T.singleton c
 
 -- | Extracts Go test names from lines like "--- FAIL: TestName (duration)"
 -- | and from timeout reports like:
@@ -335,7 +346,7 @@ runTestsGo ::
   IO (Maybe Text)
 runTestsGo timeout dir newEnv = Dir.withCurrentDirectory dir $ do
   putTextLn $ "Running initial Go tests in dir " <> toText dir
-  let initialArgs = ["test", "-timeout", "10s", "./..."]
+  let initialArgs = ["test", "-timeout", "20s", "./..."]
   -- initialTestResult :: IO (Either Text (Exit.ExitCode, Text, Text))
   initialTestResult <- runProcessWithTimeout timeout "." newEnv "go" initialArgs
 
@@ -364,23 +375,29 @@ runTestsGo timeout dir newEnv = Dir.withCurrentDirectory dir $ do
             eitherToMaybe <$> handleExitCode opNameInitial (Right (initialExitCode, initialStdout, initialStderr))
           else do
             putTextLn $ "Initial Go tests failed. Output has " <> T.pack (show totalLines) <> " lines (" <> T.pack (show maxTestFailLinesToShowFullOutput) <> " max for full). Attempting to extract and re-run."
-            let failedTests = sort $ L.nub $ extractFailedGoTests combinedOutput
-
+            -- sort in descending order of length so nested tests are picked first
+            let failedTests = sortOn (Down . T.length) $ L.nub $ extractFailedGoTests combinedOutput
             case failedTests of
               [] -> do
-                let err = "Could not extract specific failed test names (might be a compile error or different output format from initial run). Reporting full initial failure."
-                putTextLn err
-                eitherToMaybe <$> handleExitCode opNameInitial (Right (initialExitCode, initialStdout, initialStderr))
+                let err = "Error: Unit tests failed but could not extract specific failed test names. It's likely a unit tests is somehow corrupting/overriding the output of go test. Please remove any tests that overwrite the stdout/stderr!"
+                putTextLn $ err
+                pure $ Just err
+                -- ioError (userError err)
+                -- eitherToMaybe <$> handleExitCode opNameInitial (Right (initialExitCode, initialStdout, initialStderr))
 
+{-
               [_oneTestFromExtraction] -> do
                  -- Even if one test is extracted, if the initial failure was large,
                  -- re-running just one might hide interactions. Report original.
                  putTextLn $ "Initial Go tests failed (large output), and only one specific test name (" <> _oneTestFromExtraction <> ") was extracted. Reporting the original full failure as it's more informative than a potentially successful single re-run or a single re-run failure out of its original context."
                  eitherToMaybe <$> handleExitCode opNameInitial (Right (initialExitCode, initialStdout, initialStderr))
-
+-}
               multipleFailingTests -> do
                 putTextLn $ "Extracted " <> T.pack (show $ length multipleFailingTests) <> " potentially failing tests: " <> T.intercalate ", " multipleFailingTests <> ". Attempting to re-run them one by one."
-                tryRerunOneByOne timeout newEnv multipleFailingTests
+                res <- tryRerunOneByOne timeout newEnv multipleFailingTests
+                case res of
+                  Just err -> pure . Just $ "Encountered " <> show (length failedTests) <> " test failures: " <> show multipleFailingTests <> ", reran just a single test (for fixing tests one by one) and got output: " <> err
+                  Nothing -> pure Nothing
 
 -- Helper function to try re-running tests one by one
 tryRerunOneByOne ::
@@ -400,10 +417,10 @@ tryRerunOneByOne _ _ [] = do
 tryRerunOneByOne currentTimeout currentNewEnv (testNameToRun : restTestsToTry) = do
   -- Go's -run flag takes a regex. Wrap with ^ and $ for exact matches.
   --let runRegex = "^(" <> testNameToRun <> ")$"
-  -- We just use hte full name, as the regex fails to match nested tests
-  let runRegex = testNameToRun
+  -- We just use the full name, as the regex fails to match nested tests
+  let runRegex = escapeRegexBrackets testNameToRun
   -- Note: T.unpack is important for [String] args
-  let rerunArgs = ["test", "-run", T.unpack runRegex, "-timeout", "10s", "./..."]
+  let rerunArgs = ["test", "-run", T.unpack runRegex, "-timeout", "20s", "./..."]
   let opNameRerun = "'go test -run=" <> runRegex <> "'"
 
   putTextLn $ "Attempting to re-run individually: go " <> T.unwords (map T.pack rerunArgs)

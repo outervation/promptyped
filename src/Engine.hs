@@ -46,7 +46,7 @@ maxConsecutiveCompileErrors :: Int
 maxConsecutiveCompileErrors = 5
 
 numRecentEventsToShow :: Int
-numRecentEventsToShow = 50
+numRecentEventsToShow = 100
 
 data CompileProgressResult = CompileProgressResult
   { progressMade :: Bool,

@@ -329,7 +329,7 @@ checkCompileTestResults = do
   pure $ case (compileRes res, testRes res) of
     (Nothing, Nothing) -> Right ()
     (Just _, _) -> Left (CompileFailMsg, "Error, compilation failed, fix it before returning. Note that if you see a 'missing import path' compilation error, it may be because you forgot a closing ')' for the go import list. If you see 'is not a package path' when trying to import a local file you created, remember you should include 'project_name/filename', NOT '/home/username/project_name/filename' or 'username/project_name/filename'. The compilation error is described earlier above.")
-    (Nothing, Just _) -> Left (TestFailMsg, "Error, unit tests didn't all pass (or failed to compile), fix them first. I encourage you to add more logging/printf for debugging if necessary, and to record your current step and planned future steps in the journal.txt . If you see 'is not a package path' when trying to import a local file you created into a test, remember you should include 'project_name/filename', NOT '/home/username/project_name/filename' or 'username/project_name/filename, and put everything in package main. The error with unit tests is described earlier above.")
+    (Nothing, Just _) -> Left (TestFailMsg, "Error, unit tests didn't all pass (or failed to compile), fix them first. I encourage you to add more logging/printf for debugging if necessary, and to record your current step and planned future steps in the journal.txt . If you see 'is not a package path' when trying to import a local file you created into a test, remember you should include 'project_name/filename', NOT '/home/username/project_name/filename' or 'username/project_name/filename'. The error with unit tests is described earlier above.")
 
 validateUnitTest :: Context -> UnitTestDone -> AppM (Either (MsgKind, Text) ())
 validateUnitTest _ t = case unitTestPassedSuccessfully t of
@@ -418,7 +418,7 @@ makeRefactorFileTask background initialDeps fileName desiredChanges refactorUnit
   Tools.forceFocusFile fileName
   closeIrrelevantUnfocusedFiles @bs background desiredChanges fileName
   let makeChange description = do
-        let ctxt = makeBaseContext background $ "Your task is to refactor the file " <> fileName <> " to make the change: " <> (summary description) <> ". Do NOT make other changes yet."
+        let ctxt = makeBaseContext background $ "Your task is to refactor the file " <> fileName <> " to make the change: " <> (summary description) <> ". Do NOT make other changes yet. If the build/tests are currently broken, fix those first. If the change has already been made, you can return directly."
             exampleChange = ModifiedFile "someFile.go" "Update the file to add ... so that it ..."
             validateChange = Engine.combineValidatorsSameRes validateAlwaysPassIfCompileTestsFine (validateFileModifiedWithAi @bs fileName)
         liftIO $ putTextLn $ "Running file modification task: " <> show description

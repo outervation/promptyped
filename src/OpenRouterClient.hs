@@ -475,7 +475,7 @@ sendQuery :: Text -> Text -> Text -> Text -> Text -> Maybe Float -> [Message] ->
 sendQuery apiSite apiKey siteUrl siteName model temperature msgs = do
   let shouldStream = apiSite == "openrouter.ai" || apiSite == "api.deepseek.com" || apiSite /= "generativelanguage.googleapis.com"
       initialQuery = if not shouldStream then sendQueryRaw else sendQueryStreaming
-      numAttempts = 5
+      numAttempts = 50
   Logging.logDebug "sendQuery" (T.unlines $ map renderMessage msgs)
   let queryWithEmptyCheck remainingAttempts = do
         Logging.logInfo "sendQueryAttempt" ("Attempt " <> show (numAttempts + 1 - remainingAttempts) <> " with " <> show (length msgs) <> " messages")
@@ -493,7 +493,7 @@ sendQuery apiSite apiKey siteUrl siteName model temperature msgs = do
           Left err -> pure $ Left err
   queryResult <- retryWithDelay numAttempts 6000000 ShouldLog $ queryWithEmptyCheck numAttempts
   case queryResult of
-    Left err -> pure . Left $ "Error sending query to openrouter: " <> show err
+    Left err -> pure . Left $ "Error sending query to openrouter: " <> (T.take 1000 $ show err)
     Right resp -> case resp.choices of
       [] -> pure $ Left "OpenRouter query returned no message!"
       (x : _) -> do

@@ -35,10 +35,10 @@ loadFromCache fileName = do
       -- Update metrics with delta
       modify' $ \s ->
         s
-          { stateMetrics = stateMetrics s <> metricsDelta,
+          { stateMetrics = stateMetrics s <> metricsDelta
             --            stateOpenFiles = mergeOpenFiles (stateOpenFiles s) openFiles,
             --            stateFiles = mergeExistingFiles (stateFiles s) files,
-            stateCompileTestRes = compileTestRes
+            --            stateCompileTestRes = compileTestRes
           }
       return b
 
