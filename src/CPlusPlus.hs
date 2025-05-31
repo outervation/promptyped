@@ -124,25 +124,26 @@ runTestsCpp ::
   FilePath ->
   -- | Environment variables
   [(String, String)] ->
-  IO (Maybe Text)
+  IO (Maybe (Text, NumFailedTests))
 runTestsCpp timeout dir newEnv = Dir.withCurrentDirectory (dir FP.</> "build") $ do
   putTextLn $ "Testing in dir " <> T.pack dir
   result <- runProcessWithTimeout timeout "." newEnv "ctest" ["--output-on-failure"]
   case result of
-    Left err -> pure $ Just err
+    Left err -> pure $ Just (err, -1)
     Right (exitCode, stdoutRes, stderrRes) -> case exitCode of
       Exit.ExitSuccess -> pure Nothing
       Exit.ExitFailure code ->
         pure
-          $ Just
-          $ "Tests failed with exit code: "
+          $ Just (
+           "Tests failed with exit code: "
           <> T.pack (show code)
           <> "\n"
           <> "stdout:\n"
           <> stdoutRes
           <> "\n"
           <> "stderr:\n"
-          <> stderrRes
+          <> stderrRes,
+           NumFailedTests 1) -- Todo: count number of failing tests
 
 isCPlusPlusFileExtension :: Text -> Bool
 isCPlusPlusFileExtension fileName = ".h" `T.isSuffixOf` fileName || ".cc" `T.isSuffixOf` fileName || ".cpp" `T.isSuffixOf` fileName || ".hpp" `T.isSuffixOf` fileName

@@ -279,10 +279,10 @@ getTask st tools isNestedAiFunc isCloseFileTask mainTask = do
     (_, _, IsCloseFileTaskFalse, IsNestedAiFuncTrue, _) -> mainTask
 
 contextToMessages :: forall bs a. (BS.BuildSystem bs, ToJSON a) => Context -> [Tools.Tool] -> AppState -> IsNestedAiFunc -> IsCloseFileTask -> a -> AppM [Message]
-contextToMessages Context {..} tools theState isNestedAiFunc isCloseFileTask exampleReturn = do
+contextToMessages Context{..} tools theState isNestedAiFunc isCloseFileTask exampleReturn = do
   openFilesDesc <- getOpenFilesDesc
-  compileTestResDesc <- compileTestDesc $ stateCompileTestRes theState
   let messagesToUse = takeEnd (numOldMessagesToKeepInContext + 1) contextRest
+      compileTestResDesc = compileTestDesc $ stateCompileTestRes theState
       messages = map snd messagesToUse
       taskDesc = getTask theState tools isNestedAiFunc isCloseFileTask contextTask
       returnValueDesc = Tools.returnValueToDescription exampleReturn
@@ -297,7 +297,10 @@ contextToMessages Context {..} tools theState isNestedAiFunc isCloseFileTask exa
           respReqsDesc,
           returnValueDesc
         ]
-   in pure $ mergeAdjacentRoleMessages $ Message {role = roleName RoleUser, content = T.unlines allTexts} : messages
+      textSizes = map (\(x::Text, y) -> (x, T.length y)) [ ("contextBackground", contextBackground), ("filesDesc", filesDesc), ("openFilesDesc", openFilesDesc), ("evtsDesc", evtsDesc), ("toolDesc", toolDesc), ("compileTestResDesc", compileTestResDesc), ("taskDesc", taskDesc), ("respReqsDesc", respReqsDesc), ("returnValueDesc", returnValueDesc) ]
+   in do
+    liftIO $ Logging.logInfo "contextToMessages" $ "Relative component sizes: " <> show textSizes
+    pure $ mergeAdjacentRoleMessages $ Message {role = roleName RoleUser, content = T.unlines allTexts} : messages
   where
     toolDesc = Tools.toolsToDescription tools
     respReqsDesc = "Your response must either call at least one tool or return a value. If calling any tool, please also include a SummariseAction tool call too, for tracking the intent and future plans."
@@ -313,14 +316,15 @@ contextToMessages Context {..} tools theState isNestedAiFunc isCloseFileTask exa
       renderedFiles <- mapM (renderOpenFile render) $ stateOpenFiles theState
       pure $ "All currently open files (note these always represent the latest version on disk, even though they may appear in the context before the messages containing changes made to them. Also note that unfocused source files only show datatype and function definitions, not bodies, to save space in context):\n\n" <> unlines renderedFiles
     filesDesc = "All available files: \n " <> unlines (map renderExistingFile $ stateFiles theState)
+    compileTestDesc :: CompileTestState -> Text
     compileTestDesc ctRes = do
       let compDesc = case ctRes.compileRes of
             Just err -> "Failed with error: \n" <> err
             Nothing -> "Succeeded!"
           testDesc = case ctRes.testRes of
-            Just err -> "Failed with error: \n" <> err
+            Just (err, NumFailedTests numFailedTests) -> "Failed with " <> show numFailedTests <> "total test failures; the error was: \n" <> err
             Nothing -> "Succeeded!"
-      return $ "\nLATEST COMPILE/TEST STATE (note this represents the latest results even after messages that many occur below in the context): \nLast compilation: " <> compDesc <> "\nLast unit test run: " <> testDesc <> "\n"
+      "\nLATEST COMPILE/TEST STATE (note this represents the latest results even after messages that many occur below in the context): \nLast compilation: " <> compDesc <> "\nLast unit test run: " <> testDesc <> "\n"
 
 shortenOldErrorMessages :: [(MsgKind, Message)] -> [(MsgKind, Message)]
 shortenOldErrorMessages msgs =

@@ -36,6 +36,11 @@ data PotentiallyBigMessage = PotentiallyBigMessage Text
 instance Show PotentiallyBigMessage where
   show _ = "(Not shown to save space)"
 
+newtype NumFailedTests = NumFailedTests Int
+  deriving (Generic, Eq, Ord, Show, Num)
+instance ToJSON NumFailedTests
+instance FromJSON NumFailedTests
+
 data EventResult = Succeeded | Failed | FailedWithError Text | FailedWithPotentiallyVeryLongError PotentiallyBigMessage
   deriving (Generic, Eq, Ord, Show)
 
@@ -46,7 +51,7 @@ data TracedEvent =
   EvtCloseFile Text EventResult |
   EvtFileOp Text EventResult |
   EvtCompileProject EventResult |
-  EvtTestProject EventResult |
+  EvtTestProject EventResult NumFailedTests | 
   EvtAddDependency Text EventResult |
   EvtApproachCorrection Text |
   EvtEscalation Text Text
@@ -378,7 +383,7 @@ instance Group Metrics where
         metricsNumTestFails = -test
       }
 
-data CompileTestState = CompileTestState {compileRes :: Maybe Text, testRes :: Maybe Text, numConsecutiveCompilationFails :: Int, numConsecutiveSyntaxCheckFails :: Int}
+data CompileTestState = CompileTestState {compileRes :: Maybe Text, testRes :: Maybe (Text, NumFailedTests), numConsecutiveCompilationFails :: Int, numConsecutiveSyntaxCheckFails :: Int}
   deriving (Generic, Eq, Ord, Show)
 
 instance FromJSON CompileTestState
@@ -422,7 +427,7 @@ updateLastCompileState :: Maybe Text -> AppState -> AppState
 updateLastCompileState res st =
   st {stateCompileTestRes = (stateCompileTestRes st) {compileRes = res, numConsecutiveCompilationFails = if isJust res then (numConsecutiveCompilationFails (stateCompileTestRes st) + 1) else 0}}
 
-updateLastTestState :: Maybe Text -> AppState -> AppState
+updateLastTestState :: Maybe (Text, NumFailedTests) -> AppState -> AppState
 updateLastTestState res st =
   st {stateCompileTestRes = (stateCompileTestRes st) {testRes = res}}
 

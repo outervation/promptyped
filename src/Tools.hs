@@ -29,6 +29,9 @@ import Text.Regex (subRegex, mkRegex)
 import Text.Regex.Base (makeRegexM)
 import Text.Regex.TDFA (Regex, match)
 
+maxLineDistanceForRegexLineMatch :: Int
+maxLineDistanceForRegexLineMatch = 20
+
 data Tool = ToolOpenFile | ToolFocusFile | ToolCloseFile | ToolAppendFile | ToolReplaceFile | ToolInsertInFile | ToolEditFile | ToolEditFileByMatch | ToolRevertFile | ToolFileLineOp | ToolAddDependency | ToolPanic | ToolEscalate | ToolSummariseAction | ToolReturn
   deriving (Eq, Ord, Show)
 
@@ -1077,7 +1080,12 @@ normaliseLineOpTool (ToolCallEditFileByMatch args) = do
           Nothing -> pure . Left $ "Cannot edit file that's not open: " <> fileName
           (Just oFile) -> do
             let contents = openFileContents oFile
-                mayLineNums = getLineNumsFromRegex (startRegex, startNearNum) (endRegex, endNearNum) contents
+                mayLineNumsInitial = getLineNumsFromRegex (startRegex, startNearNum) (endRegex, endNearNum) contents
+                mayLineNums = case mayLineNumsInitial of
+                  Right (startNum, endNum) -> if (abs (startNearNum - startNum) < maxLineDistanceForRegexLineMatch) && (abs (endNearNum - endNum) < maxLineDistanceForRegexLineMatch)
+                    then Right (startNum, endNum)
+                    else Left $ "Error: Found matching line numbers (" <> show startNum <> ", " <> show endNum <> "), but at least one of these was more than " <> show maxLineDistanceForRegexLineMatch <> " lines away from the line number it was supposed to be near, so likely a far-away line is accidentally being matched. The numbers were supposed to be near (" <> show startNearNum <> ", " <> show endNearNum <> ") respectively."
+                  x -> x
                 updErr err = "Error attempting to find line nums for EditFileByMatch tool: " <> err
                 toLineOp (startNum, endNum) = FileLineOpArg fileName startNum (endNum + 1) textBoxName (toolName ToolEditFileByMatch)
             pure $ bimap updErr toLineOp mayLineNums
@@ -1137,7 +1145,9 @@ buildAndTest = do
       {-          case result of
                   Just err -> liftIO $ putTextLn $ "Test error: " <> err
                   Nothing -> return () -}
-      return (fmap (TestFailMsg,) result, evts ++ [EvtTestProject (if isJust result then Failed else Succeeded)])
+      return $ case result of
+        Just (err, numTestsFailed) -> (Just (TestFailMsg, err), evts ++ [EvtTestProject Failed numTestsFailed])
+        Nothing -> (Nothing, evts ++ [EvtTestProject Succeeded $ NumFailedTests 0])
 
 considerBuildAndTest :: forall a. (BS.BuildSystem a) => Text -> AppM (Maybe (MsgKind, Text), [TracedEvent])
 considerBuildAndTest fileName = do

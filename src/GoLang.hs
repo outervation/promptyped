@@ -343,7 +343,7 @@ runTestsGo ::
   NominalDiffTime ->
   FilePath ->
   [(String, String)] ->
-  IO (Maybe Text)
+  IO (Maybe (Text, NumFailedTests))
 runTestsGo timeout dir newEnv = Dir.withCurrentDirectory dir $ do
   putTextLn $ "Running initial Go tests in dir " <> toText dir
   let initialArgs = ["test", "-timeout", "30s", "./..."]
@@ -355,7 +355,7 @@ runTestsGo timeout dir newEnv = Dir.withCurrentDirectory dir $ do
       -- This error is from runProcessWithTimeout itself (e.g., timeout, command not found)
       let errMsg = "Initial Go tests ('go test ./...') execution failed: " <> procErrText
       putTextLn errMsg
-      pure $ Just errMsg
+      pure $ Just (errMsg, -1)
 
     Right (initialExitCode, initialStdout, initialStderr) ->
       case initialExitCode of
@@ -365,23 +365,29 @@ runTestsGo timeout dir newEnv = Dir.withCurrentDirectory dir $ do
 
         Exit.ExitFailure _ -> do
           let combinedOutput = initialStdout <> "\n" <> initialStderr
-          let totalLines = length $ T.lines combinedOutput
-          let opNameInitial = "'go test ./...'"
+              totalLines = length $ T.lines combinedOutput
+              opNameInitial = "'go test ./...'"
+              -- sort in descending order of length so nested tests are picked first
+              failedTests = sortOn (Down . T.length) $ L.nub $ extractFailedGoTests combinedOutput
+              numFailedTests = length failedTests
+
 
           if totalLines <= maxTestFailLinesToShowFullOutput then do
             putTextLn "Initial Go tests failed. Output is small, reporting directly."
             -- Pass the Right part of the result (successful execution, but failed test)
             -- to handleExitCode.
-            eitherToMaybe <$> handleExitCode opNameInitial (Right (initialExitCode, initialStdout, initialStderr))
+            eitherRes <- handleExitCode opNameInitial (Right (initialExitCode, initialStdout, initialStderr))
+            let res = eitherToMaybe eitherRes
+                res' = (\x -> (x, NumFailedTests numFailedTests)) <$> res
+            pure res'
+
           else do
             putTextLn $ "Initial Go tests failed. Output has " <> T.pack (show totalLines) <> " lines (" <> T.pack (show maxTestFailLinesToShowFullOutput) <> " max for full). Attempting to extract and re-run."
-            -- sort in descending order of length so nested tests are picked first
-            let failedTests = sortOn (Down . T.length) $ L.nub $ extractFailedGoTests combinedOutput
             case failedTests of
               [] -> do
                 let err = "Error: Unit tests failed but could not extract specific failed test names. It's likely a unit tests is somehow corrupting/overriding the output of go test. Please remove any tests that overwrite the stdout/stderr!"
                 putTextLn $ err
-                pure $ Just err
+                pure $ Just (err, NumFailedTests (-1))
                 -- ioError (userError err)
                 -- eitherToMaybe <$> handleExitCode opNameInitial (Right (initialExitCode, initialStdout, initialStderr))
 
@@ -396,7 +402,7 @@ runTestsGo timeout dir newEnv = Dir.withCurrentDirectory dir $ do
                 putTextLn $ "Extracted " <> T.pack (show $ length multipleFailingTests) <> " potentially failing tests: " <> T.intercalate ", " multipleFailingTests <> ". Attempting to re-run them one by one."
                 res <- tryRerunOneByOne timeout newEnv multipleFailingTests
                 case res of
-                  Just err -> pure . Just $ "Encountered " <> show (length failedTests) <> " test failures: " <> show multipleFailingTests <> ", reran just a single test (for fixing tests one by one) and got output: " <> err
+                  Just err -> pure $ Just ("Encountered " <> show numFailedTests <> " test failures: " <> show multipleFailingTests <> ", reran just a single test (for fixing tests one by one) and got output: " <> err, NumFailedTests numFailedTests)
                   Nothing -> pure Nothing
 
 -- Helper function to try re-running tests one by one
