@@ -85,7 +85,7 @@ makeTaskFromConfig aCfg mCfg = do
           Just refactorCfg -> withBuildSystem (getBuildSystem GoLang) $ \(_ :: Proxy bs) -> makeTargetedRefactorProject @bs projectTexts refactorCfg
           Nothing -> throwError "Missing targeted refactor config!"
         ChatProject -> withBuildSystem (getBuildSystem GoLang) $ \(_ :: Proxy bs) -> makePromptResponseProject @bs projectTexts
-        FileAnalysisProject -> withBuildSystem (getBuildSystem GoLang) $ \(_ :: Proxy bs) -> makeFileAnalysisProject @bs projectTexts
+        FileAnalysisProject -> withBuildSystem (getBuildSystem GoLang) $ \(_ :: Proxy bs) -> makeSpecComplianceAnalysisProject @bs projectTexts
         _ -> throwError $ "Unsupported project kind for TaskFromConfig: " <> show (projectKind aCfg)
   res <- runApp cfg initialState projectFn
   case res of

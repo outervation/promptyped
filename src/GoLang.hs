@@ -17,7 +17,7 @@ import System.Exit qualified as Exit
 import System.FilePath qualified as FP
 
 maxTestFailLinesToShowFullOutput :: Int
-maxTestFailLinesToShowFullOutput = 600
+maxTestFailLinesToShowFullOutput = 400
 
 eitherToMaybe :: Either Text () -> Maybe Text
 eitherToMaybe (Left err) = Just err
@@ -346,7 +346,7 @@ runTestsGo ::
   IO (Maybe Text)
 runTestsGo timeout dir newEnv = Dir.withCurrentDirectory dir $ do
   putTextLn $ "Running initial Go tests in dir " <> toText dir
-  let initialArgs = ["test", "-timeout", "20s", "./..."]
+  let initialArgs = ["test", "-timeout", "30s", "./..."]
   -- initialTestResult :: IO (Either Text (Exit.ExitCode, Text, Text))
   initialTestResult <- runProcessWithTimeout timeout "." newEnv "go" initialArgs
 
@@ -420,7 +420,7 @@ tryRerunOneByOne currentTimeout currentNewEnv (testNameToRun : restTestsToTry) =
   -- We just use the full name, as the regex fails to match nested tests
   let runRegex = escapeRegexBrackets testNameToRun
   -- Note: T.unpack is important for [String] args
-  let rerunArgs = ["test", "-run", T.unpack runRegex, "-timeout", "20s", "./..."]
+  let rerunArgs = ["test", "-run", T.unpack runRegex, "-timeout", "10s", "./..."]
   let opNameRerun = "'go test -run=" <> runRegex <> "'"
 
   putTextLn $ "Attempting to re-run individually: go " <> T.unwords (map T.pack rerunArgs)

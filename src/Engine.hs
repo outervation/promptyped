@@ -209,7 +209,7 @@ runPrompt intReq messages = do
   let timedQuery = timeIONano64 $ Client.sendQuery (configApiSite cfg) (configApiKey cfg) "prompTyped" "prompTyped" model (configModelTemperature cfg) messages
   (mayRes, nanosTaken) <- liftIO timedQuery
   case mayRes of
-    Left err -> throwError $ "Error running prompt, with messages " <> show messages <> ": " <> err
+    Left err -> throwError $ "Error running prompt: " <> err
     Right queryResult -> updateStats intReq (stats queryResult) (usage queryResult) nanosTaken >> pure (message queryResult, usage queryResult)
 
 makeSyntaxErrorCorrectionPrompt :: (ToJSON a) => [OpenFile] -> [Tools.Tool] -> a -> Message -> Text -> [Message]

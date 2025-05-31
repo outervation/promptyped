@@ -978,21 +978,21 @@ makeTargetedRefactorProject projectTexts refactorCfg = do
             makeRefactorFileTask @bs taskBackground finalDeps rCfg.refactorFile plannedTasks autoRefactorUnitTests
   forM_ refactorCfg.refactorFileTasks doRefactor
 
-data FileAnalysisResult = FileAnalysisResult
+data FileSpecComplianceAnalysisResult = FileSpecComplianceAnalysisResult
   { waysItDoesntMeetSpec :: Text,
     overallContentSummary :: Text
   }
   deriving (Generic, Eq, Ord, Show)
 
-renderFileAnalysisResult :: FileAnalysisResult -> Text
-renderFileAnalysisResult (FileAnalysisResult spec overall) = "FileAnalysisResult{\n waysItDoesntMeetSpec: " <> spec <> "\n,\n overallContentSummary: " <> overall <> "\n}"
+renderFileSpecComplianceAnalysisResult :: FileSpecComplianceAnalysisResult -> Text
+renderFileSpecComplianceAnalysisResult (FileSpecComplianceAnalysisResult spec overall) = "FileSpecComplianceAnalysisResult{\n waysItDoesntMeetSpec: " <> spec <> "\n,\n overallContentSummary: " <> overall <> "\n}"
 
-instance ToJSON FileAnalysisResult
+instance ToJSON FileSpecComplianceAnalysisResult
 
-instance FromJSON FileAnalysisResult
+instance FromJSON FileSpecComplianceAnalysisResult
 
-makeFileAnalysisProject :: forall bs. (BS.BuildSystem bs) => ProjectTexts -> AppM ()
-makeFileAnalysisProject projectTexts = do
+makeSpecComplianceAnalysisProject :: forall bs. (BS.BuildSystem bs) => ProjectTexts -> AppM ()
+makeSpecComplianceAnalysisProject projectTexts = do
   cfg <- ask
   ignoredDirs <- BS.getIgnoredDirs @bs
   existingFileNames <- liftIO $ FS.getFileNamesRecursive ignoredDirs cfg.configBaseDir
@@ -1004,20 +1004,20 @@ makeFileAnalysisProject projectTexts = do
         modify' clearOpenFiles
         forM_ sourceFileNames $ \x -> Tools.openFile @bs Tools.DontFocusOpenedFile x cfg
         Tools.openFile @bs Tools.DoFocusOpenedFile fileName cfg
-      getSummary :: Text -> AppM (Text, FileAnalysisResult)
+      getSummary :: Text -> AppM (Text, FileSpecComplianceAnalysisResult)
       getSummary fileName = do
         let mkCtxt name =
               makeBaseContext background
                 $ "Please check if "
                 <> name
                 <> " matches the specification, and return any ways it fails to satisfy it. Please also return detailed notes on its behaviour, for reference when checking other files. Double-check too that the logic there makes sense / has no bugs, and report anything that seems dubious/illogical."
-            exampleRes = FileAnalysisResult (fileName <> "doesn't meet the spec completely because it's supposed to ..., but it doesn't, and ...") "The file fulfills the following spec-relevant behaviours:"
+            exampleRes = FileSpecComplianceAnalysisResult (fileName <> "doesn't meet the spec completely because it's supposed to ..., but it doesn't, and ...") "The file fulfills the following spec-relevant behaviours:"
             getChangesTask name = Engine.runAiFunc @bs (mkCtxt name) MediumIntelligenceRequired Engine.readOnlyTools exampleRes Engine.validateAlwaysPass (configTaskMaxFailures cfg)
         setupOpenFile fileName
         fileRes <- memoise (configCacheDir cfg) "file_analysis" fileName id getChangesTask
         return (fileName, fileRes)
   summaries <- forM sourceFileNames getSummary
-  let summariesCat = T.unlines $ map (\(name, res) -> name <> ":\n" <> renderFileAnalysisResult res) summaries
+  let summariesCat = T.unlines $ map (\(name, res) -> name <> ":\n" <> renderFileSpecComplianceAnalysisResult res) summaries
       combinedSummaryCtxt =
         makeBaseContext background
           $ "You previously analysed files in the project to identify any way they failed to match the spec. Now, based on the result of your analysis (which was per-file), can you see any other ways in which overall the project fails to match the spec? The analysis was:\n"

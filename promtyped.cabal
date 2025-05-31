@@ -65,9 +65,6 @@ executable promtyped
     hs-source-dirs:     app
     other-modules:
         AppConfig
-        BinanceApiDataRecorder
-        Http11Server
-        Http20Server
         TaskFromConfig
 
     default-language:   GHC2024
