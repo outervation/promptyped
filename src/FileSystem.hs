@@ -110,7 +110,7 @@ tryFileOp path op checker maybeBounds = do
             ++ ". Additionally, failed to restore backup: "
             ++ show restoreErr
         Right _ ->
-          return . Left $ err <> "\n. The relevant part of the file post-modification looked like (note that's not the state of the file on disk, as the change was rejected): " <> modifiedFileRelevantPart
+          return . Left $ "The file change you attempted to make was rejected and not applied due to:\n" <> err <> "\n. The relevant part of the file post-modification looked like (note that's not the state of the file on disk, as the change was rejected):\n\n" <> modifiedFileRelevantPart <> "\n\nPlease modify your tool call so the edit doesn't produce syntactically invalid code, and note again that the error above describes what the file would look like post-change, but the change was rejected so the contents of the file on disk are still those seen in the open files section earlier above."
 
 readFileToText :: FilePath -> IO Text
 readFileToText path = do

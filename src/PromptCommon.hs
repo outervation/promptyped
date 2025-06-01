@@ -236,7 +236,7 @@ validateFileModifiedWithAi fileName origCtxt x = do
   liftIO $ putTextLn $ "Got result from AI check of modification:\n" <> origCtxt.contextTask <> "\nResult is: " <> show verificationRes
   pure $ case verificationRes.changeAlreadyBeenMade of
     True -> Right x
-    False -> Left (OtherMsg, "Error: An LLM determined that the change you claim to have been made has not actually been made: " <> verificationRes.messageToLlm)
+    False -> Left (OtherMsg, "Error: An LLM determined that the change you claim to have been made has not actually been made: " <> verificationRes.messageToLlm <>"\nIf the change is impossible to make, then please add a comment to the relevant part of the file arguing and explaining in detail exactly why it cannot be done.")
 
 data CreatedFile = CreatedFile
   { createdFileName :: Text,
@@ -417,7 +417,7 @@ makeRefactorFileTask background initialDeps fileName desiredChanges refactorUnit
   Tools.forceFocusFile fileName
   closeIrrelevantUnfocusedFiles @bs background desiredChanges fileName
   let makeChange description = do
-        let ctxt = makeBaseContext background $ "Your task is to refactor the file " <> fileName <> " to make the change: " <> (summary description) <> ". Do NOT make other changes yet. If the build/tests are currently broken, fix those first. If the change has already been made, you can return directly."
+        let ctxt = makeBaseContext background $ "Your task is to refactor the file " <> fileName <> " to make the change: " <> (summary description) <> ". Do NOT make other changes yet. If the build/tests are currently broken, fix those first. If the change has already been made, you can return directly. Where the task has multiple steps, you don't need to do it all at once; it's better to do it step-by-step (one step per response) to reduce the chance of errors, and only Return after all steps are done."
             exampleChange = ModifiedFile "someFile.go" "Update the file to add ... so that it ..."
             validateChange = Engine.combineValidatorsSameRes validateAlwaysPassIfCompileTestsFine (validateFileModifiedWithAi @bs fileName)
         liftIO $ putTextLn $ "Running file modification task: " <> show description
@@ -819,7 +819,7 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
               <> "2. If task A modifies/creates file F1, and task B modifies/creates file F2 which lists F1 in its 'refactorFileDependencies', task A should generally precede task B. \n"
               <> "3. Consider the 'refactorFileDependencies' field for each task carefully. \n"
               <> "4. Specification files (" <> T.intercalate ", " refactorCfg.bigRefactorSpecFiles <> ") might be listed in dependencies; they are for reference and do not need to be 'created' by a task unless explicitly stated as a 'NEW FILE' task targeting a spec filename."
-              <> "Return the sorted list of tasks in the same format as the input. Do not add, remove, or alter any tasks in terms of their content, only reorder them. Ensure all original tasks are present in the output.\n\n"
+              <> "Return the sorted list of tasks in the same format as the input. Do not add, remove, or alter any tasks in terms of their content, only reorder them. Ensure all original tasks are present in the output. Unit tests should be listed right after the file they test.\n\n"
               <> "Tasks to sort:\n"
               <> Tools.toJ allTasksRaw
           )

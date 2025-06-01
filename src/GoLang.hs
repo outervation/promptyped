@@ -336,7 +336,7 @@ runTestsGoOld ::
   IO (Maybe Text)
 runTestsGoOld timeout dir newEnv = Dir.withCurrentDirectory dir $ do
   putTextLn $ "Testing Go project in dir " <> toText dir
-  testResult <- runProcessWithTimeout timeout "." newEnv "go" ["test", "-timeout", "30s", "./..."]
+  testResult <- runProcessWithTimeout timeout "." newEnv "go" ["test", "-timeout", "40s", "./..."]
   eitherToMaybe <$> handleExitCode "'go test'" testResult
 
 runTestsGo ::
@@ -346,7 +346,7 @@ runTestsGo ::
   IO (Maybe (Text, NumFailedTests))
 runTestsGo timeout dir newEnv = Dir.withCurrentDirectory dir $ do
   putTextLn $ "Running initial Go tests in dir " <> toText dir
-  let initialArgs = ["test", "-timeout", "30s", "./..."]
+  let initialArgs = ["test", "-timeout", "40s", "./..."]
   -- initialTestResult :: IO (Either Text (Exit.ExitCode, Text, Text))
   initialTestResult <- runProcessWithTimeout timeout "." newEnv "go" initialArgs
 
