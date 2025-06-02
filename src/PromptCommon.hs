@@ -762,7 +762,7 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
                   else ", or documentation/specification files like " <> T.intercalate ", " refactorCfg.bigRefactorSpecFiles)
               <> ", or other new files you are proposing in this same list). "
               <> "If a new file's purpose or content is dictated by a specific spec file, ensure that spec file is listed as a dependency. "
-              <> "Please also include unit test files for every new file you create (although you may use one test file for multiple new files, where that fits better than one test per file). Tests should be positioned in the list right after the files they test."
+              <> "Please also include unit test files for every new file you create (although you may use one test file for multiple new files, where that fits better than one test per file). Tests should be positioned in the list right after the files they test. Where possible please split unit tests for a single source into multiple test files, so that they can be created and opened independently to reduce load on the LLM context."
               <> "If no new files are needed, return an empty list for 'items'.\n"
           )
   let exampleNewFileDeps = L.nub $
