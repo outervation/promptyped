@@ -200,7 +200,7 @@ runPrompt intReq messages = do
   st <- get
   cfg <- ask
   -- liftIO $ Logging.logInfo "SendMessages" (T.unlines . map renderMessage . reverse . take 5 $ reverse messages)
-  let openFileNames = T.intercalate "," $ map openFileName (stateOpenFiles st)
+  let openFileNames = T.intercalate "," $ map (\x -> openFileName x <> if openFileFocused x then " (focused)" else " (unfocused)") (stateOpenFiles st)
       existingFileNames = T.intercalate "," $ map existingFileName (stateFiles st)
       model = getModel cfg intReq
   liftIO $ Logging.logInfo "SendMessages" $ "OpenFiles: " <> openFileNames
