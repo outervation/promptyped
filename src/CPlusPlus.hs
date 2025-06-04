@@ -181,6 +181,10 @@ instance BuildSystem CPlusPlusLang where
   addDependency _ = do
     throwError "Dependency adding not supported for C++ yet"
 
+  addLineNumberComment num txt = addCppStyleLineNumberComment num txt
+  removeLineNumberCommentIfPresent txt = removeCppStyleLineNumberComment txt
+
+
 sampleTestFile :: Text
 sampleTestFile =
   [r|

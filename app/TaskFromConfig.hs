@@ -15,10 +15,10 @@ import CPlusPlus qualified as CPlusPlusMod
 import Control.Exception (ErrorCall (..), throwIO)
 import Control.Monad.Except
 import Core
-import Data.Aeson
 import Data.Text qualified as T
 import FileSystem qualified as FS
 import GoLang qualified as GoLangMod
+import Python qualified as PythonMod
 import Logging qualified
 import PromptCommon
 import Relude
@@ -28,23 +28,16 @@ import System.Log.Logger qualified as Logger
 data SomeBuildSystem where
   SomeBuildSystem :: forall bs. (BuildSystem bs) => Proxy bs -> SomeBuildSystem
 
-data ProgLangName = CPlusPlus | GoLang
-  deriving (Generic, Eq, Ord, Show)
-
-instance ToJSON ProgLangName
-
-instance FromJSON ProgLangName
-
 getBuildSystem :: ProgLangName -> SomeBuildSystem
 getBuildSystem CPlusPlus = SomeBuildSystem (Proxy @CPlusPlusMod.CPlusPlusLang)
 getBuildSystem GoLang = SomeBuildSystem (Proxy @GoLangMod.GoLang)
+getBuildSystem Python = SomeBuildSystem (Proxy @PythonMod.Python)
 
 withBuildSystem ::
   SomeBuildSystem ->
   (forall bs. (BuildSystem bs) => Proxy bs -> r) -> -- k MUST take Proxy bs
   r
 withBuildSystem (SomeBuildSystem (p :: Proxy bs)) k = k p
-
 -- 1. Match binds 'p' (value) and 'bs' (type, via ScopedTypeVariables)
 -- 2. Guarantees BuildSystem bs constraint holds for 'bs'
 -- 3. Calls the continuation 'k' with the proxy 'p'
@@ -73,19 +66,20 @@ makeTaskFromConfig aCfg mCfg = do
       projectNameStr = T.unpack tCfg.projectName
       logPath = logDir FP.</> projectNameStr <> ".log"
       debugLogPath = logDir FP.</> projectNameStr <> ".debug.log"
+      progLang = programmingLanguage tCfg
   Logging.initializeLogger logPath debugLogPath Logger.INFO
   liftIO $ Logging.logInfo "Initial config" (show cfg)
   liftIO $ Logging.logInfo "Initial state" (show initialState)
   let projectFn :: AppM ()
       projectFn = case projectKind aCfg of
         RefactorProject -> case bigRefactorCfg aCfg of
-          Just refactorCfg -> withBuildSystem (getBuildSystem GoLang) $ \(_ :: Proxy bs) -> makeTargetedRefactorFilesProject @bs projectTexts refactorCfg
+          Just refactorCfg -> withBuildSystem (getBuildSystem progLang) $ \(_ :: Proxy bs) -> makeTargetedRefactorFilesProject @bs projectTexts refactorCfg
           Nothing -> throwError "Missing big refactor config!"
         TargetedRefactorProject -> case targetedRefactorCfg aCfg of
-          Just refactorCfg -> withBuildSystem (getBuildSystem GoLang) $ \(_ :: Proxy bs) -> makeTargetedRefactorProject @bs projectTexts refactorCfg
+          Just refactorCfg -> withBuildSystem (getBuildSystem progLang) $ \(_ :: Proxy bs) -> makeTargetedRefactorProject @bs projectTexts refactorCfg
           Nothing -> throwError "Missing targeted refactor config!"
         ChatProject -> withBuildSystem (getBuildSystem GoLang) $ \(_ :: Proxy bs) -> makePromptResponseProject @bs projectTexts
-        FileAnalysisProject -> withBuildSystem (getBuildSystem GoLang) $ \(_ :: Proxy bs) -> makeSpecComplianceAnalysisProject @bs projectTexts
+        FileAnalysisProject -> withBuildSystem (getBuildSystem progLang) $ \(_ :: Proxy bs) -> makeSpecComplianceAnalysisProject @bs projectTexts
         _ -> throwError $ "Unsupported project kind for TaskFromConfig: " <> show (projectKind aCfg)
   res <- runApp cfg initialState projectFn
   case res of

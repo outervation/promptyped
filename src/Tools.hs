@@ -1117,29 +1117,29 @@ reloadLogs = do
           return $ f {openFileContents = newContents}
         else return f
 
-buildAndTest :: forall a. (BS.BuildSystem a) => AppM (Maybe (MsgKind, Text), [TracedEvent])
+buildAndTest :: forall bs. (BS.BuildSystem bs) => AppM (Maybe (MsgKind, Text), [TracedEvent])
 buildAndTest = do
   cfg <- ask
   let baseDir = configBaseDir cfg
-  timeIONano64M (BS.buildProject @a cfg) >>= \case
+  timeIONano64M (BS.buildProject @bs cfg) >>= \case
     (Just err, compileNanos) -> do
       liftIO $ Logging.logInfo "ConsiderBuildAndTest" $ "Compilation/tests failed: " <> err
       -- liftIO $ putTextLn $ "Compilation failed: " <> err
       modify' $ updateLastCompileState (Just err)
       modify' $ updateStateMetrics (mempty {metricsNumCompileFails = 1, metricsCompileTime = compileNanos})
-      FS.reloadOpenFiles
+      FS.reloadOpenFiles (getLineNumberFns @bs)
       return (Just (CompileFailMsg, err), [EvtCompileProject (FailedWithPotentiallyVeryLongError $ PotentiallyBigMessage err)])
     (Nothing, compileNanos) -> do
       liftIO $ Logging.logInfo "ConsiderBuildAndTest" "Compilation succeeded."
       let evts = [EvtCompileProject Succeeded]
       modify' $ updateLastCompileState Nothing
-      (result, testNanos) <- timeIONano64M $ BS.testProject @a cfg
+      (result, testNanos) <- timeIONano64M $ BS.testProject @bs cfg
       liftIO $ Logging.logInfo "ConsiderBuildAndTest" $ "Testing " <> if isJust result then "failed." else "succeeded."
-      ignoredDirs <- BS.getIgnoredDirs @a
+      ignoredDirs <- BS.getIgnoredDirs @bs
       existingFileNames <- liftIO $ FS.getFileNamesRecursive ignoredDirs baseDir
       modify' (updateExistingFiles existingFileNames)
       reloadLogs
-      FS.reloadOpenFiles
+      FS.reloadOpenFiles (getLineNumberFns @bs)
       modify' $ updateLastTestState result
       when (isJust result) $ modify $ updateStateMetrics (mempty {metricsNumTestFails = 1, metricsCompileTime = compileNanos, metricsTestTime = testNanos})
       {-          case result of
@@ -1174,8 +1174,8 @@ forceFocusFile fileName = do
   liftIO $ Logging.logInfo "FileOperation" $ "Focusing file: " <> fileName
 
 handleFileOperation ::
-  forall a.
-  (BS.BuildSystem a) =>
+  forall bs.
+  (BS.BuildSystem bs) =>
   Text ->
   (FilePath -> IO (Either Text ())) ->
   RequiresOpenFile ->
@@ -1206,7 +1206,7 @@ handleFileOperation fileName ioAction requiresOpenFile requiresFocusedFile opNam
           liftIO $ Logging.logInfo "FileOperation" $ "Attempted to " <> opName <> " file that isn't focused: " <> fileName
           pure $ mkError ctxt OtherMsg ("Error: cannot " <> opName <> " file that isn't focused: " <> fileName) (EvtFileOp fileName (FailedWithError "Cannot modify non-focused file"))
         (True, True) -> do
-          checker <- BS.getFormatChecker @a cfg
+          checker <- BS.getFormatChecker @bs cfg
           let checker' :: AppM (Maybe Text)
               checker' = do
                 checkRes <- liftIO checker
@@ -1220,22 +1220,22 @@ handleFileOperation fileName ioAction requiresOpenFile requiresFocusedFile opNam
               op =
                 if configRejectInvalidSyntaxDiffs cfg
                   then
-                    FS.tryFileOp filePath ioAction checker' changeBounds
+                    FS.tryFileOp (getLineNumberFns @bs) filePath ioAction checker' changeBounds
                   else liftIO $ ioAction filePath
               onErr :: Text -> AppM Context
               onErr err = do
                 liftIO $ Logging.logInfo "FileOperation" $ "File operation failed due to: " <> err
-                updateFileIfExistsOnDisk @a fileName cfg
+                updateFileIfExistsOnDisk @bs fileName cfg
                 pure $ mkError ctxt OtherMsg err (EvtFileOp fileName (FailedWithError $ T.take 100 err))
           res <- op
           either onErr (const $ onSuccess cfg ctxt) res
   where
     onSuccess cfg ctxt' = do
       liftIO $ Logging.logInfo "FileOperation" "File operation succeeded."
-      openFile @a DoFocusOpenedFile fileName cfg
+      openFile @bs DoFocusOpenedFile fileName cfg
       let successMsg = "Successfully did " <> opName <> " to file " <> fileName
           successCtxt = mkSuccess ctxt' (FileModifiedMsg fileName) successMsg (EvtFileOp fileName Succeeded)
-      considerBuildAndTest @a fileName >>= \case
+      considerBuildAndTest @bs fileName >>= \case
         (Nothing, evts) -> do
           FS.gitAddAndCommit fileName
           pure $ addEvtsToContext successCtxt evts
@@ -1249,6 +1249,9 @@ updateFileIfExistsOnDisk fileName cfg = do
 
 data FocusOpenedFile = DoFocusOpenedFile | DontFocusOpenedFile
   deriving (Eq, Ord, Show)
+
+getLineNumberFns :: forall bs. (BS.BuildSystem bs) => FS.LineNumberAddRemoveFns
+getLineNumberFns = (BS.addLineNumberComment @bs, BS.removeLineNumberCommentIfPresent @bs)
 
 openFile :: forall bs. (BS.BuildSystem bs) => FocusOpenedFile -> Text -> Config -> AppM ()
 openFile focusOpenedFile fileName cfg = do
@@ -1267,7 +1270,7 @@ openFile focusOpenedFile fileName cfg = do
           else pure contents
   contentsMinimised <- getContentsMinimised
   modify' (ensureOpenFile fileName contents contentsMinimised)
-  FS.updateOpenedFile fileName
+  FS.updateOpenedFile (getLineNumberFns @bs) fileName
   unless (fileExists fileName st) $ modify' (addExistingFile fileName "")
   let shouldFocus = isSourceFile && focusOpenedFile == DoFocusOpenedFile
   when shouldFocus $ forceFocusFile fileName
@@ -1298,11 +1301,15 @@ runTool _ (ToolCallFocusFile args) origCtxt = do
   let initialCtxt = origCtxt
   ctxtUpdates <- forM args $ \(FocusFileArg fileName) -> do
     theState <- get
-    case fileExists fileName theState of
-      False -> do
+    isSourceFile <- BS.isBuildableFile @bs fileName
+    case (fileExists fileName theState, isSourceFile) of
+      (False, _) -> do
         liftIO $ Logging.logInfo "FileOperation" $ "Tried to focus non-existing file: " <> fileName
         pure $ \ctxt -> mkError ctxt OtherMsg ("Cannot focus file that doesn't exist: " <> fileName) (EvtFocusFile fileName (FailedWithError "Can't focus file that doesn't exist"))
-      True -> do
+      (True, False) -> do
+        liftIO $ Logging.logInfo "FileOperation" $ "Tried to focus non-source file: " <> fileName
+        pure $ \ctxt -> mkError ctxt OtherMsg ("Cannot focus non-source file: " <> fileName <> ", non-source files already show all contents un-minimised") (EvtFocusFile fileName (FailedWithError "Can't focus non-source file"))
+      (True, True) -> do
         unless (fileAlreadyOpen fileName theState) $ openFile @bs DoFocusOpenedFile fileName cfg
         forceFocusFile fileName
         liftIO $ Logging.logInfo "FileOperation" $ "Focused file: " <> fileName

@@ -17,6 +17,8 @@ class BuildSystem (a :: Type) where
   getFormatChecker :: Config -> AppM (IO (Maybe Text))
   minimiseFile :: Text -> AppM (Either Text Text)
   addDependency :: Text -> AppM (Maybe Text)
+  addLineNumberComment :: Int -> Text -> Text
+  removeLineNumberCommentIfPresent :: Text -> Text
 
 data NullBuildSystem = NullBuildSystem
 
@@ -30,3 +32,5 @@ instance BuildSystem NullBuildSystem where
   getFormatChecker _ = throwError "getFormatChecker called on NullBuildSystem"
   minimiseFile _ = throwError "minimiseFile called on NullBuildSystem"
   addDependency _ = throwError "addDependency called on NullBuildSystem"
+  addLineNumberComment _ x = x
+  removeLineNumberCommentIfPresent x = x

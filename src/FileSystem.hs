@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module FileSystem (replaceInFile, readFileToText, readFileToTextMayThrow, readFileToTextAndOpen, appendToFile, ensureLineNumbers, toFilePath, getFileNames, fileExistsOnDisk, clearFileOnDisk, runProcessWithTimeout, getFileNamesRecursive, handleExitCode, runAll, gitInit, gitAddAndCommit, ensureNoLineNumbers, addLineNumbersToText, addTenthLineNumbersToText, updateOpenedFile, reloadOpenFiles, gitSetupUser, gitRevertFile, tryFileOp, checkBinaryOnPath) where
+module FileSystem (replaceInFile, readFileToText, readFileToTextMayThrow, readFileToTextAndOpen, appendToFile, ensureLineNumbers, toFilePath, getFileNames, fileExistsOnDisk, clearFileOnDisk, runProcessWithTimeout, getFileNamesRecursive, handleExitCode, runAll, gitInit, gitAddAndCommit, ensureNoLineNumbers, addTenthLineNumbersToText, updateOpenedFile, reloadOpenFiles, gitSetupUser, gitRevertFile, tryFileOp, checkBinaryOnPath, LineNumberAddRemoveFns) where
 
 import Control.Concurrent.Async (concurrently) 
 import Control.Exception (IOException, bracket, try)
@@ -9,7 +9,6 @@ import Control.Monad.Catch qualified as Catch
 import Control.Monad.Except (throwError)
 import Core
 import Data.ByteString qualified as BS
-import Data.Char (isDigit)
 import Data.List as L
 import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
@@ -17,6 +16,7 @@ import Data.Text.IO qualified as TIO
 import Data.Time.Clock (NominalDiffTime)
 import Data.Vector qualified as V
 import Relude
+
 import System.Directory qualified as DIR
 import System.Environment qualified as Env
 import System.Exit qualified as Exit
@@ -38,8 +38,8 @@ runAll = foldM step (Right ())
 toFilePath :: Config -> Text -> FilePath
 toFilePath cfg x = configBaseDir cfg FP.</> T.unpack x
 
-tryFileOp :: FilePath -> (FilePath -> IO (Either T.Text ())) -> AppM (Maybe T.Text) -> Maybe FileChangeBounds -> AppM (Either T.Text ())
-tryFileOp path op checker maybeBounds = do
+tryFileOp :: LineNumberAddRemoveFns -> FilePath -> (FilePath -> IO (Either T.Text ())) -> AppM (Maybe T.Text) -> Maybe FileChangeBounds -> AppM (Either T.Text ())
+tryFileOp lineNumberFns path op checker maybeBounds = do
   let backupPath = path ++ ".bak"
       cleanupBackup = liftIO $ tryIOError $ do
         backupExists <- DIR.doesFileExist backupPath
@@ -94,7 +94,7 @@ tryFileOp path op checker maybeBounds = do
     restoreBackup :: FilePath -> T.Text -> AppM (Either T.Text ())
     restoreBackup backupPath err = do
       modifiedFile <- liftIO $ readFileToText path
-      let modifiedFileRelevantPart = getRelevantFilePart $ addLineNumbersToText modifiedFile
+      let modifiedFileRelevantPart = getRelevantFilePart $ addTenthLineNumbersToText lineNumberFns modifiedFile
       restoreResult <- liftIO $ tryIOError $ do
         DIR.removeFile path
         backupExists <- DIR.doesFileExist backupPath
@@ -124,8 +124,8 @@ readFileToTextMayThrow path = do
   val <- readFileBS path
   return $ TE.decodeUtf8Lenient val
 
-updateOpenedFile :: Text -> AppM ()
-updateOpenedFile fileName = do
+updateOpenedFile :: LineNumberAddRemoveFns -> Text -> AppM ()
+updateOpenedFile lineNumberFns fileName = do
   theState <- get
   cfg <- ask
   let fmtErr err = "Internal error: failed ensuring no line numbers for " <> fileName <> ": " <> err :: Text
@@ -133,16 +133,16 @@ updateOpenedFile fileName = do
     False -> throwError $ "Internal error: tried to update non-opened file " <> fileName
     True ->
       when (isNothing $ isFileForbidden cfg fileName)
-        $ liftIO (ensureNoLineNumbers (toFilePath cfg fileName))
+        $ liftIO (ensureNoLineNumbers lineNumberFns (toFilePath cfg fileName))
         >>= \case
           Left err -> throwError (fmtErr err)
           Right contents -> modify' (updateOpenFile fileName contents)
 
-reloadOpenFiles :: AppM ()
-reloadOpenFiles = do
+reloadOpenFiles :: LineNumberAddRemoveFns -> AppM ()
+reloadOpenFiles lineNumberFns = do
   st <- get
   let openFiles = map openFileName $ stateOpenFiles st
-  forM_ openFiles updateOpenedFile
+  forM_ openFiles (updateOpenedFile lineNumberFns)
 
 readFileToTextAndOpen :: FilePath -> IO Text
 readFileToTextAndOpen path = do
@@ -207,85 +207,20 @@ appendToFile fileName text = do
     Left ex -> return $ Left $ T.pack $ "Error appending to file " <> fileName <> ": " <> show ex
     Right () -> return $ Right ()
 
-removeLineNumberComment :: Text -> Text
-removeLineNumberComment line =
-  -- \|
-  --      Removes an existing `/* digits */` comment at the start of a line
-  --      (possibly after some indentation), plus *one space* that follows it,
-  --      if present.
-  --
-  --      For example, if the line is:
-  --
-  --          "    /* 12 */   let x = 42"
-  --
-  --      we want to keep the leading indentation `"    "` intact,
-  --      remove the whole `"/* 12 */"` (including one space), and
-  --      end up with:
-  --
-  --          "    let x = 42"
-  --
-  --      Then `addLineNumbers` will prepend a fresh `/* lineNum */` comment
-  --      again, without accumulating spaces over multiple runs.
-  --
+addTenthLineNumbers :: (Int -> Text -> Text) -> V.Vector Text -> V.Vector Text
+addTenthLineNumbers addLineNumberComment = V.imap (addTenthComment addLineNumberComment)
 
-  -- 1. Separate out the leading indentation (or leading spaces).
-  let (leadingSpaces, afterIndent) = T.span (== ' ') line
-   in case T.stripPrefix "/*" afterIndent of
-        Nothing -> line -- does not start with "/*" after indentation
-        Just afterOpen ->
-          -- afterOpen should look like: " digits */ ...rest..."
-          let (digitsPart, afterDigits) = T.breakOn "*/" afterOpen
-           in case T.stripPrefix "*/" afterDigits of
-                Nothing ->
-                  -- There's no "*/" after the "/*" => not a proper comment, leave as-is
-                  line
-                Just afterClose ->
-                  -- Check if the part between "/*" and "*/" is all digits (when stripped).
-                  if T.all isDigit (T.strip digitsPart)
-                    then
-                      -- Remove the comment plus exactly *one* space after it, if that space exists.
-                      let afterOneSpace =
-                            case T.uncons afterClose of
-                              Just (' ', rest) -> rest -- remove one space
-                              _ -> afterClose
-                       in leadingSpaces <> afterOneSpace
-                    else
-                      -- The part between "/*" and "*/" wasn't pure digits => keep original line
-                      line
-
-addLineNumbers :: V.Vector Text -> V.Vector Text
-addLineNumbers = V.imap addComment
-
-addCommentNew :: Int -> Text -> Text
-addCommentNew idx originalLine =
-  let comment = "/* Line " <> T.pack (show idx) <> " start */"
-      endComment = "/* Line " <> T.pack (show idx) <> " end */"
-   in if T.null originalLine
-        then comment
-        else comment <> " " <> originalLine <> " " <> endComment
-
-addComment :: Int -> Text -> Text
-addComment idx originalLine =
-  let comment = "/* " <> T.pack (show idx) <> " */"
-   in if T.null originalLine
-        then comment
-        else comment <> " " <> originalLine
-
-addTenthLineNumbers :: V.Vector Text -> V.Vector Text
-addTenthLineNumbers = V.imap addTenthComment
-
-addTenthComment :: Int -> Text -> Text
-addTenthComment idx originalLine =
+addTenthComment :: (Int -> Text -> Text) -> Int -> Text -> Text
+addTenthComment addLineNumberComment idx originalLine =
   if idx `mod` 10 == 0
     then
-      let comment = "/* " <> T.pack (show idx) <> " */"
-       in if T.null originalLine
-            then comment
-            else comment <> " " <> originalLine
+    addLineNumberComment idx originalLine
     else originalLine
 
-ensureNoLineNumbers :: FilePath -> IO (Either Text Text)
-ensureNoLineNumbers filepath = do
+type LineNumberAddRemoveFns = (Int -> Text -> Text, Text -> Text)
+
+ensureNoLineNumbers :: LineNumberAddRemoveFns -> FilePath -> IO (Either Text Text)
+ensureNoLineNumbers (_, removeLineNumberComment) filepath = do
   result <- try $ processFileContents filepath :: IO (Either IOException Text)
   pure $ either (Left . T.pack . displayException) Right result
   where
@@ -298,31 +233,23 @@ ensureNoLineNumbers filepath = do
       when (T.length contents > 0) $ TIO.writeFile fp newContents
       pure newContents
 
-addLineNumbersToText :: Text -> Text
-addLineNumbersToText contents = do
+addTenthLineNumbersToText :: LineNumberAddRemoveFns -> Text -> Text
+addTenthLineNumbersToText (addLineNumberComment, removeLineNumberComment) contents = do
   let originalLines = V.fromList (T.lines contents)
       processedLines = V.map removeLineNumberComment originalLines
-      numberedLines = addLineNumbers processedLines
+      numberedLines = addTenthLineNumbers addLineNumberComment processedLines
       newContents = T.unlines (V.toList numberedLines)
   newContents
 
-addTenthLineNumbersToText :: Text -> Text
-addTenthLineNumbersToText contents = do
-  let originalLines = V.fromList (T.lines contents)
-      processedLines = V.map removeLineNumberComment originalLines
-      numberedLines = addTenthLineNumbers processedLines
-      newContents = T.unlines (V.toList numberedLines)
-  newContents
-
-ensureLineNumbers :: FilePath -> IO (Either Text Text)
-ensureLineNumbers filepath = do
+ensureLineNumbers :: LineNumberAddRemoveFns -> FilePath -> IO (Either Text Text)
+ensureLineNumbers lineNumberFns filepath = do
   result <- try $ processFileContents filepath :: IO (Either IOException Text)
   pure $ either (Left . T.pack . displayException) Right result
   where
     processFileContents :: FilePath -> IO Text
     processFileContents fp = do
       contents <- readFileToText fp
-      let newContents = addLineNumbersToText contents
+      let newContents = addTenthLineNumbersToText lineNumberFns contents
       when (T.length contents > 0) $ TIO.writeFile fp newContents
       pure newContents
 

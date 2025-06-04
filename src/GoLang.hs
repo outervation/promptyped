@@ -4,7 +4,6 @@ module GoLang where
 
 import BuildSystem
 import Control.Monad.Except
-import System.IO.Error (ioError, userError)
 import Core
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
@@ -533,3 +532,6 @@ instance BuildSystem GoLang where
     let timeout = secondsToNominalDiffTime . fromIntegral $ configBuildTimeoutSeconds cfg
     envVars <- getEnvVars
     liftIO $ addGoDependency timeout baseDir envVars name
+
+  addLineNumberComment num txt = addCppStyleLineNumberComment num txt
+  removeLineNumberCommentIfPresent txt = removeCppStyleLineNumberComment txt

@@ -8,6 +8,7 @@ import Control.Monad.Except
 import Data.Aeson
 import Data.Group (Group, invert)
 import Data.List qualified as L
+import Data.Char (isDigit)
 import Data.Text qualified as T
 import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
 import Data.Time.Clock.System (SystemTime, getSystemTime, systemToTAITime)
@@ -107,6 +108,11 @@ renderOpenFile :: (FileFocused -> Text -> AppM Text) -> OpenFile -> AppM Text
 renderOpenFile modifier (OpenFile name contents unfocusedContents focused _) = do
   modified <- modifier (if focused then FileFocusedTrue else FileFocusedFalse) (if focused then contents else unfocusedContents)
   pure $ "{ openFileName: " <> name <> ", focused: " <> show focused <> ", openFileContents:\n" <> modified <> "\n}"
+
+moveFocusedFilesLast :: [OpenFile] -> [OpenFile]
+moveFocusedFilesLast xs =
+    let (unfocused, focused) = L.partition (not . openFileFocused) xs
+          in  unfocused ++ focused
 
 data ExistingFile = ExistingFile
   { existingFileName :: Text,
@@ -730,3 +736,56 @@ runActionWithoutModifyingState actionToRun = do
     case resultOrError of
         Left err     -> throwError err 
         Right result -> pure result    
+
+addCppStyleLineNumberComment :: Int -> Text -> Text
+addCppStyleLineNumberComment idx originalLine =
+  let comment = "/* " <> T.pack (show idx) <> " */"
+   in if T.null originalLine
+        then comment
+        else comment <> " " <> originalLine
+
+removeCppStyleLineNumberComment :: Text -> Text
+removeCppStyleLineNumberComment line =
+  -- \|
+  --      Removes an existing `/* digits */` comment at the start of a line
+  --      (possibly after some indentation), plus *one space* that follows it,
+  --      if present.
+  --
+  --      For example, if the line is:
+  --
+  --          "    /* 12 */   let x = 42"
+  --
+  --      we want to keep the leading indentation `"    "` intact,
+  --      remove the whole `"/* 12 */"` (including one space), and
+  --      end up with:
+  --
+  --          "    let x = 42"
+  --
+  --      Then `addLineNumbers` will prepend a fresh `/* lineNum */` comment
+  --      again, without accumulating spaces over multiple runs.
+  --
+
+  -- 1. Separate out the leading indentation (or leading spaces).
+  let (leadingSpaces, afterIndent) = T.span (== ' ') line
+   in case T.stripPrefix "/*" afterIndent of
+        Nothing -> line -- does not start with "/*" after indentation
+        Just afterOpen ->
+          -- afterOpen should look like: " digits */ ...rest..."
+          let (digitsPart, afterDigits) = T.breakOn "*/" afterOpen
+           in case T.stripPrefix "*/" afterDigits of
+                Nothing ->
+                  -- There's no "*/" after the "/*" => not a proper comment, leave as-is
+                  line
+                Just afterClose ->
+                  -- Check if the part between "/*" and "*/" is all digits (when stripped).
+                  if T.all isDigit (T.strip digitsPart)
+                    then
+                      -- Remove the comment plus exactly *one* space after it, if that space exists.
+                      let afterOneSpace =
+                            case T.uncons afterClose of
+                              Just (' ', rest) -> rest -- remove one space
+                              _ -> afterClose
+                       in leadingSpaces <> afterOneSpace
+                    else
+                      -- The part between "/*" and "*/" wasn't pure digits => keep original line
+                      line

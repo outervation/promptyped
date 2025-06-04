@@ -212,17 +212,17 @@ runPrompt intReq messages = do
     Left err -> throwError $ "Error running prompt: " <> err
     Right queryResult -> updateStats intReq (stats queryResult) (usage queryResult) nanosTaken >> pure (message queryResult, usage queryResult)
 
-makeSyntaxErrorCorrectionPrompt :: (ToJSON a) => [OpenFile] -> [Tools.Tool] -> a -> Message -> Text -> [Message]
+makeSyntaxErrorCorrectionPrompt :: forall bs a. (BS.BuildSystem bs, ToJSON a) => [OpenFile] -> [Tools.Tool] -> a -> Message -> Text -> [Message]
 makeSyntaxErrorCorrectionPrompt relFiles tools exampleReturn llmMsg err = do
   let returnValueDesc = Tools.returnValueToDescription exampleReturn
       toolDesc = Tools.toolsToDescription tools
       msgBeginning = "You are an agent responsible for error correction of LLM output. There is a specific syntax for tools that the LLM could use, described as follows: " <> toolDesc <> "\nThere is also a syntax for values the LLM may return, as follows: " <> returnValueDesc <> "\n"
-      fileTexts = map (\x -> openFileName x <> ": \n" <> FS.addTenthLineNumbersToText (openFileContents x)) relFiles
+      fileTexts = map (\x -> openFileName x <> ": \n" <> FS.addTenthLineNumbersToText (Tools.getLineNumberFns @bs) (openFileContents x)) relFiles
       openFilesDesc = if null relFiles then "" else "The following open files may be relevant: " <> T.intercalate "\n\n" fileTexts
       msgRes = "The LLM returned syntactically incorrect output:\n" <> content llmMsg <> "\nThe exact error was: " <> err <> "\nPlease output the same output as above but with the syntax error corrected, thanks! For missing textbox names, if a tool call references a text box that doesn't exist, but right after it is an unused textbox that seems to fit, then please fix the textbox name to match. If you can't fix it, just return it as-is and it'll be handled downstream, don't panic."
   return $ Message (roleName RoleUser) (msgBeginning <> openFilesDesc <> msgRes)
 
-runPromptWithSyntaxErrorCorrection :: forall a. (ToJSON a, FromJSON a, Show a) => IntelligenceRequired -> [Tools.Tool] -> a -> [Message] -> AppM (Message, UsageData)
+runPromptWithSyntaxErrorCorrection :: forall bs a. (BS.BuildSystem bs, ToJSON a, FromJSON a, Show a) => IntelligenceRequired -> [Tools.Tool] -> a -> [Message] -> AppM (Message, UsageData)
 runPromptWithSyntaxErrorCorrection intReq tools example messages = do
   (res, queryStats) <- runPrompt intReq messages
   let mayToolsCalled = Tools.findToolsCalled (content res) tools
@@ -245,7 +245,7 @@ runPromptWithSyntaxErrorCorrection intReq tools example messages = do
   where
     handleErr relFiles err res queryStats = do
       liftIO $ Logging.logInfo "RunPromptWithSyntaxErrorCorrection" "Requesting syntax fix."
-      let errorCorrectionMsg = makeSyntaxErrorCorrectionPrompt relFiles tools example res err
+      let errorCorrectionMsg = makeSyntaxErrorCorrectionPrompt @bs relFiles tools example res err
       (res', _) <- runPrompt intReq errorCorrectionMsg
       let mayToolsCalled' = Tools.findToolsCalled (content res') tools
       case mayToolsCalled' of
@@ -309,11 +309,11 @@ contextToMessages Context{..} tools theState isNestedAiFunc isCloseFileTask exam
     render isFocused file = do
       isSourceFile <- isBuildableFile @bs file
       if (not isSourceFile) || isFocused == FileFocusedTrue
-        then pure $ FS.addTenthLineNumbersToText file
+        then pure $ FS.addTenthLineNumbersToText (Tools.getLineNumberFns @bs) file
         else pure file
     getOpenFilesDesc :: AppM Text
     getOpenFilesDesc = do
-      renderedFiles <- mapM (renderOpenFile render) $ stateOpenFiles theState
+      renderedFiles <- mapM (renderOpenFile render) $ moveFocusedFilesLast $ stateOpenFiles theState
       pure $ "All currently open files (note these always represent the latest version on disk, even though they may appear in the context before the messages containing changes made to them. Also note that unfocused source files only show datatype and function definitions, not bodies, to save space in context):\n\n" <> unlines renderedFiles
     filesDesc = "All available files: \n " <> unlines (map renderExistingFile $ stateFiles theState)
     compileTestDesc :: CompileTestState -> Text
@@ -484,7 +484,7 @@ runAiFuncInner isNestedAiFunc isCloseFileTask initialCtxt intReq tools exampleRe
       aiTruncatedCtxt = updateContextMessages origCtxt' truncateOldAiMessages
       ctxt = updateContextMessages aiTruncatedCtxt shortenOldErrorMessages
   messages <- contextToMessages @bs ctxt tools theState isNestedAiFunc isCloseFileTask exampleReturn
-  (res, queryStats) <- runPromptWithSyntaxErrorCorrection intReq tools exampleReturn messages
+  (res, queryStats) <- runPromptWithSyntaxErrorCorrection @bs intReq tools exampleReturn messages
   when (prompt_tokens queryStats > configModelMaxInputTokens cfg && isCloseFileTask == IsCloseFileTaskFalse) $ do
     st <- get
     let msg = "Input context length is now " <> show (prompt_tokens queryStats) <> ", more than the configured max of " <> show (configModelMaxInputTokens cfg) <> ". Please CloseFile the least important open file."

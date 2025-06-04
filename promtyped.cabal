@@ -19,6 +19,7 @@ library
         Tools
         CPlusPlus
         GoLang
+        Python
         Logging
         OpenRouterClient
         ShapeChecker

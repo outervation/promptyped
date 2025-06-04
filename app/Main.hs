@@ -3,7 +3,6 @@
 module Main where
 
 import AppConfig (loadConfig)
-import Data.Text qualified as T
 import Relude
 import TaskFromConfig qualified
 

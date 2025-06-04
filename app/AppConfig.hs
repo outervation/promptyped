@@ -34,10 +34,18 @@ instance FromJSON ModelConfig
 
 instance ToJSON ModelConfig
 
+data ProgLangName = CPlusPlus | GoLang | Python
+  deriving (Generic, Eq, Ord, Show)
+
+instance ToJSON ProgLangName
+
+instance FromJSON ProgLangName
+
 data TaskConfig = TaskConfig
   { projectName :: Text,
     specFilePath :: Text,
-    dependencies :: [Text]
+    dependencies :: [Text],
+    programmingLanguage :: ProgLangName
     --    initialFiles :: [Text]
   }
   deriving (Generic, Eq, Ord, Show)
