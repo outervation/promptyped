@@ -1,0 +1,24 @@
+{
+    "baseDir": "/home/myname/example_app",
+    "cacheDir": "/home/myname/generated_code/example_app/memoisation",
+    "logFileDir": "/home/myname/generated_code/example_app/logs",
+    "buildTimeoutSeconds": 100,
+    "buildNumJobs": 32,
+    "gitUserName": "My Name",
+    "gitUserEmail": "My.Name@gmail.com",
+    "projectKind": "ChatProject",
+    "envVars": [["GOPATH", "/home/myname/gopath/"]],
+    "taskCfg":  { "projectName": "example.com/example_app/v2",
+                  "specFilePath": "/home/myname/example_app/overerall_app_spec.txt",
+                  "dependencies": [],
+		  "programmingLanguage": "GoLang"
+                },
+    "bigRefactorCfg":  {
+	"bigRefactorDoFinalSort": true,
+	"bigRefactorDeliberatelyPromptForTestRefactors": false,
+	"bigRefactorSpecFiles": ["relevant_extra_spec.txt"],
+	"bigRefactorInitialOpenFiles": ["internal/http2/conn.go", "internal/http2/conn_test.go", "e2e/e2e_test.go", "e2e/testutil/testutil.go"],
+	"bigRefactorOverallTask": "Add optional TLS support, using the go stdlib TLS library. If TLS is configured (config format will need to be updated for this), the server should peek the bytes to see if the conn is a TLS connection, and if it is then handle it that way, otherwise revert back to the current non-TLS behaviour. If TLS isn't configured, then the behaviour should be identical to how it is currently. simple_tls_examples.txt contains examples of how to use the golang tls library. Please try to do it in as minimally invasive a way as possible, making minimal changes to existing code. Add only a couple tests, one unit test and one e2e test (if it's possible to e2e this, that is; the e2e testutils may require changes). Please be very careful not to break existing tests.",
+	"bigRefactorOverallTaskShortName": "Add basic tls support"
+    }
+}

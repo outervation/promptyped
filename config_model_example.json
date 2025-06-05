@@ -1,0 +1,15 @@
+{
+    "apiKey": "MY_KEY_GOES_HERE",
+    "apiSite": "generativelanguage.googleapis.com",
+    "lowIntModelName": "gemini-2.5-flash-preview-05-20",
+    "mediumIntModelName": "gemini-2.5-pro-preview-05-06",
+    "highIntModelName": "gemini-2.5-pro-preview-05-06",
+    "taskMaxFailures": {
+	"remainingSyntaxErrorTolerance": 10,
+	"remainingSemanticErrorTolerance": 50
+    },
+    "rejectInvalidSyntaxDiffs": true,
+    "maxNumFocusedFiles": 4,
+    "modelTemperature": 1.0,
+    "modelMaxInputTokens": 164000
+}

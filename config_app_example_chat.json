@@ -1,0 +1,16 @@
+{
+    "baseDir": "/home/myname/example_app",
+    "cacheDir": "/home/myname/generated_code/example_app/memoisation",
+    "logFileDir": "/home/myname/generated_code/example_app/logs",
+    "buildTimeoutSeconds": 100,
+    "buildNumJobs": 32,
+    "gitUserName": "My Name",
+    "gitUserEmail": "My.Name@gmail.com",
+    "projectKind": "ChatProject",
+    "envVars": [["GOPATH", "/home/myname/gopath/"]],
+    "taskCfg":  { "projectName": "example.com/example_app/v2",
+                  "specFilePath": "/home/myname/example_app/overerall_app_spec.txt",
+                  "dependencies": [],
+                  "programmingLanguage": "GoLang"
+                }
+}
