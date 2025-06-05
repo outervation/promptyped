@@ -464,12 +464,11 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
         return $ buildable && not isTest
   allSourceFileNames <- filterM filterSourceFile $ map Core.existingFileName st.stateFiles
 
-  -- 1. Open all source files unfocused, spec files unfocused, journal and initial open files focused
-  liftIO $ putTextLn "Opening all source files (unfocused), spec files (unfocused), and journal/initial deps (focused)..."
+  -- 1. Open all source files unfocused, spec files unfocused, and initial open files focused
+  liftIO $ putTextLn "Opening all source files (unfocused), spec files (unfocused), and initial deps (focused)..."
   modify' clearOpenFiles
   forM_ allSourceFileNames $ \fileName -> Tools.openFile @bs Tools.DontFocusOpenedFile fileName cfg
   forM_ refactorCfg.bigRefactorSpecFiles $ \fileName -> Tools.openFile @bs Tools.DontFocusOpenedFile fileName cfg -- spec files
-  Tools.openFile @bs Tools.DoFocusOpenedFile journalFileName cfg
   forM_ refactorCfg.bigRefactorInitialOpenFiles $ \fileName -> Tools.openFile @bs Tools.DoFocusOpenedFile fileName cfg
 
   -- Helper to get all known file names for validation (project files + initial open files + spec files)
@@ -492,7 +491,7 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
   let relevantFilesCtxt =
         makeBaseContext background
           ( "Given the overall objective (" <> objectiveShortName <> ": " <> task <> "),"
-              <> " and considering all source files are currently open (most unfocused, some like '" <> journalFileName <> "' and initial dependencies might be focused), please identify a list of at most " <> show maxFocused <> " existing filenames that are most relevant and should be focused for closer inspection (including any already-focused files that should still be focused). These files will be brought into focus to aid in detailed planning. "
+              <> " and considering all source files are currently open (most unfocused, some like initial dependencies might be focused), please identify a list of at most " <> show maxFocused <> " existing filenames that are most relevant and should be focused for closer inspection (including any already-focused files that should still be focused). These files will be brought into focus to aid in detailed planning. "
               <> "Return a JSON object with a single key 'relevantFileNames' containing a list of these filenames; it may be empty if there are no existing files yet. "
               <> "The available source files are: " <> T.intercalate ", " allSourceFileNames <> "."
               <> (if null refactorCfg.bigRefactorInitialOpenFiles
@@ -657,6 +656,7 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
               <> "If a new file's purpose or content is dictated by a specific spec file, ensure that spec file is listed as a dependency. "
               <> "Please also include unit test files for every new file you create (although you may use one test file for multiple new files, where that fits better than one test per file). Tests should be positioned in the list right after the files they test. Where possible please split unit tests for a single source into multiple test files, so that they can be created and opened independently to reduce load on the LLM context."
               <> "If no new files are needed, return an empty list for 'items'.\n"
+              <> "DO NOT call any tools or make any changes for now.\n"
           )
   let exampleNewFileDeps = L.nub $
         take 1 allSourceFileNames ++ 
@@ -826,7 +826,7 @@ makeTargetedRefactorProject projectTexts refactorCfg = do
           st <- get
           sourceFileNames <- filterM filterSourceFile $ map existingFileName st.stateFiles
           forM_ sourceFileNames $ \x -> Tools.openFile @bs Tools.DontFocusOpenedFile x cfg
-        forM_ (fileNames ++ [journalFileName]) $ \x -> Tools.openFile @bs Tools.DoFocusOpenedFile x cfg
+        forM_ fileNames $ \x -> Tools.openFile @bs Tools.DoFocusOpenedFile x cfg
 
       summary = refactorCfg.refactorSummary
 
@@ -851,9 +851,8 @@ makeTargetedRefactorProject projectTexts refactorCfg = do
                 <> "\n ------ \n"
                 <> "Each task should list other task dependencies if any, and there should be no circular dependencies (dependencies here means other tasks, not imports). Don't include tasks like running the build system and unit tests; they will run automatically after file changes.\n"
                 <> "Please DO NOT attempt to call any tools to modify files to actually make the code changes, just Return a list of text values in the format specified below describing the individual tasks that need to be done.\n"
-                <> "If there's something relevant for later that you can't encode well in the return value, please AppendFile=<[{\"fileName\": \"journal.txt\", \"rawTextName\": \"journalUpdateTextBoxName\"}]> it to the journal."
             taskBackground = background <> "\nYour task for this file is: " <> rCfg.refactorTask
-            getChangesTask fileName = Engine.runAiFunc @bs (mkCtxt fileName) HighIntelligenceRequired (Tools.ToolAppendFile : Engine.readOnlyTools) exampleTasks validateThingsWithDependencies (configTaskMaxFailures cfg)
+            getChangesTask fileName = Engine.runAiFunc @bs (mkCtxt fileName) HighIntelligenceRequired Engine.readOnlyTools exampleTasks validateThingsWithDependencies (configTaskMaxFailures cfg)
         setupOpenFiles relFiles
         Tools.forceFocusFile rCfg.refactorFile
         plannedTasks <- memoise (configCacheDir cfg) "file_tasks" rCfg.refactorFile id getChangesTask

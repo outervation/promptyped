@@ -275,7 +275,7 @@ getTask st tools isNestedAiFunc isCloseFileTask mainTask = do
     (_, _, IsCloseFileTaskTrue, _, _) -> "Please close the least important open file, to free up space in the context. The task you were working on when the context got too large is as follows; you should close the file least relevant to it: " <> mainTask 
     (Nothing, Nothing, IsCloseFileTaskFalse, _, _) -> mainTask
     (Just _, _, IsCloseFileTaskFalse, IsNestedAiFuncFalse, _) -> "Fix the project build error. The error is described above. The task you were working on when compilation failed (don't work on it now, just fix the build):\n\"" <> mainTask <> "\""
-    (Nothing, Just _, IsCloseFileTaskFalse, IsNestedAiFuncFalse, _) -> "Fix the error that occurred building or running the tests. The error is described above. The task you were working on when compilation failed (don't work on it now, just fix the tests):\n\"" <> mainTask <> "\"\nPlease DO NOT attempt that task until the tests are fixed."
+    (Nothing, Just _, IsCloseFileTaskFalse, IsNestedAiFuncFalse, _) -> "Fix the error that occurred building or running the tests. The error is described above. The task you were working on when compilation failed (don't work on it now, just fix the tests):\n\"" <> mainTask <> "\"\nPlease DO NOT attempt that task until the tests are fixed. Where there are multiple test failures with large output, only a single test will be run, to conserve space in context, so focus on solving that test regardless of what your current task was."
     (_, _, IsCloseFileTaskFalse, IsNestedAiFuncTrue, _) -> mainTask
 
 contextToMessages :: forall bs a. (BS.BuildSystem bs, ToJSON a) => Context -> [Tools.Tool] -> AppState -> IsNestedAiFunc -> IsCloseFileTask -> a -> AppM [Message]

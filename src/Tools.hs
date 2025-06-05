@@ -12,6 +12,7 @@ import Control.Monad.Except
 import Control.Monad (foldM)
 import Core
 import Data.Aeson as AE
+import qualified Data.Aeson.Key as K
 import Data.Aeson.KeyMap qualified as KM
 import Data.Map qualified as M
 import Data.Aeson.Types qualified as AET
@@ -508,10 +509,10 @@ returnValueToDescription :: (ToJSON a) => a -> Text
 returnValueToDescription example = do
   let exampleTxt = toJ example
   let fmt = "You must return the output in a format like the following: " <> mkToolCallSyntax ToolReturn exampleTxt
-  fmt <> " \n You must either return a value or call a tool. Because you're part of an automated process, you cannot prompt the user for information, so panic if you don't know how to proceed. Please do NOT use ```json syntax, as it's not supported."
+  fmt <> " \n You must either return a value or call a tool. Because you're part of an automated process, you cannot prompt the user for information, so panic if you don't know how to proceed. Remember COMMENTS ARE NOT SUPPORTED in the JSON."
 
 toolsToDescription :: [Tool] -> Text
-toolsToDescription tools = toolSummary <> "\nAll available tools: \n" <> T.unlines (map toolToDescription tools) <> "\n Multiple tool calls are supported, you can either do ToolName=<[{jsonArgs}]>, ToolName=<[{otherJsonArgs}]>, or ToolName=<[{jsonArgs}, {otherJsonArgs}]>; both are supported. (Replace ToolName here with the actual name of a tool; ToolName itself is not a tool!). Remember that the latest state of the files to modify is in the OpenFiles section. Please include one SummariseAction call in each response to capture your intent, and try to limit the number of file edits/modifications per response, to minimise the number of potential compilation errors/unit test failures that need to be fixed at once."
+toolsToDescription tools = toolSummary <> "\nAll available tools: \n" <> T.unlines (map toolToDescription tools) <> "\n Multiple tool calls are supported, you can do ToolName=<[{ ... }]> for a single set of args or ToolName=<[{...}, {...}]> for multiple sets of args (where the inside of { ... } must be valid JSON without comments). (Replace ToolName here with the actual name of a tool; ToolName itself is not a tool!). E.g. OpenFile=<[{'fileName': 'someFile.txt'}, {'fileName': 'someOtherFile.txt'}]>. \nRemember that the latest state of the files to modify is in the OpenFiles section. Please include one SummariseAction call in each response to capture your intent, and try to limit the number of file edits/modifications per response, to minimise the number of potential compilation errors/unit test failures that need to be fixed at once. Remember COMMENTS ARE NOT SUPPORTED in the JSON."
 
 tmp :: Text
 tmp = "AppendFile<[{\"fileName\":\"websocket_client.h\",\"text\":\"#pragma once\\n\\n#include <libwebsockets.h>\\n#include \\\"config.h\\\"\\n#include \\\"simdjson.h\\\"\\n#include \\\"book_data.h\\\"\\n#include \\\"trade_data.h\\\"\\n#include <spdlog/spdlog.h>\\n#include <functional>\\n\\nnamespace websocket {\\n\\nstruct Handler {\\n    virtual void on_trade(const trade_data::TradeEvent& trade) = 0;\\n    virtual void on_agg_trade(const trade_data::AggTradeEvent& agg_trade) = 0;\\n    virtual void on_book_update(const book_data::BookUpdate& update) = 0;\\n    virtual void on_best_bid_ask(const book_data::BestBidAsk& update) = 0;\\n    virtual void request_snapshot(const std::string& symbol) = 0;\\n    virtual ~Handler() = default;\\n};\\n\\nnamespace core {\\n    bool check_sequence_gap(uint64_t last_update_id, const book_data::BookUpdate& update);\\n    void process_message(simdjson::ondemand::document& doc, Handler& handler);\\n}\\n\\nclass WebSocketClient {\\npublic:\\n    WebSocketClient(config::BinanceConfig config, Handler& handler);\\n    ~WebSocketClient();\\n\\n    void connect();\\n    void poll(int timeout_ms = 0);\\n\\nprivate:\\n    static int lws_callback(lws* wsi, lws_callback_reasons reason, void* user, void* in, size_t len);\\n    int handle_callback(lws* wsi, lws_callback_reasons reason, void* in, size_t len);\\n\\n    lws_context* context = nullptr;\\n    lws* wsi = nullptr;\\n    config::BinanceConfig config;\\n    Handler& handler;\\n    simdjson::ondemand::parser json_parser;\\n};\\n\\n} // namespace websocket\\n\"}]>\nOpenFile=<[{\"fileName\":\"websocket_client.h\"}]>\n\nReturn=<[{\"createdFiles\":[{\"createdFileName\":\"websocket_client.h\",\"createdFileSummary\":\"Libwebsockets wrapper for Binance with message processing core. Handles WS connection lifecycle, message parsing using simdjson, sequence gap detection, and event dispatch to handler interfaces. Separates pure message validation (check_sequence_gap) from IO-bound WS ops. Uses config::BinanceConfig for endpoints and symbols. Pure core logic in namespace allows testing without live connection.\"}]}]>"
@@ -712,8 +713,8 @@ removeRawTextLiterals input =
         -- with the replacement string (here, an empty string "").
         subRegex regex input ""
 
-extractJsonToolCallsGeminiFormat :: Text -> Either Text (M.Map T.Text [AET.Object])
-extractJsonToolCallsGeminiFormat fullText =
+extractJsonToolCallsGeminiFormat1 :: Text -> Either Text (M.Map T.Text [AET.Object])
+extractJsonToolCallsGeminiFormat1 fullText =
   let jsonContentStringsAttempt1 = findJsonContentInBlocks True fullText
       jsonContentStrings = map (T.pack . removeRawTextLiterals . T.unpack) $ if null jsonContentStringsAttempt1 then findJsonContentInBlocks False fullText else jsonContentStringsAttempt1
 
@@ -725,10 +726,19 @@ extractJsonToolCallsGeminiFormat fullText =
         decodedValue <- case AE.eitherDecodeStrict' (TE.encodeUtf8 currentJsonContentStr) of
           Left err -> Left (
             "Invalid JSON in a ```json block: " <> T.pack err <>
-            ". Block content (first 200 chars): " <> T.take 200 currentJsonContentStr <> "..."
+            ". Block content (first 2000 chars): " <> T.take 2000 currentJsonContentStr <> "..."
             )
           Right val -> Right val
-
+        let lookupName obj = case KM.lookup "tool_name" obj of
+              Just x -> Just x
+              Nothing -> case KM.lookup "name" obj of
+                Just x -> Just x
+                Nothing -> KM.lookup "toolName" obj
+        let lookupArgs obj = case KM.lookup "tool_args" obj of
+              Just x -> Just x
+              Nothing -> case KM.lookup "args" obj of
+                Just x -> Just x
+                Nothing -> KM.lookup "toolArgs" obj
         toolCallsInBlock <- case decodedValue of
           AE.Array arrItems -> do
             let items = V.toList arrItems
@@ -738,10 +748,10 @@ extractJsonToolCallsGeminiFormat fullText =
                   case item of
                     AE.Object obj ->
                       -- Extract tool_name (must be Text)
-                      case KM.lookup "tool_name" obj of
+                      case lookupName obj of
                         Just (AE.String theToolName) ->
                           -- Extract args (can be Object or Array of one Object)
-                          case KM.lookup "args" obj of
+                          case lookupArgs obj of
                             Just (AE.Object argsObj) -> -- Case 1: args is a JSON Object
                               Right (M.insertWith (++) theToolName [argsObj] accMap)
 
@@ -752,36 +762,36 @@ extractJsonToolCallsGeminiFormat fullText =
                                 actualArrayContents -> Left (
                                   "Field 'args' for tool '" <> theToolName <>
                                   "' is an array, but it does not contain a single JSON object. " <>
-                                  "Actual 'args' array content (first 200 chars): " <> T.take 200 (T.pack (show actualArrayContents)) <> "..." <>
-                                  ". Full tool call item (first 200 chars): " <> T.take 200 (T.pack (show item)) <> "..."
+                                  "Actual 'args' array content (first 2000 chars): " <> T.take 2000 (T.pack (show actualArrayContents)) <> "..." <>
+                                  ". Full tool call item (first 2000 chars): " <> T.take 2000 (T.pack (show item)) <> "..."
                                   )
 
                             Just otherArgsValue -> Left ( -- args is neither Object nor Array, or an unhandled Array structure
                               "Field 'args' for tool '" <> theToolName <>
                               "' is not a JSON object or an array of a single JSON object. " <>
-                              "Instead, 'args' was (first 200 chars): " <> T.take 200 (T.pack (show otherArgsValue)) <> "..." <>
-                              ". Full tool call item (first 200 chars): " <> T.take 200 (T.pack (show item)) <> "..."
+                              "Instead, 'args' was (first 2000 chars): " <> T.take 2000 (T.pack (show otherArgsValue)) <> "..." <>
+                              ". Full tool call item (first 2000 chars): " <> T.take 2000 (T.pack (show item)) <> "..."
                               )
                             Nothing -> Left (
-                              "Missing 'args' field for tool '" <> theToolName <> "'. Item (first 200 chars): " <>
-                              T.take 200 (T.pack (show item)) <> "..."
+                              "Missing 'args' field for tool '" <> theToolName <> "'. Item (first 2000 chars): " <>
+                              T.take 2000 (T.pack (show item)) <> "..."
                               )
                         Just otherToolNameValue -> Left (
-                          "'tool_name' field is not a string. Found: " <> T.take 200 (T.pack (show otherToolNameValue)) <>
-                          ". Item (first 200 chars): " <> T.take 200 (T.pack (show item)) <> "..."
+                          "'tool_name' field is not a string. Found: " <> T.take 2000 (T.pack (show otherToolNameValue)) <>
+                          ". Item (first 2000 chars): " <> T.take 2000 (T.pack (show item)) <> "..."
                           )
                         Nothing -> Left (
-                          "Missing 'tool_name' field in JSON object. Item (first 200 chars): " <>
-                          T.take 200 (T.pack (show item)) <> "..."
+                          "Missing 'tool_name' field in JSON object. Item (first 2000 chars): " <>
+                          T.take 2000 (T.pack (show item)) <> "..."
                           )
                     _ -> Left (
-                      "Item in JSON array is not an object: " <> T.take 200 (T.pack (show item)) <> "..."
+                      "Item in JSON array is not an object: " <> T.take 2000 (T.pack (show item)) <> "..."
                       )
             foldM processJsonItem M.empty items
-
+ 
           _ -> Left (
-            "Content of ```json block is not a JSON array. Content (first 200 chars): " <>
-            T.take 200 currentJsonContentStr <> "..."
+            "Content of ```json block is not a JSON array. Content (first 2000 chars): " <>
+            T.take 2000 currentJsonContentStr <> "..."
             )
 
         -- Recursively process remaining blocks and merge results
@@ -792,6 +802,70 @@ extractJsonToolCallsGeminiFormat fullText =
      then Right M.empty -- No ```json blocks found
      else parseAndCollectBlocks jsonContentStrings
 
+
+extractJsonToolCallsGeminiFormat2 :: Text -> Either Text (M.Map T.Text [AET.Object])
+extractJsonToolCallsGeminiFormat2 fullText =
+  let jsonContentStringsAttempt1 = findJsonContentInBlocks True fullText
+      jsonContentStrings = map (T.pack . removeRawTextLiterals . T.unpack) $ if null jsonContentStringsAttempt1 then findJsonContentInBlocks False fullText else jsonContentStringsAttempt1
+
+      parseAndCollectBlocks :: [Text] -> Either Text (M.Map T.Text [AET.Object])
+      parseAndCollectBlocks [] = Right M.empty
+      parseAndCollectBlocks (currentJsonContentStr : restJsonContentStrs) = do
+        decodedValue <- case AE.eitherDecodeStrict' (TE.encodeUtf8 currentJsonContentStr) of
+          Left err -> Left (
+            "Invalid JSON in a ```json block: " <> T.pack err <>
+            ". Block content (first 2000 chars): " <> T.take 2000 currentJsonContentStr <> "..."
+            )
+          Right val -> Right val
+
+        toolCallsInBlock <- case decodedValue of
+          AE.Object topLevelObj -> do -- Expecting a top-level JSON object
+            let processToolEntry :: M.Map T.Text [AET.Object] -> (AE.Key, AE.Value) -> Either Text (M.Map T.Text [AET.Object])
+                processToolEntry accMap (toolNameKey, toolValue) =
+                  let toolName = K.toText toolNameKey -- Convert Aeson.Key to Text
+                  in case toolValue of
+                       AE.Array argsArray -> do
+                         -- Each item in argsArray should be an AE.Object
+                         let extractArgObject :: AE.Value -> Either Text AET.Object
+                             extractArgObject (AE.Object obj) = Right obj
+                             extractArgObject otherVal = Left (
+                               "An argument for tool '" <> toolName <> "' is not a JSON object. " <>
+                               "Found (first 2000 chars): " <> T.take 2000 (T.pack (show otherVal)) <> "..."
+                               )
+                         
+                         -- Use forM (traverse with args flipped) to process each item
+                         -- If any item is not an object, forM will short-circuit with Left
+                         argObjects <- forM (V.toList argsArray) extractArgObject
+
+                         -- If argObjects is empty, it's valid (e.g. "ToolName": [])
+                         -- but we might want to decide if this is an error or just an empty call list.
+                         -- For now, M.insertWith (++) handles empty lists correctly.
+                         Right (M.insertWith (++) toolName argObjects accMap)
+
+                       _ -> Left (
+                         "Value for tool '" <> toolName <> "' is not a JSON array. " <>
+                         "Instead, found (first 2000 chars): " <> T.take 2000 (T.pack (show toolValue)) <> "..."
+                         )
+
+            -- Fold over the key-value pairs of the top-level object
+            foldM processToolEntry M.empty (KM.toList topLevelObj)
+
+          _ -> Left (
+            "Content of ```json block is not a JSON object. " <>
+            "Content (first 2000 chars): " <> T.take 2000 currentJsonContentStr <> "..."
+            )
+
+        restToolCallsMap <- parseAndCollectBlocks restJsonContentStrs
+        Right (M.unionWith (++) toolCallsInBlock restToolCallsMap)
+
+  in if null jsonContentStrings
+     then Right M.empty -- No ```json blocks found
+     else parseAndCollectBlocks jsonContentStrings
+
+extractJsonToolCallsGeminiFormat :: Text -> Either Text (M.Map T.Text [AET.Object])
+extractJsonToolCallsGeminiFormat txt = case extractJsonToolCallsGeminiFormat2 txt of
+  Left _ -> extractJsonToolCallsGeminiFormat1 txt
+  Right x -> if x == M.empty then extractJsonToolCallsGeminiFormat1 txt else Right x
 
 extractFnCalls :: Text -> Text -> Either Text [AET.Object]
 extractFnCalls fullText fnName =

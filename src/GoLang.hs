@@ -446,8 +446,9 @@ tryRerunOneByOne currentTimeout currentNewEnv (testNameToRun : restTestsToTry) =
 
       case maybeTestFailureErr of
         Just errMessageFromHandleExitCode -> do -- This specific test failed when run in isolation
-          putTextLn $ "Test " <> testNameToRun <> " failed when re-run individually. Reporting this failure."
-          pure $ Just errMessageFromHandleExitCode -- Return the error of the first test that fails in isolation
+          let errMsg = "Test " <> testNameToRun <> " failed when re-run individually. Reporting this failure." 
+          putTextLn errMsg
+          pure $ Just $ errMsg <> "\n" <> errMessageFromHandleExitCode -- Return the error of the first test that fails in isolation
         Nothing -> do -- This specific test passed when run in isolation
           putTextLn $ "Test " <> testNameToRun <> " passed when re-run individually. Trying next."
           tryRerunOneByOne currentTimeout currentNewEnv restTestsToTry -- Recurse with remaining tests
