@@ -789,3 +789,7 @@ removeCppStyleLineNumberComment line =
                     else
                       -- The part between "/*" and "*/" wasn't pure digits => keep original line
                       line
+
+replaceCountSimple :: Text -> Text -> Text -> (Text, Int)
+replaceCountSimple needle replacement haystack =
+    (T.replace needle replacement haystack, length (T.breakOnAll needle haystack))

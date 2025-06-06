@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module FileSystem (replaceInFile, readFileToText, readFileToTextMayThrow, readFileToTextAndOpen, appendToFile, ensureLineNumbers, toFilePath, getFileNames, fileExistsOnDisk, clearFileOnDisk, runProcessWithTimeout, getFileNamesRecursive, handleExitCode, runAll, gitInit, gitAddAndCommit, ensureNoLineNumbers, addTenthLineNumbersToText, updateOpenedFile, reloadOpenFiles, gitSetupUser, gitRevertFile, tryFileOp, checkBinaryOnPath, LineNumberAddRemoveFns) where
+module FileSystem (replaceInFile, readFileToText, readFileToTextMayThrow, readFileToTextAndOpen, appendToFile, ensureLineNumbers, toFilePath, getFileNames, fileExistsOnDisk, clearFileOnDisk, runProcessWithTimeout, getFileNamesRecursive, handleExitCode, runAll, gitInit, gitAddAndCommit, ensureNoLineNumbers, addTenthLineNumbersToText, updateOpenedFile, reloadOpenFiles, gitSetupUser, gitRevertFile, tryFileOp, checkBinaryOnPath, LineNumberAddRemoveFns, replaceTextInFile) where
 
 import Control.Concurrent.Async (concurrently) 
 import Control.Exception (IOException, bracket, try)
@@ -159,6 +159,19 @@ clearFileOnDisk path = do
   when exists
     $ writeFile path ""
 
+replaceTextInFile :: FilePath -> Text -> Text -> IO (Either T.Text Int)
+replaceTextInFile fileName textToReplace replaceItWith = do
+  putTextLn $ "Replacing " <> textToReplace <> " in " <> T.pack fileName <> " with " <> replaceItWith
+  fileResult <- try $ TIO.readFile fileName :: IO (Either IOException T.Text)
+  case fileResult of
+    Left ex -> return $ Left $ T.pack $ "Error reading file: " <> show ex
+    Right content -> do
+      let (newContent, numReplacements) = replaceCountSimple textToReplace replaceItWith content
+      writeResult <- try $ TIO.writeFile fileName newContent :: IO (Either IOException ())
+      case writeResult of
+        Left ex -> return $ Left $ T.pack $ "Error writing file: " <> show ex
+        Right () -> return $ Right numReplacements
+        
 replaceInFile :: FilePath -> Int -> Int -> T.Text -> IO (Either T.Text ())
 replaceInFile fileName startLineNumDesired endLineNumDesired newText = do
   putTextLn $ "Editing file " <> show fileName

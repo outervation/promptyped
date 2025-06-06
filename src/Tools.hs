@@ -51,7 +51,7 @@ isEditor ToolDeleteLineByMatch = True
 isEditor ToolReplaceInFile = True
 isEditor _ = False
 
-data ToolCall a = ToolCallOpenFile [OpenFileArg] | ToolCallFocusFile [FocusFileArg] | ToolCallCloseFile [CloseFileArg] | ToolCallAppendFile [AppendFileArg] | ToolCallReplaceFile [AppendFileArg] | ToolCallEditFile [EditFileArg] | ToolCallEditFileByMatch [EditFileByMatchArg] | ToolCallDeleteLineByMatch [DeleteLineByMatchArg] | ToolReplaceInFile [ReplaceInFileArg] | ToolCallRevertFile [RevertFileArg] | ToolCallInsertInFile [InsertInFileArg] | ToolCallFileLineOp [FileLineOpArg] | ToolCallAddDependency [AddDependencyArg]| ToolCallPanic PanicArg | ToolCallEscalate EscalateArg | ToolCallSummariseAction [SummariseActionArg] | ToolCallReturn a
+data ToolCall a = ToolCallOpenFile [OpenFileArg] | ToolCallFocusFile [FocusFileArg] | ToolCallCloseFile [CloseFileArg] | ToolCallAppendFile [AppendFileArg] | ToolCallReplaceFile [AppendFileArg] | ToolCallEditFile [EditFileArg] | ToolCallEditFileByMatch [EditFileByMatchArg] | ToolCallDeleteLineByMatch [DeleteLineByMatchArg] | ToolCallReplaceInFile [ReplaceInFileArg] | ToolCallRevertFile [RevertFileArg] | ToolCallInsertInFile [InsertInFileArg] | ToolCallFileLineOp [FileLineOpArg] | ToolCallAddDependency [AddDependencyArg]| ToolCallPanic PanicArg | ToolCallEscalate EscalateArg | ToolCallSummariseAction [SummariseActionArg] | ToolCallReturn a
 
   deriving (Generic, Eq, Ord, Show)
 
@@ -67,8 +67,8 @@ toolCallTool (ToolCallAppendFile _) = ToolAppendFile
 toolCallTool (ToolCallReplaceFile _) = ToolReplaceFile
 toolCallTool (ToolCallEditFile _) = ToolEditFile
 toolCallTool (ToolCallEditFileByMatch _) = ToolEditFileByMatch
-toolCallTool (ToolCallToolDeleteLineByMatch _) = ToolDeleteLineByMatch
-toolCallTool (ToolCallREplaceInFile _) = ToolReplaceInFile
+toolCallTool (ToolCallDeleteLineByMatch _) = ToolDeleteLineByMatch
+toolCallTool (ToolCallReplaceInFile _) = ToolReplaceInFile
 toolCallTool (ToolCallInsertInFile _) = ToolInsertInFile
 toolCallTool (ToolCallRevertFile _) = ToolRevertFile
 toolCallTool (ToolCallPanic _) = ToolPanic
@@ -235,8 +235,8 @@ instance FromJSON EditFileByMatchArg
 
 data DeleteLineByMatchArg = DeleteLineByMatchArg
   { fileName :: Text,
-    startLineMatchesRegex :: Text,
-    startClosestToLineNum :: Int
+    lineMatchesRegex :: Text,
+    closestToLineNum :: Int
   }
   deriving (Generic, Show, Eq, Ord)
 instance ToJSON DeleteLineByMatchArg
@@ -248,25 +248,30 @@ data InsertInFileArg = InsertInFileArg
     rawTextName :: Text
   }
   deriving (Generic, Show, Eq, Ord)
-
 instance ToJSON InsertInFileArg
-
 instance FromJSON InsertInFileArg
+
+data ReplaceInFileArg = ReplaceInFileArg
+  { fileName :: Text,
+    textToReplace :: Text,
+    replaceItWith :: Text
+  }
+  deriving (Generic, Show, Eq, Ord)
+instance ToJSON ReplaceInFileArg
+instance FromJSON ReplaceInFileArg
 
 data RevertFileArg = RevertFileArg
   { fileName :: Text
   }
   deriving (Generic, Show, Eq, Ord)
-
 instance ToJSON RevertFileArg
-
 instance FromJSON RevertFileArg
 
 data FileLineOpArg = FileLineOpArg
   { fileName :: Text,
     startLineNum :: Int,
     endLineNum :: Int,
-    rawTextName :: Text,
+    rawTextName :: Maybe Text,
     origToolName :: Text
   }
   deriving (Generic, Show, Eq, Ord)
@@ -500,12 +505,13 @@ mkSampleCodeBox name = "\nRAWTEXT[" <> name <> "]=R\"r( someCodeHere()\n someMor
 -- Returns arg format json, rawTextBoxExample, description
 toolArgFormatAndDesc :: Tool -> (Text, Text, Text)
 toolArgFormatAndDesc ToolReturn = ("{ }", "", "Return a value; format depends on the task and is described further down below. Where the return references a change made to a file, it should only be returned _after_ the change is made. Note you can only return a single value at a time!")
-toolArgFormatAndDesc ToolFileLineOp = (toJ FileLineOpArg {fileName = "somefile.txt", startLineNum = 5, endLineNum = 10, rawTextName = "codeBoxToUse", origToolName = "originalToolName"}, mkSampleCodeBox "codeBoxToUse", "You should panic if you see this; it's an internal tool that insert/edit are transformed into, and you shouldn't call it directly.")
+toolArgFormatAndDesc ToolFileLineOp = (toJ FileLineOpArg {fileName = "somefile.txt", startLineNum = 5, endLineNum = 10, rawTextName = Just "codeBoxToUse", origToolName = "originalToolName"}, mkSampleCodeBox "codeBoxToUse", "You should panic if you see this; it's an internal tool that insert/edit are transformed into, and you shouldn't call it directly.")
 toolArgFormatAndDesc ToolOpenFile = (toJ OpenFileArg {fileName = "someFile.txt"}, "", "Load a file into the context")
 toolArgFormatAndDesc ToolFocusFile = (toJ FocusFileArg {fileName = "someFile.txt"}, "", "Focus on an unfocused source file in the context, showing in full detail (as opposed to just struct defs and function headers). This is necessary for editing a file by line. Note that if already at the max number of focused files, this will cause the least recently modified focused file to be unfocused. Does nothing for non-code files.")
 toolArgFormatAndDesc ToolCloseFile = (toJ CloseFileArg {fileName = "someFile.txt"}, "", "Remove a file from the context")
 toolArgFormatAndDesc ToolAppendFile = (toJ AppendFileArg {fileName = "somefile.txt", rawTextName = "codeToAppendBox"}, mkSampleCodeBox "codeToAppendBox", "Append code/text to the bottom of a file. Can be used to create a new file if the file doesn't exist, and can be done to a non-focused file.")
 toolArgFormatAndDesc ToolReplaceFile = (toJ AppendFileArg {fileName = "somefile.txt", rawTextName = "codeToReplaceBox"}, mkSampleCodeBox "codeToReplaceBox", "Replace a file with the provided code/text to a file. Can be used to create a new file. Prefer this over editing when the file is small.")
+toolArgFormatAndDesc ToolReplaceInFile = (toJ ReplaceInFileArg {fileName = "somefile.txt", textToReplace =  "myFunc(", replaceItWith = "MyFunc("}, "", "Replace all instances of textToReplace in fileName with replaceItWith. To be used for simple refactoring that can be done by find/replace. This is dumb and not content-aware, so make sure you structure textToReplace right so it doesn't accidentally replace something you didn't intend to change. The usage of line breaks in textToReplace is not supported; don't use it for multi-line replacements, instead use an EditFile tool.")
 toolArgFormatAndDesc ToolEditFile = (toJ EditFileArg {fileName = "somefile.txt", startLineNum = 5, endLineNum = 10, rawTextName = "codeBoxToReplaceWith"}, mkSampleCodeBox "codeBoxToReplaceWith", "Replace text in [startLineNum, endLineNum] with the text you provide. Note if making multiple edits to the same file, the start/end line numbers of different edits cannot overlap. IMPORTANT: if you insert more lines than you're replacing, the rest will be inserted, not replaced. So inserting 2 lines at at startLineNum=15 endLineNum=15 will only replace the existing line 15 in the file, and add the second provided line after that, it won't replace lines 15 and 16. Note too that the line-numbers are provided to you at the START of the line in every file. Remember line numbers start at zero, and that multiple edits cannot overlap!")
 toolArgFormatAndDesc ToolEditFileByMatch = (toJ EditFileByMatchArg {fileName = "somefile.txt", startLineMatchesRegex = "int[[:space:]]*some_func(.*){", startClosestToLineNum = 5, endLineMatchesRegex = "^}", endClosestToLineNum = 20, rawTextName = "codeBoxToReplaceWith"}, mkSampleCodeBox "codeBoxToReplaceWith", "Finds lines matching the startLineNumMatchesRegex and endLineMatchesRegex, and replaces them and the lines between them with with the text you provide. Where multiple matches are present, the match closest to startClosestToLineNum/endClosestToLineNum will be used. Note if making multiple edits to the same file, the regions edited cannot overlap. Note also the regex is simple DFA, and does not support fancy PCRE features, or character classes like \\s, only posix classes like [:space:] are supported. Multi-line regex are NOT supported; startLineMatchesRegex and endLineMatchesRegex should be simple single-line regexes that match the first and last line to replace respectively.\nNOTE AGAIN that the linenum comments like /* lineNum */ are purely to assist you and not present on disk, so your regex shouldn't assume they exist. Remember multiple edits cannot overlap!")
 toolArgFormatAndDesc ToolDeleteLineByMatch = (toJ DeleteLineByMatchArg {fileName = "somefile.txt", lineMatchesRegex = "int[[:space:]]*some_func(.*){", closestToLineNum = 5}, "", "Delete the line matching the lineNumMatchesRegex that's closest to closestToLineNum. Where multiple matches are present, the match closest to startClosestToLineNum/endClosestToLineNum will be used. Note if making multiple edits to the same file, the regions edited cannot overlap. Note also the regex is simple DFA, and does not support fancy PCRE features, or character classes like \\s, only posix classes like [:space:] are supported.\nNOTE AGAIN that the linenum comments like /* lineNum */ are purely to assist you and not present on disk, so your regex shouldn't assume they exist.")
@@ -1128,6 +1134,7 @@ processToolArgs rawTexts tool@ToolReplaceFile args = ToolCallReplaceFile <$> pro
 processToolArgs rawTexts tool@ToolEditFile args = ToolCallEditFile <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolEditFileByMatch args = ToolCallEditFileByMatch <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolDeleteLineByMatch args = ToolCallDeleteLineByMatch <$> processArgsOfType tool rawTexts args
+processToolArgs rawTexts tool@ToolReplaceInFile args = ToolCallReplaceInFile <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolInsertInFile args = ToolCallInsertInFile <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolRevertFile args = ToolCallRevertFile <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolSummariseAction args = ToolCallSummariseAction <$> processArgsOfType tool rawTexts args
@@ -1163,10 +1170,10 @@ processToolsArgs toolArgs rawTexts = do
 
 normaliseLineOpTool :: ToolCall a -> AppM (Either Text (ToolCall a))
 normaliseLineOpTool (ToolCallEditFile args) = do
-  let modifyArg (EditFileArg fileName start end textBoxName) = FileLineOpArg fileName start (end + 1) textBoxName (toolName ToolEditFile)
+  let modifyArg (EditFileArg fileName start end textBoxName) = FileLineOpArg fileName start (end + 1) (Just textBoxName) (toolName ToolEditFile)
   pure . Right . ToolCallFileLineOp $ map modifyArg args
 normaliseLineOpTool (ToolCallInsertInFile args) = do
-  let modifyArg (InsertInFileArg fileName lineNum textBoxName) = FileLineOpArg fileName lineNum lineNum textBoxName (toolName ToolInsertInFile)
+  let modifyArg (InsertInFileArg fileName lineNum textBoxName) = FileLineOpArg fileName lineNum lineNum (Just textBoxName) (toolName ToolInsertInFile)
   pure . Right . ToolCallFileLineOp $ map modifyArg args
 normaliseLineOpTool (ToolCallEditFileByMatch args) = do
   st <- get
@@ -1183,8 +1190,27 @@ normaliseLineOpTool (ToolCallEditFileByMatch args) = do
                     else Left $ "Error: Found matching line numbers (" <> show startNum <> ", " <> show endNum <> "), but at least one of these was more than " <> show maxLineDistanceForRegexLineMatch <> " lines away from the line number it was supposed to be near, so likely a far-away line is accidentally being matched. The numbers were supposed to be near (" <> show startNearNum <> ", " <> show endNearNum <> ") respectively."
                   x -> x
                 updErr err = "Error attempting to find line nums for EditFileByMatch tool: " <> err
-                toLineOp (startNum, endNum) = FileLineOpArg fileName startNum (endNum + 1) textBoxName (toolName ToolEditFileByMatch)
+                toLineOp (startNum, endNum) = FileLineOpArg fileName startNum (endNum + 1) (Just textBoxName) (toolName ToolEditFileByMatch)
             pure $ bimap updErr toLineOp mayLineNums
+  mayNewArgs <- foldAllEithers modifyArg args
+  pure $ second ToolCallFileLineOp mayNewArgs
+normaliseLineOpTool (ToolCallDeleteLineByMatch args) = do
+  st <- get
+  let modifyArg :: DeleteLineByMatchArg -> AppM (Either Text FileLineOpArg)
+      modifyArg (DeleteLineByMatchArg fileName startRegex startNearNum) =
+        case getOpenFile fileName st of
+          Nothing -> pure . Left $ "Cannot edit file that's not open: " <> fileName
+          (Just oFile) -> do
+            let contents = openFileContents oFile
+                mayLineNumsInitial = getLineNumsFromRegex (startRegex, startNearNum) (startRegex, startNearNum) contents
+                mayLineNum = case mayLineNumsInitial of
+                  Right (startNum, _) -> if (abs (startNearNum - startNum) < maxLineDistanceForRegexLineMatch)
+                    then Right startNum
+                    else Left $ "Error: Found matching line number (" <> show startNum <> "), but it was more than " <> show maxLineDistanceForRegexLineMatch <> " lines away from the line number it was supposed to be near, so likely a far-away line is accidentally being matched. The number was supposed to be near (" <> show startNearNum <> ")."
+                  Left err -> Left err
+                updErr err = "Error attempting to find line nums for DeleteLineByMatch tool: " <> err
+                toLineOp startNum = FileLineOpArg fileName startNum (startNum + 1) Nothing (toolName ToolDeleteLineByMatch)
+            pure $ bimap updErr toLineOp mayLineNum
   mayNewArgs <- foldAllEithers modifyArg args
   pure $ second ToolCallFileLineOp mayNewArgs
 normaliseLineOpTool x = pure $ Right x
@@ -1458,6 +1484,8 @@ runTool _ (ToolCallEditFile args) _ = do
   throwError $ "runTool saw raw ToolCallEditFile " <> show args
 runTool _ (ToolCallEditFileByMatch args) _ = do
   throwError $ "runTool saw raw ToolCallEditFileByMatch " <> show args
+runTool _ (ToolCallDeleteLineByMatch args) _ = do
+  throwError $ "runTool saw raw ToolCallDeleteLineByMatch " <> show args
 runTool rawTexts (ToolCallFileLineOp args) origCtxt = do
   let initialCtxt = origCtxt
       sortedArgAttempt = validateAndSortFileLineArgs args
@@ -1467,7 +1495,9 @@ runTool rawTexts (ToolCallFileLineOp args) origCtxt = do
       pure $ mkError initialCtxt OtherMsg ("Error in file editing by line arguments: " <> err) (EvtFileOp "unresolved" (FailedWithError ("Edit arguments error: " <> err)))
     Right sortedArgs -> do
       ctxtUpdates <- forM sortedArgs $ \(FileLineOpArg fileName startLineNum endLineNum textName origToolName) -> pure $ \ctxt -> do
-        txt <- getRawText rawTexts textName
+        txt <- case textName of
+          Just name -> getRawText rawTexts name
+          Nothing -> pure ""
         let affectedBounds = Just $ FileChangeBounds (max 0 (startLineNum - 5)) (endLineNum + 5)
         handleFileOperation @bs
           fileName
@@ -1492,6 +1522,24 @@ runTool _ (ToolCallRevertFile args) origCtxt = do
       Nothing
       ctxt
   foldlM (\acc f -> f acc) initialCtxt ctxtUpdates
+runTool _ (ToolCallReplaceInFile args) origCtxt = do
+  let initialCtxt = origCtxt
+  ctxtUpdates <- forM args $ \(ReplaceInFileArg fileName textToReplace replaceItWith) -> pure $ \ctxt ->
+    handleFileOperation @bs
+      fileName
+      (\x -> do
+          res <- FS.replaceTextInFile x textToReplace replaceItWith
+          pure $ case res of
+            Left err -> Left err
+            -- TODO: return number of lines replaced somehow
+            Right _ {- numLinesReplaced -} -> Right ()
+      )
+      RequiresOpenFileTrue
+      RequiresFocusedFileTrue
+      "replaceInFile"
+      Nothing
+      ctxt
+  foldlM (\acc f -> f acc) initialCtxt ctxtUpdates  
 runTool _ (ToolCallAddDependency args) origCtxt = do
   ctxtUpdates <- forM args $ \(AddDependencyArg depName) -> pure $ \ctxt -> do
     res <- BS.addDependency @bs depName

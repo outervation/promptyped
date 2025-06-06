@@ -76,7 +76,7 @@ makeTaskFromConfig aCfg mCfg = do
           Just refactorCfg -> withBuildSystem (getBuildSystem progLang) $ \(_ :: Proxy bs) -> makeTargetedRefactorFilesProject @bs projectTexts refactorCfg
           Nothing -> throwError "Missing big refactor config!"
         TargetedRefactorProject -> case targetedRefactorCfg aCfg of
-          Just refactorCfg -> withBuildSystem (getBuildSystem progLang) $ \(_ :: Proxy bs) -> makeTargetedRefactorProject @bs projectTexts refactorCfg
+          Just refactorCfg -> withBuildSystem (getBuildSystem progLang) $ \(_ :: Proxy bs) -> makeTargetedRefactorProject @bs projectTexts refactorCfg Nothing
           Nothing -> throwError "Missing targeted refactor config!"
         ChatProject -> withBuildSystem (getBuildSystem GoLang) $ \(_ :: Proxy bs) -> makePromptResponseProject @bs projectTexts
         FileAnalysisProject -> withBuildSystem (getBuildSystem progLang) $ \(_ :: Proxy bs) -> makeSpecComplianceAnalysisProject @bs projectTexts

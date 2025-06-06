@@ -749,7 +749,7 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
   then liftIO $ putTextLn "No refactoring tasks identified or created. Nothing to execute."
   else do
     liftIO $ putTextLn "Executing the aggregated targeted refactor project..."
-    makeTargetedRefactorProject @bs projectTexts finalTargetedRefactorConfig
+    makeTargetedRefactorProject @bs projectTexts finalTargetedRefactorConfig $ Just (show sortedTaskItems)
 
   liftIO $ putTextLn "Targeted refactoring process complete."
 
@@ -829,7 +829,7 @@ makeTargetedRefactorProject projectTexts refactorCfg mOverallWorkplan = do
         forM_ fileNames $ \x -> Tools.openFile @bs Tools.DoFocusOpenedFile x cfg
 
       summary = refactorCfg.refactorSummary
-      workplanDesc = case mOvereallWorkPlan of
+      workplanDesc = case mOverallWorkplan of
         Just x -> "You're working on a single section of the following overall work plan:\n" <> x <> "\n\n"
         Nothing -> ""
 
