@@ -51,7 +51,7 @@ isEditor ToolDeleteLineByMatch = True
 isEditor ToolReplaceInFile = True
 isEditor _ = False
 
-data ToolCall a = ToolCallOpenFile [OpenFileArg] | ToolCallFocusFile [FocusFileArg] | ToolCallCloseFile [CloseFileArg] | ToolCallAppendFile [AppendFileArg] | ToolCallReplaceFile [AppendFileArg] | ToolCallEditFile [EditFileArg] | ToolCallEditFileByMatch [EditFileByMatchArg] | ToolCallDeleteLineByMatch [EditFileByMatchArg] | ToolCallRevertFile [RevertFileArg] | ToolCallInsertInFile [InsertInFileArg] | ToolCallFileLineOp [FileLineOpArg] | ToolCallAddDependency [AddDependencyArg]| ToolCallPanic PanicArg | ToolCallEscalate EscalateArg | ToolCallSummariseAction [SummariseActionArg] | ToolCallReturn a
+data ToolCall a = ToolCallOpenFile [OpenFileArg] | ToolCallFocusFile [FocusFileArg] | ToolCallCloseFile [CloseFileArg] | ToolCallAppendFile [AppendFileArg] | ToolCallReplaceFile [AppendFileArg] | ToolCallEditFile [EditFileArg] | ToolCallEditFileByMatch [EditFileByMatchArg] | ToolCallDeleteLineByMatch [DeleteLineByMatchArg] | ToolReplaceInFile [ReplaceInFileArg] | ToolCallRevertFile [RevertFileArg] | ToolCallInsertInFile [InsertInFileArg] | ToolCallFileLineOp [FileLineOpArg] | ToolCallAddDependency [AddDependencyArg]| ToolCallPanic PanicArg | ToolCallEscalate EscalateArg | ToolCallSummariseAction [SummariseActionArg] | ToolCallReturn a
 
   deriving (Generic, Eq, Ord, Show)
 
@@ -67,6 +67,8 @@ toolCallTool (ToolCallAppendFile _) = ToolAppendFile
 toolCallTool (ToolCallReplaceFile _) = ToolReplaceFile
 toolCallTool (ToolCallEditFile _) = ToolEditFile
 toolCallTool (ToolCallEditFileByMatch _) = ToolEditFileByMatch
+toolCallTool (ToolCallToolDeleteLineByMatch _) = ToolDeleteLineByMatch
+toolCallTool (ToolCallREplaceInFile _) = ToolReplaceInFile
 toolCallTool (ToolCallInsertInFile _) = ToolInsertInFile
 toolCallTool (ToolCallRevertFile _) = ToolRevertFile
 toolCallTool (ToolCallPanic _) = ToolPanic
@@ -123,6 +125,14 @@ mergeToolCalls =
         ToolCallEditFileByMatch _ ->
           [ ToolCallEditFileByMatch
               (concat [as | ToolCallEditFileByMatch as <- grp])
+          ]
+        ToolCallDeleteLineByMatch _ ->
+          [ ToolCallDeleteLineByMatch
+              (concat [as | ToolCallDeleteLineByMatch as <- grp])
+          ]
+        ToolCallReplaceInFile _ ->
+          [ ToolCallReplaceInFile
+              (concat [as | ToolCallReplaceInFile as <- grp])
           ]
         ToolCallRevertFile _ ->
           [ ToolCallRevertFile
@@ -220,10 +230,17 @@ data EditFileByMatchArg = EditFileByMatchArg
     rawTextName :: Text
   }
   deriving (Generic, Show, Eq, Ord)
-
 instance ToJSON EditFileByMatchArg
-
 instance FromJSON EditFileByMatchArg
+
+data DeleteLineByMatchArg = DeleteLineByMatchArg
+  { fileName :: Text,
+    startLineMatchesRegex :: Text,
+    startClosestToLineNum :: Int
+  }
+  deriving (Generic, Show, Eq, Ord)
+instance ToJSON DeleteLineByMatchArg
+instance FromJSON DeleteLineByMatchArg
 
 data InsertInFileArg = InsertInFileArg
   { fileName :: Text,
@@ -491,6 +508,7 @@ toolArgFormatAndDesc ToolAppendFile = (toJ AppendFileArg {fileName = "somefile.t
 toolArgFormatAndDesc ToolReplaceFile = (toJ AppendFileArg {fileName = "somefile.txt", rawTextName = "codeToReplaceBox"}, mkSampleCodeBox "codeToReplaceBox", "Replace a file with the provided code/text to a file. Can be used to create a new file. Prefer this over editing when the file is small.")
 toolArgFormatAndDesc ToolEditFile = (toJ EditFileArg {fileName = "somefile.txt", startLineNum = 5, endLineNum = 10, rawTextName = "codeBoxToReplaceWith"}, mkSampleCodeBox "codeBoxToReplaceWith", "Replace text in [startLineNum, endLineNum] with the text you provide. Note if making multiple edits to the same file, the start/end line numbers of different edits cannot overlap. IMPORTANT: if you insert more lines than you're replacing, the rest will be inserted, not replaced. So inserting 2 lines at at startLineNum=15 endLineNum=15 will only replace the existing line 15 in the file, and add the second provided line after that, it won't replace lines 15 and 16. Note too that the line-numbers are provided to you at the START of the line in every file. Remember line numbers start at zero, and that multiple edits cannot overlap!")
 toolArgFormatAndDesc ToolEditFileByMatch = (toJ EditFileByMatchArg {fileName = "somefile.txt", startLineMatchesRegex = "int[[:space:]]*some_func(.*){", startClosestToLineNum = 5, endLineMatchesRegex = "^}", endClosestToLineNum = 20, rawTextName = "codeBoxToReplaceWith"}, mkSampleCodeBox "codeBoxToReplaceWith", "Finds lines matching the startLineNumMatchesRegex and endLineMatchesRegex, and replaces them and the lines between them with with the text you provide. Where multiple matches are present, the match closest to startClosestToLineNum/endClosestToLineNum will be used. Note if making multiple edits to the same file, the regions edited cannot overlap. Note also the regex is simple DFA, and does not support fancy PCRE features, or character classes like \\s, only posix classes like [:space:] are supported. Multi-line regex are NOT supported; startLineMatchesRegex and endLineMatchesRegex should be simple single-line regexes that match the first and last line to replace respectively.\nNOTE AGAIN that the linenum comments like /* lineNum */ are purely to assist you and not present on disk, so your regex shouldn't assume they exist. Remember multiple edits cannot overlap!")
+toolArgFormatAndDesc ToolDeleteLineByMatch = (toJ DeleteLineByMatchArg {fileName = "somefile.txt", lineMatchesRegex = "int[[:space:]]*some_func(.*){", closestToLineNum = 5}, "", "Delete the line matching the lineNumMatchesRegex that's closest to closestToLineNum. Where multiple matches are present, the match closest to startClosestToLineNum/endClosestToLineNum will be used. Note if making multiple edits to the same file, the regions edited cannot overlap. Note also the regex is simple DFA, and does not support fancy PCRE features, or character classes like \\s, only posix classes like [:space:] are supported.\nNOTE AGAIN that the linenum comments like /* lineNum */ are purely to assist you and not present on disk, so your regex shouldn't assume they exist.")
 toolArgFormatAndDesc ToolInsertInFile = (toJ InsertInFileArg {fileName = "somefile.txt", lineNum = 17, rawTextName = "codeToInsertBox"}, mkSampleCodeBox "codeToInsertBox", "Insert the provided text into the file at lineNum, not replacing/overwriting the content on that line (instead it's moved to below the inserted text). Note that this cannot overlap with lines modified by an Edit tool, as order of operations is undefined.")
 toolArgFormatAndDesc ToolAddDependency = (toJ AddDependencyArg {dependencyName = "github.com/xitongsys/parquet-go"}, "", "Add the dependency in the appropriate manner for the build system. E.g. golang will go get dependencyName, Rust will cargo add dependencyName.")
 toolArgFormatAndDesc ToolRevertFile = (toJ RevertFileArg {fileName = "someFile.txt"}, "", "Revert un-added changes in an open file; changes are committed when compilation and unit tests succeed, so will revert to the last version of the file before compilation or unit tests failed. Use this if you get the file in a state you can't recover it from.")
@@ -1109,6 +1127,7 @@ processToolArgs rawTexts tool@ToolAppendFile args = ToolCallAppendFile <$> proce
 processToolArgs rawTexts tool@ToolReplaceFile args = ToolCallReplaceFile <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolEditFile args = ToolCallEditFile <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolEditFileByMatch args = ToolCallEditFileByMatch <$> processArgsOfType tool rawTexts args
+processToolArgs rawTexts tool@ToolDeleteLineByMatch args = ToolCallDeleteLineByMatch <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolInsertInFile args = ToolCallInsertInFile <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolRevertFile args = ToolCallRevertFile <$> processArgsOfType tool rawTexts args
 processToolArgs rawTexts tool@ToolSummariseAction args = ToolCallSummariseAction <$> processArgsOfType tool rawTexts args
