@@ -33,7 +33,7 @@ import Text.Regex.TDFA (Regex, match)
 maxLineDistanceForRegexLineMatch :: Int
 maxLineDistanceForRegexLineMatch = 20
 
-data Tool = ToolOpenFile | ToolFocusFile | ToolCloseFile | ToolAppendFile | ToolReplaceFile | ToolInsertInFile | ToolEditFile | ToolEditFileByMatch | ToolRevertFile | ToolFileLineOp | ToolAddDependency | ToolPanic | ToolEscalate | ToolSummariseAction | ToolReturn
+data Tool = ToolOpenFile | ToolFocusFile | ToolCloseFile | ToolAppendFile | ToolReplaceFile | ToolInsertInFile | ToolEditFile | ToolEditFileByMatch | ToolDeleteLineByMatch | ToolReplaceInFile | ToolRevertFile | ToolFileLineOp | ToolAddDependency | ToolPanic | ToolEscalate | ToolSummariseAction | ToolReturn
   deriving (Eq, Ord, Show)
 
 isMutation :: Tool -> Bool
@@ -47,9 +47,12 @@ isEditor :: Tool -> Bool
 isEditor ToolEditFile = True
 isEditor ToolEditFileByMatch = True
 isEditor ToolFileLineOp = True
+isEditor ToolDeleteLineByMatch = True
+isEditor ToolReplaceInFile = True
 isEditor _ = False
 
-data ToolCall a = ToolCallOpenFile [OpenFileArg] | ToolCallFocusFile [FocusFileArg] | ToolCallCloseFile [CloseFileArg] | ToolCallAppendFile [AppendFileArg] | ToolCallReplaceFile [AppendFileArg] | ToolCallEditFile [EditFileArg] | ToolCallEditFileByMatch [EditFileByMatchArg] | ToolCallRevertFile [RevertFileArg] | ToolCallInsertInFile [InsertInFileArg] | ToolCallFileLineOp [FileLineOpArg] | ToolCallAddDependency [AddDependencyArg]| ToolCallPanic PanicArg | ToolCallEscalate EscalateArg | ToolCallSummariseAction [SummariseActionArg] | ToolCallReturn a
+data ToolCall a = ToolCallOpenFile [OpenFileArg] | ToolCallFocusFile [FocusFileArg] | ToolCallCloseFile [CloseFileArg] | ToolCallAppendFile [AppendFileArg] | ToolCallReplaceFile [AppendFileArg] | ToolCallEditFile [EditFileArg] | ToolCallEditFileByMatch [EditFileByMatchArg] | ToolCallDeleteLineByMatch [EditFileByMatchArg] | ToolCallRevertFile [RevertFileArg] | ToolCallInsertInFile [InsertInFileArg] | ToolCallFileLineOp [FileLineOpArg] | ToolCallAddDependency [AddDependencyArg]| ToolCallPanic PanicArg | ToolCallEscalate EscalateArg | ToolCallSummariseAction [SummariseActionArg] | ToolCallReturn a
+
   deriving (Generic, Eq, Ord, Show)
 
 instance (ToJSON a) => ToJSON (ToolCall a)

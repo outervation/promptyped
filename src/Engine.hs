@@ -273,8 +273,8 @@ getTask st tools isNestedAiFunc isCloseFileTask mainTask = do
   "YOUR CURRENT TASK: " <> case (compileRes res, testRes res, isCloseFileTask, isNestedAiFunc, hasEditTool) of
     (_, _, _, _, False) -> mainTask
     (_, _, IsCloseFileTaskTrue, _, _) -> "Please close the least important open file, to free up space in the context. The task you were working on when the context got too large is as follows; you should close the file least relevant to it: " <> mainTask 
-    (Nothing, Nothing, IsCloseFileTaskFalse, _, _) -> mainTask
-    (Just _, _, IsCloseFileTaskFalse, IsNestedAiFuncFalse, _) -> "Fix the project build error. The error is described above. The task you were working on when compilation failed (don't work on it now, just fix the build):\n\"" <> mainTask <> "\""
+    (Nothing, Nothing, IsCloseFileTaskFalse, _, _) -> mainTask <> "\nIf the task appears to already have been done, then just return directly." 
+    (Just _, _, IsCloseFileTaskFalse, IsNestedAiFuncFalse, _) -> "FIX THE PROJECT BUILD ERROR before doing anything else; the error is described above. If there are a lot of errors, please fix it in small chunks where possible, don't do it all with a giant diff in a single response, as a giant diff is more likely to have some mistake. The task you were working on when compilation failed (DON'T WORK ON IT NOW, just fix the build) was:\n\"" <> mainTask <> "\""
     (Nothing, Just _, IsCloseFileTaskFalse, IsNestedAiFuncFalse, _) -> "Fix the error that occurred building or running the tests. The error is described above. The task you were working on when compilation failed (don't work on it now, just fix the tests):\n\"" <> mainTask <> "\"\nPlease DO NOT attempt that task until the tests are fixed. Where there are multiple test failures with large output, only a single test will be run, to conserve space in context, so focus on solving that test regardless of what your current task was."
     (_, _, IsCloseFileTaskFalse, IsNestedAiFuncTrue, _) -> mainTask
 

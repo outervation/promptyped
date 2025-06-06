@@ -417,7 +417,7 @@ makeRefactorFileTask background initialDeps fileName desiredChanges refactorUnit
   Tools.forceFocusFile fileName
   closeIrrelevantUnfocusedFiles @bs background desiredChanges fileName
   let makeChange description = do
-        let ctxt = makeBaseContext background $ "Your task is to refactor the file " <> fileName <> " to make the change: " <> (summary description) <> ". Do NOT make other changes yet. If the build/tests are currently broken, fix those first. If the change has already been made, you can return directly. Where the task has multiple steps, you don't need to do it all at once; it's better to do it step-by-step (one step per response) to reduce the chance of errors, and only Return after all steps are done."
+        let ctxt = makeBaseContext background $ "Your task is to modify the file " <> fileName <> " to make the change: " <> (summary description) <> ". Do NOT make other changes yet. If the build/tests are currently broken, fix those first. If the change has already been made, you can (and should) return directly. Where the task has multiple steps, you don't need to do it all at once; it's better to do it step-by-step (one step per response) to reduce the chance of errors, and only Return after all steps are done."
             exampleChange = ModifiedFile "someFile.go" "Update the file to add ... so that it ..."
             validateChange = Engine.combineValidatorsSameRes validateAlwaysPassIfCompileTestsFine (validateFileModifiedWithAi @bs fileName)
         liftIO $ putTextLn $ "Running file modification task: " <> show description
@@ -809,8 +809,8 @@ data TargetedRefactorConfig = TargetedRefactorConfig
 instance ToJSON TargetedRefactorConfig
 instance FromJSON TargetedRefactorConfig
 
-makeTargetedRefactorProject :: forall bs. (BS.BuildSystem bs) => ProjectTexts -> TargetedRefactorConfig -> AppM ()
-makeTargetedRefactorProject projectTexts refactorCfg = do
+makeTargetedRefactorProject :: forall bs. (BS.BuildSystem bs) => ProjectTexts -> TargetedRefactorConfig -> Maybe Text -> AppM ()
+makeTargetedRefactorProject projectTexts refactorCfg mOverallWorkplan = do
   cfg <- ask
   ignoredDirs <- BS.getIgnoredDirs @bs
   existingFileNames <- liftIO $ FS.getFileNamesRecursive ignoredDirs cfg.configBaseDir
@@ -829,12 +829,15 @@ makeTargetedRefactorProject projectTexts refactorCfg = do
         forM_ fileNames $ \x -> Tools.openFile @bs Tools.DoFocusOpenedFile x cfg
 
       summary = refactorCfg.refactorSummary
+      workplanDesc = case mOvereallWorkPlan of
+        Just x -> "You're working on a single section of the following overall work plan:\n" <> x <> "\n\n"
+        Nothing -> ""
 
       doRefactor :: TargetedRefactorConfigItem -> AppM ()
       doRefactor rCfg = do
         -- preSt <- get
         --unless (fileExists rCfg.refactorFile preSt) $ throwError $ "Trying to refactor file that doesn't exist: " <> rCfg.refactorFile <> "; files are: " <> show preSt.stateFiles
-        let background = projectTexts.projectSummaryText <> "\n" <> summary
+        let background = "Project background:\n"<> projectTexts.projectSummaryText <> "\n\n" <> workplanDesc <> "The section of the project you're currently working on:\n" <> summary
             exampleTasks =
               ThingsWithDependencies
                 [ ThingWithDependencies "addNewClassX" "Class X, which does ..., must be added to support ..." [],
@@ -851,7 +854,7 @@ makeTargetedRefactorProject projectTexts refactorCfg = do
                 <> "\n ------ \n"
                 <> "Each task should list other task dependencies if any, and there should be no circular dependencies (dependencies here means other tasks, not imports). Don't include tasks like running the build system and unit tests; they will run automatically after file changes.\n"
                 <> "Please DO NOT attempt to call any tools to modify files to actually make the code changes, just Return a list of text values in the format specified below describing the individual tasks that need to be done.\n"
-            taskBackground = background <> "\nYour task for this file is: " <> rCfg.refactorTask
+            taskBackground = background <> "\n\nYour overall high-level task for this file is: " <> rCfg.refactorTask <> "\n\n"
             getChangesTask fileName = Engine.runAiFunc @bs (mkCtxt fileName) HighIntelligenceRequired Engine.readOnlyTools exampleTasks validateThingsWithDependencies (configTaskMaxFailures cfg)
         setupOpenFiles relFiles
         Tools.forceFocusFile rCfg.refactorFile
