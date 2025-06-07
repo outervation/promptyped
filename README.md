@@ -4,7 +4,9 @@ This repository provides a structured way to integrate Large Language Models (LL
 
 Initial writeup at: https://outervationai.substack.com/p/getting-an-llm-to-write-a-small-nontrivial .
 
-Examples of usage are in the app dir, e.g. app/TaskFromConfig.hs. It might be used like `promptyped ./config_app_example_big_task.json ./config_model_example.json`.
+Examples of usage are in the app dir, i.e. app/TaskFromConfig.hs. It might be used like `promptyped ./config_app_example_big_task.json ./config_model_example.json`.
+
+The workflows/prompts are in src/PromptCommon.has.
 
 The main interface to the library is the following:
 
@@ -33,7 +35,8 @@ License is Apache 2.0. Contributions are welcome, but for significant changes pl
 
 Still heavily WIP so no guarantees of stability or correctness.
 
-Future tasks include:
+Planned future tasks include:
 * Adding support for focusing/unfocusing individual functions, rather than just files, to allow worker with larger files better.
-* Adding support for multiple simultaneous tasks
-* Cleaning up the Haskell code
+* Adding support for multiple simultaneous tasks.
+* Adding support for Haskell as a project language, so promptyped can be used to write promptyped workflows. 
+* Cleaning up the Haskell code and making AppM a free monad, so the library can be unit tested.
