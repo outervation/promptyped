@@ -102,8 +102,8 @@ checkFormatPython ::
 checkFormatPython timeout dir = Dir.withCurrentDirectory dir $ do
   -- `uvx ruff check .` will check all files in the current directory and subdirectories
   -- respecting .ruff.toml or pyproject.toml [tool.ruff] settings.
-  formatResult <- runProcessWithTimeout timeout "." [] "uvx" ["ruff", "check", "."]
-  res <- handleExitCode "'uvx ruff check .'" formatResult
+  formatResult <- runProcessWithTimeout timeout "." [] "uvx" ["ruff", "check"]
+  res <- handleExitCode "'uvx ruff check'" formatResult
   case res of
     Left err -> pure . Just $ "The change you attempted to make would produce files that fail linting/formatting. 'uvx ruff check .' failed with:\n" <> err <> "\nThe change has been rejected. Please try again, ensuring your code adheres to the project's linting standards."
     Right () -> pure Nothing
@@ -115,11 +115,8 @@ buildProjectPython ::
   IO (Maybe Text)
 buildProjectPython timeout dir newEnv = Dir.withCurrentDirectory dir $ do
   putTextLn $ "Type checking Python project in dir " <> toText dir
-  -- `uvx ty check` (assuming `ty` is an alias for mypy or similar, configured in pyproject.toml scripts)
-  -- If `ty` isn't a script, this might be `uvx mypy .` if mypy is the intended type checker.
-  -- We'll stick to `uvx ty check` as per the prompt.
-  buildResult <- runProcessWithTimeout timeout "." newEnv "uvx" ["ty", "check", "."]
-  eitherToMaybe <$> handleExitCode "'uvx ty check .'" buildResult
+  buildResult <- runProcessWithTimeout timeout "." newEnv "uvx" ["ty", "check"]
+  eitherToMaybe <$> handleExitCode "'uvx ty check'" buildResult
 
 runTestsPython ::
   NominalDiffTime ->
