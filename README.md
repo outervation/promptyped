@@ -2,9 +2,11 @@
 
 This repository provides a structured way to integrate Large Language Models (LLMs) into typed workflows; a preliminary, embedded implementation of a NOn-deterministic exTremely-high-level Programming Language, (a NOTPL). It achieves this via typed prompts/responses, tools (functions the model can call), smart context management and a build/test system abstraction. The goal is to guide an LLM through multi-step tasks, ensuring outputs conform to expected types, source files compile and unit tests pass, and allowing the LLM to “call” predefined tools to manipulate files or perform other actions necessary for task completion.
 
-Initial writeup at: https://outervationai.substack.com/p/getting-an-llm-to-write-a-small-nontrivial .
+There's an initial writeup at: https://outervationai.substack.com/p/getting-an-llm-to-write-a-small-nontrivial . And a writeup of recent improvements at: https://outervationai.substack.com/p/building-a-100-llm-written-standards .
 
-Examples of usage are in the app dir, e.g. app/TaskFromConfig.hs. It might be used like `promptyped ./config_app_example_big_task.json ./config_model_example.json`.
+Examples of usage are in the app dir, i.e. app/TaskFromConfig.hs. It might be used like `promptyped ./config_app_example_big_task.json ./config_model_example.json`. Currently supports Go and Python (via `uv`) as project languages, but the Python support isn't well tested.
+
+The workflows/prompts are in src/PromptCommon.has.
 
 The main interface to the library is the following:
 
@@ -33,7 +35,8 @@ License is Apache 2.0. Contributions are welcome, but for significant changes pl
 
 Still heavily WIP so no guarantees of stability or correctness.
 
-Future tasks include:
+Planned future tasks include:
 * Adding support for focusing/unfocusing individual functions, rather than just files, to allow worker with larger files better.
-* Adding support for multiple simultaneous tasks
-* Cleaning up the Haskell code
+* Adding support for multiple simultaneous tasks.
+* Adding support for Haskell as a project language, so promptyped can be used to write promptyped workflows. 
+* Cleaning up the Haskell code and making AppM a free monad, so the library can be unit tested.
