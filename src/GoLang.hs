@@ -315,8 +315,8 @@ buildProjectGo timeout dir newEnv = Dir.withCurrentDirectory dir $ do
       buildTests = do
         let lineToSkip x = "no tests to run" `T.isInfixOf` x || "no test files" `T.isInfixOf` x
             removeNoTestLines txt = unlines $ filter (not . lineToSkip) $ lines txt
-        buildTestsResult <- runProcessWithTimeout timeout "." newEnv "go" ["test", "-run=^$", "./..."]
-        first removeNoTestLines <$> handleExitCode "'go test -run=^$'" buildTestsResult
+        buildTestsResult <- runProcessWithTimeout timeout "." newEnv "go" ["test", "./...", "-c"]
+        first removeNoTestLines <$> handleExitCode "'go test ./... -c'" buildTestsResult
       fmtIt = do
         fmtResult <- runProcessWithTimeout timeout "." newEnv "go" ["fmt", "./..."]
         handleExitCode "'go fmt'" fmtResult
