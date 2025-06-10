@@ -849,14 +849,14 @@ extractJsonToolCallsGeminiFormat2 fullText =
           AE.Object topLevelObj -> do -- Expecting a top-level JSON object
             let processToolEntry :: M.Map T.Text [AET.Object] -> (AE.Key, AE.Value) -> Either Text (M.Map T.Text [AET.Object])
                 processToolEntry accMap (toolNameKey, toolValue) =
-                  let toolName = K.toText toolNameKey -- Convert Aeson.Key to Text
+                  let tName = K.toText toolNameKey -- Convert Aeson.Key to Text
                   in case toolValue of
                        AE.Array argsArray -> do
                          -- Each item in argsArray should be an AE.Object
                          let extractArgObject :: AE.Value -> Either Text AET.Object
                              extractArgObject (AE.Object obj) = Right obj
                              extractArgObject otherVal = Left (
-                               "An argument for tool '" <> toolName <> "' is not a JSON object. " <>
+                               "An argument for tool '" <> tName <> "' is not a JSON object. " <>
                                "Found (first 2000 chars): " <> T.take 2000 (T.pack (show otherVal)) <> "..."
                                )
                          
@@ -867,10 +867,10 @@ extractJsonToolCallsGeminiFormat2 fullText =
                          -- If argObjects is empty, it's valid (e.g. "ToolName": [])
                          -- but we might want to decide if this is an error or just an empty call list.
                          -- For now, M.insertWith (++) handles empty lists correctly.
-                         Right (M.insertWith (++) toolName argObjects accMap)
+                         Right (M.insertWith (++) tName argObjects accMap)
 
                        _ -> Left (
-                         "Value for tool '" <> toolName <> "' is not a JSON array. " <>
+                         "Value for tool '" <> tName <> "' is not a JSON array. " <>
                          "Instead, found (first 2000 chars): " <> T.take 2000 (T.pack (show toolValue)) <> "..."
                          )
 

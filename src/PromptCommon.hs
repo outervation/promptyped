@@ -427,7 +427,8 @@ makeRefactorFileTask background initialDeps fileName desiredChanges refactorUnit
     putTextLn $ "Done task: " <> show x
     return $ "Intended modification: " <> x.summary <> ", with model describing what it did as " <> show modification <> "."
   let modificationsTxt = "The model made the following changes: \n" <> T.unlines modifications
-  when ((refactorUnitTests == DoAutoRefactorUnitTests) && not BS.isTestFile @bs fileName)
+  isTest <- BS.isTestFile @bs fileName
+  when ((refactorUnitTests == DoAutoRefactorUnitTests) && not isTest)
     $ makeUnitTestsInner @bs background fileName
     $ makeUnitTestsForSpecificChangePrompt modificationsTxt
 
@@ -818,7 +819,8 @@ makeTargetedRefactorProject projectTexts refactorCfg mOverallWorkplan = do
   _ <- Tools.buildAndTest @bs
   let filterSourceFile x = do
         buildable <- BS.isBuildableFile @bs x
-        return $ buildable && not BS.isTestFile @bs x
+        isTest <- BS.isTestFile @bs x
+        return $ buildable && not isTest
 
       setupOpenFiles fileNames = do
         modify' clearOpenFiles
@@ -1211,7 +1213,8 @@ makePromptResponseProject projectTexts = do
     -- Define the filter function
     let filterSourceFile x = do
             buildable <- BS.isBuildableFile @bs x
-            return $ buildable && not BS.isTestFile @bs x
+            isTest <- BS.isTestFile @bs x
+            return $ buildable && not isTest
 
     sourceFileNames <- filterM filterSourceFile $ map existingFileName st.stateFiles
 
