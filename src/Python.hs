@@ -125,12 +125,12 @@ runTestsPython ::
   IO (Maybe (Text, NumFailedTests))
 runTestsPython timeout dir newEnv = Dir.withCurrentDirectory dir $ do
   putTextLn $ "Running Pytest tests in dir " <> toText dir
-  let initialArgs = ["pytest"] -- Pytest typically discovers tests automatically
-  initialTestResult <- runProcessWithTimeout timeout "." newEnv "uvx" initialArgs
+  let initialArgs = ["run", "pytest"] -- Pytest typically discovers tests automatically
+  initialTestResult <- runProcessWithTimeout timeout "." newEnv "uv" initialArgs
 
   case initialTestResult of
     Left procErrText -> do
-      let errMsg = "Pytest execution ('uvx pytest') failed: " <> procErrText
+      let errMsg = "Pytest execution ('uv run pytest') failed: " <> procErrText
       putTextLn errMsg
       pure $ Just (errMsg, NumFailedTests (-1))
 
@@ -143,7 +143,7 @@ runTestsPython timeout dir newEnv = Dir.withCurrentDirectory dir $ do
         Exit.ExitFailure _ -> do
           let combinedOutput = initialStdout <> "\n" <> initialStderr
               totalLines = length $ T.lines combinedOutput
-              opNameInitial = "'uvx pytest'"
+              opNameInitial = "'uv run pytest'"
               failedTests = extractFailedPytestTests combinedOutput
               numFailedTests = length failedTests
 
@@ -176,11 +176,11 @@ tryRerunPytestOneByOne _ _ [] originalOutput numOriginalFailures = do
 
 tryRerunPytestOneByOne currentTimeout currentNewEnv (testNameToRun : restTestsToTry) _originalOutput numOriginalFailures = do
   -- Pytest can run tests by their node ID, which is what we extract.
-  let rerunArgs = ["pytest", T.unpack testNameToRun]
-  let opNameRerun = "'uvx pytest " <> testNameToRun <> "'"
+  let rerunArgs = ["run", "pytest", T.unpack testNameToRun]
+  let opNameRerun = "'uv run pytest " <> testNameToRun <> "'"
 
-  putTextLn $ "Attempting to re-run individually: uvx " <> T.unwords (map T.pack rerunArgs)
-  rerunResultOrError <- runProcessWithTimeout currentTimeout "." currentNewEnv "uvx" rerunArgs
+  putTextLn $ "Attempting to re-run individually: uv " <> T.unwords (map T.pack rerunArgs)
+  rerunResultOrError <- runProcessWithTimeout currentTimeout "." currentNewEnv "uv" rerunArgs
 
   case rerunResultOrError of
     Left rerunProcErrText -> do
