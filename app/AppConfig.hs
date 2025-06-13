@@ -66,7 +66,8 @@ data AppConfig = AppConfig
     projectKind :: ProjectKind,
     targetedRefactorCfg :: Maybe PC.TargetedRefactorConfig,
     bigRefactorCfg :: Maybe PC.BigRefactorConfig,
-    taskCfg :: Maybe TaskConfig
+    taskCfg :: Maybe TaskConfig,
+    analysisCfg :: Maybe PC.AnalysisConfig
   }
   deriving (Generic, Eq, Ord, Show)
 
