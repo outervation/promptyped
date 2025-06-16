@@ -4,9 +4,9 @@ This repository provides a structured way to integrate Large Language Models (LL
 
 There's an initial writeup at: https://outervationai.substack.com/p/getting-an-llm-to-write-a-small-nontrivial . And a writeup of recent improvements at: https://outervationai.substack.com/p/building-a-100-llm-written-standards .
 
-Examples of usage are in the app dir, i.e. app/TaskFromConfig.hs. It might be used like `promptyped ./config_app_example_big_task.json ./config_model_example.json`. Currently supports Go and Python (via `uv`) as project languages, but the Python support isn't well tested.
+Examples of usage are in the app dir, i.e. app/TaskFromConfig.hs. It might be used like `promptyped ./config_app_example_big_task.json ./config_model_example.json`. Currently supports Go, Rust and Python (via `uv`) as project languages, but the Python and Rust support isn't well tested.
 
-The workflows/prompts are in src/PromptCommon.has.
+The workflows are in src/PromptCommon.hs.
 
 The main interface to the library is the following:
 
