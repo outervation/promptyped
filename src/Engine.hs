@@ -43,7 +43,7 @@ numSyntaxRejectsToCauseContextReset :: Int
 numSyntaxRejectsToCauseContextReset = 5
 
 maxConsecutiveCompileErrors :: Int
-maxConsecutiveCompileErrors = 5
+maxConsecutiveCompileErrors = 20
 
 numRecentEventsToShow :: Int
 numRecentEventsToShow = 100
@@ -105,7 +105,7 @@ handleConsecutiveCompileFailures origCtxt = do
 
   if not shouldIntervene
     then pure origCtxt -- No intervention needed
-    else do
+    else (>>) resetNumConsecutiveCompilationFails $ runActionWithoutModifyingState $ do
       putTextLn $ "Detected " <> show consecutiveFails <> " consecutive compilation failures. Checking for progress..."
       liftIO $ Logging.logWarn "CompileFailureIntervention" $ "Detected " <> show consecutiveFails <> " consecutive failures. Checking progress."
 
@@ -304,7 +304,7 @@ contextToMessages Context{..} tools theState isNestedAiFunc isCloseFileTask exam
   where
     toolDesc = Tools.toolsToDescription tools
     respReqsDesc = "Your response must either call at least one tool or return a value. If calling any tool, please also include a SummariseAction tool call too, for tracking the intent and future plans."
-    evtsDesc = "Here is a list of your recent actions, the intent behind them and their results. Look carefully to identify any circular behaviour here, to avoid getting stuck in a loop, and so you don't lose track of your train of thought/intention:\n" <> T.intercalate "\n" (map show (takeEnd numRecentEventsToShow contextEvents))
+    evtsDesc = "Here is a list of your recent actions, the intent behind them and their results. Look carefully to identify any circular behaviour here, to avoid getting stuck in a loop, and so you don't lose track of your train of thought/intention:[\n\n" <> T.intercalate "\n" (map show (takeEnd numRecentEventsToShow contextEvents)) <> "\n]\n"
     render :: FileFocused -> Text -> AppM Text
     render isFocused file = do
       isSourceFile <- isBuildableFile @bs file
@@ -473,7 +473,7 @@ runAiFuncInner isNestedAiFunc isCloseFileTask initialCtxt intReq tools exampleRe
   when (failureToleranceExceeded remainingErrs) $ throwError $ "Aborting as reached max number of errors; " <> show remainingErrs
   when (notElem Tools.ToolReturn tools) $ throwError "Missing Return tool!"
   when ((any Tools.isMutation tools) && notElem Tools.ToolSummariseAction tools) $ throwError "Missing SummariseAction tool!"
-  origCtxt <- if isNestedAiFunc == IsNestedAiFuncTrue then pure initialCtxt else runActionWithoutModifyingState $ handleConsecutiveCompileFailures @bs initialCtxt
+  origCtxt <- if isNestedAiFunc == IsNestedAiFuncTrue then pure initialCtxt else handleConsecutiveCompileFailures @bs initialCtxt
   cfg <- ask
   theState <- get
   let -- (RemainingFailureTolerance failureToleranceInt) = configTaskMaxFailures cfg

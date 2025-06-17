@@ -445,6 +445,13 @@ onSyntaxCheckPass :: AppState -> AppState
 onSyntaxCheckPass st =
   st {stateCompileTestRes = (stateCompileTestRes st) {numConsecutiveSyntaxCheckFails = 0}}
 
+resetNumConsecutiveCompilationFailsSt :: AppState -> AppState
+resetNumConsecutiveCompilationFailsSt st =
+  st {stateCompileTestRes = (stateCompileTestRes st) {numConsecutiveCompilationFails = 0}}
+
+resetNumConsecutiveCompilationFails :: AppM ()
+resetNumConsecutiveCompilationFails = modify' resetNumConsecutiveCompilationFailsSt
+
 resetCompileTestState :: AppM ()
 resetCompileTestState = do
   modify' $ updateLastCompileState Nothing

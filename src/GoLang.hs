@@ -536,3 +536,5 @@ instance BuildSystem GoLang where
 
   addLineNumberComment num txt = addCppStyleLineNumberComment num txt
   removeLineNumberCommentIfPresent txt = removeCppStyleLineNumberComment txt
+
+  fileExtension = ".go"

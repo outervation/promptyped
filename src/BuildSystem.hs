@@ -19,6 +19,7 @@ class BuildSystem (a :: Type) where
   addDependency :: Text -> AppM (Maybe Text)
   addLineNumberComment :: Int -> Text -> Text
   removeLineNumberCommentIfPresent :: Text -> Text
+  fileExtension :: Text
 
 data NullBuildSystem = NullBuildSystem
 
@@ -34,3 +35,4 @@ instance BuildSystem NullBuildSystem where
   addDependency _ = throwError "addDependency called on NullBuildSystem"
   addLineNumberComment _ x = x
   removeLineNumberCommentIfPresent x = x
+  fileExtension = "N/A"

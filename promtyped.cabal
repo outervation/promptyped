@@ -20,6 +20,7 @@ library
         CPlusPlus
         GoLang
         Python
+        Rust
         Logging
         OpenRouterClient
         ShapeChecker

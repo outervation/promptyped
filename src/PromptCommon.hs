@@ -20,7 +20,6 @@ import FileSystem qualified as FS
 import Memoise (memoise)
 import PromptTexts
 import Relude
-import System.Directory qualified as DIR
 import Tools qualified
 
 
@@ -843,6 +842,159 @@ makeTargetedRefactorProject projectTexts refactorCfg mOverallWorkplan = do
                 finalDeps = if refactorCfg.refactorOpenAllSourceFiles then deps ++ sourceFilesWithFocus else deps
             makeRefactorFileTask @bs taskBackground finalDeps rCfg.refactorFile plannedTasks autoRefactorUnitTests
   forM_ refactorCfg.refactorFileTasks doRefactor
+
+-- | Configuration for a project translation workflow.
+data TranslationConfig = TranslationConfig
+  { sourceLanguageName :: Text
+  , targetLanguageName :: Text
+  , translationTaskShortName :: Text -- ^ A short name for memoization keys, e.g., "myproj-go-to-rust".
+  , translationGuidelines :: Text
+  , sourceDirectory :: FilePath     -- ^ The directory to scan for source files to translate.
+  } deriving (Generic, Eq, Ord, Show)
+
+instance ToJSON TranslationConfig
+instance FromJSON TranslationConfig
+
+-- | Represents a single unit of translation, mapping one or more source files
+-- to a new target file with its own dependencies.
+data TranslationUnit = TranslationUnit
+  { newFileName :: Text
+  , newFileSummary :: Text
+  , newFileDependencies :: [Text] -- ^ Dependencies on other *new* target files.
+  , originalSourceFiles :: [Text] -- ^ The original source file(s) this new file is a translation of.
+  } deriving (Generic, Eq, Ord, Show)
+
+instance ToJSON TranslationUnit
+instance FromJSON TranslationUnit
+
+-- | Represents the complete translation plan, consisting of multiple translation units.
+data TranslationPlan = TranslationPlan
+  { planItems :: [TranslationUnit]
+  } deriving (Generic, Eq, Ord, Show)
+
+instance ToJSON TranslationPlan
+instance FromJSON TranslationPlan
+
+
+-- | A high-level workflow to translate a project from a source language to a target language.
+-- It first plans the entire new file structure, then uses `makeTargetedRefactorProject`
+-- to execute the creation of each new file in a dependency-aware order.
+makeTranslateFilesProject :: forall bs bsSource. (BS.BuildSystem bs, BS.BuildSystem bsSource)
+                          => ProjectTexts
+                          -> TranslationConfig
+                          -> AppM ()
+makeTranslateFilesProject projectTexts transCfg = do
+  cfg <- ask
+  liftIO $ putTextLn $ "Starting translation project: " <> transCfg.translationTaskShortName
+  liftIO $ putTextLn $ "Translating from " <> transCfg.sourceLanguageName <> " to " <> transCfg.targetLanguageName
+
+  -- 1. Find all source files in the source language directory
+  allFilesInSourceDir <- liftIO $ FS.getFileNamesRecursive [] cfg.configBaseDir --(transCfg.sourceDirectory)
+  sourceFilesToTranslate <- filterM (BS.isBuildableFile @bsSource) allFilesInSourceDir
+
+  existingTargetLangFiles <- filterM (BS.isBuildableFile @bs) allFilesInSourceDir
+  
+  if null sourceFilesToTranslate
+  then liftIO $ putTextLn "No source files found to translate. Exiting."
+  else do
+    liftIO $ putTextLn $ "Found " <> show (length sourceFilesToTranslate) <> " source files to translate:\n" <> T.unlines (map ("  - " <>) sourceFilesToTranslate)
+    forM_ sourceFilesToTranslate $ \x -> Tools.openFile @bsSource Tools.DontFocusOpenedFile x cfg
+    forM_ existingTargetLangFiles $ \x -> Tools.openFile @bs Tools.DontFocusOpenedFile x cfg
+    -- 2. Ask the LLM to create a complete translation plan (what new files to create).
+    let background = projectTexts.projectSummaryText <> "\nYour overall task is to plan the translation of a project from " <> transCfg.sourceLanguageName <> " to " <> transCfg.targetLanguageName <> "."
+        planningTask = 
+          "Given the following list of source files from the original " <> transCfg.sourceLanguageName <> " project:\n" 
+          <> T.intercalate ", " sourceFilesToTranslate <> "\n\n"
+          <> "Your task is to plan a complete translation into " <> transCfg.targetLanguageName <> ". "
+          <> "Propose a set of new files to be created in the target language. "
+          <> "For each new file, provide:\n"
+          <> "1. `newFileName`: The name for the new file, which should be idiomatic for " <> transCfg.targetLanguageName <> " (e.g., 'utils.rs' for a Rust project).\n"
+          <> "2. `newFileSummary`: A concise summary of the file's purpose and contents.\n"
+          <> "3. `newFileDependencies`: A list of other *new target files* that this file will depend on. This is crucial for ordering the creation process.\n"
+          <> "4. `originalSourceFiles`: A list of the original source file(s) this new file is a translation of. A single new file might consolidate multiple old files, or a single old file might be split into multiple new ones.\n\n"
+          <> "Please analyze the entire project structure before proposing the new structure. Ensure that all logic from the source files is accounted for in your plan. If a source file is purely for configuration or documentation and doesn't need a direct code translation, you can omit it. Return the plan in the specified JSON format.\n"
+         <> "Some import considerations you MUST follow:\n" <> transCfg.translationGuidelines
+
+    let planningContext = makeBaseContext background planningTask
+    
+    let oldFileName1 = "old_types" <> BS.fileExtension @bsSource
+        oldFileName2 = "old_utils" <> BS.fileExtension @bsSource
+        examplePlan = TranslationPlan
+          { planItems = [ TranslationUnit 
+                          ("new_file_1" <> BS.fileExtension @bs)
+                          ("This file will contain core types, translated from " <> oldFileName1)
+                          []
+                          [oldFileName1]
+                        , TranslationUnit
+                          ("new_file_2" <> BS.fileExtension @bs)
+                          ("This file will contain utility functions, translated from " <> oldFileName2)
+                          ["new_file_1" <> BS.fileExtension @bs]
+                          [oldFileName2]
+                        ]
+          }
+
+    -- Validator for the translation plan.
+    let validateTranslationPlan :: Context -> TranslationPlan -> AppM (Either (MsgKind, Text) [TranslationUnit])
+        validateTranslationPlan _ plan = do
+          let planUnits = plan.planItems
+              sourceFileSet = Set.fromList sourceFilesToTranslate
+
+          -- Check if originalSourceFiles are valid
+          let invalidSourceRefs = filter (not . (`Set.member` sourceFileSet) . fst) $ concatMap (\u -> map (, u.newFileName) u.originalSourceFiles) planUnits
+
+          -- Check for cycles and sort the new files topologically
+          let thingsForSorting = ThingsWithDependencies $ map (\u -> ThingWithDependencies u.newFileName u.newFileSummary u.newFileDependencies) planUnits
+            
+          -- Topologically sort
+          case (topologicalSortThingsWithDependencies [] thingsForSorting, not $ null invalidSourceRefs) of
+            (_, True) -> pure $ Left (OtherMsg, "Plan references original source files that do not exist: " <> show invalidSourceRefs)  
+            (Left err, False) -> pure $ Left (OtherMsg, "Dependency error in the proposed new file structure: " <> err)
+            (Right sortedThings, False) -> do
+              -- Map sorted things back to original translation units to preserve all data
+              let unitMap = Map.fromList [(u.newFileName, u) | u <- planUnits]
+              let sortedUnits = mapMaybe (\t -> Map.lookup t.name unitMap) sortedThings
+              if length sortedUnits /= length planUnits
+                then pure $ Left (OtherMsg, "Internal error: mismatch after sorting plan items.")
+                else pure $ Right sortedUnits
+    
+    liftIO $ putTextLn "Querying LLM for a translation plan..."
+    sortedPlanItems <- memoise (cfg.configCacheDir) ("translation_plan_" <> transCfg.translationTaskShortName) () (const "") $ \_ ->
+      Engine.runAiFunc @bs planningContext HighIntelligenceRequired Engine.readOnlyTools examplePlan validateTranslationPlan (configTaskMaxFailures cfg)
+
+    liftIO $ putTextLn "LLM returned a valid and sorted translation plan."
+
+    -- 3. Convert the plan into a TargetedRefactorConfig
+    let refactorTasks = map (\unit -> TargetedRefactorConfigItem
+          { refactorFile = unit.newFileName
+          , refactorTask = "NEW FILE: Create the file `" <> unit.newFileName <> "` as a " <> transCfg.targetLanguageName <> " translation of the following " <> transCfg.sourceLanguageName <> " file(s): " <> T.intercalate ", " unit.originalSourceFiles <> ". The file's purpose is: " <> unit.newFileSummary
+          , refactorFileDependencies = unit.newFileDependencies ++ unit.originalSourceFiles -- Depend on both new target files and original source files
+          , refactorUpdateTests = False -- Test creation should be a separate, explicit step after translation.
+          }) sortedPlanItems
+
+    let finalRefactorConfig = TargetedRefactorConfig
+          { refactorSummary = "Translate project from " <> transCfg.sourceLanguageName <> " to " <> transCfg.targetLanguageName <> "."
+          , refactorFileTasks = refactorTasks
+          , refactorOpenAllSourceFiles = True -- Open other ifles in target language, unfocused
+          }
+
+    let planFileName = transCfg.translationTaskShortName <> "_translation_plan.json"
+    liftIO $ putTextLn $ "Writing final translation plan to " <> planFileName
+    writeFileIfDoesntExist planFileName (Tools.toJ finalRefactorConfig)
+
+    -- 4. Execute the plan using makeTargetedRefactorProject
+    if null refactorTasks
+    then liftIO $ putTextLn "Translation plan is empty. Nothing to execute."
+    else do
+      liftIO $ putTextLn "Executing the translation plan..."
+      st_before <- get
+      -- The source files don't exist in the AppState, so we add them as ExistingFile
+      -- so `makeTargetedRefactorProject` can open them.
+      let st_with_source_files = st_before { stateFiles = stateFiles st_before ++ map (\f -> ExistingFile f "") sourceFilesToTranslate }
+      put st_with_source_files
+      
+      makeTargetedRefactorProject @bs projectTexts finalRefactorConfig $ Just (show finalRefactorConfig)
+
+    liftIO $ putTextLn "Project translation process complete."
 
 data FileSpecComplianceAnalysisResult = FileSpecComplianceAnalysisResult
   { waysItDoesntMeetSpec :: Text,

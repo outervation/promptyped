@@ -397,3 +397,4 @@ instance BuildSystem Python where
 
   addLineNumberComment num txt = addPythonStyleLineNumberComment num txt
   removeLineNumberCommentIfPresent txt = removePythonStyleLineNumberComment txt
+  fileExtension = ".py"

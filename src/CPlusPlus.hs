@@ -183,7 +183,7 @@ instance BuildSystem CPlusPlusLang where
 
   addLineNumberComment num txt = addCppStyleLineNumberComment num txt
   removeLineNumberCommentIfPresent txt = removeCppStyleLineNumberComment txt
-
+  fileExtension = ".h"
 
 sampleTestFile :: Text
 sampleTestFile =

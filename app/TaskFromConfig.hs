@@ -19,6 +19,7 @@ import Data.Text qualified as T
 import FileSystem qualified as FS
 import GoLang qualified as GoLangMod
 import Python qualified as PythonMod
+import Rust qualified as RustMod
 import Logging qualified
 import PromptCommon
 import Relude
@@ -32,6 +33,7 @@ getBuildSystem :: ProgLangName -> SomeBuildSystem
 getBuildSystem CPlusPlus = SomeBuildSystem (Proxy @CPlusPlusMod.CPlusPlusLang)
 getBuildSystem GoLang = SomeBuildSystem (Proxy @GoLangMod.GoLang)
 getBuildSystem Python = SomeBuildSystem (Proxy @PythonMod.Python)
+getBuildSystem Rust = SomeBuildSystem (Proxy @RustMod.Rust)
 
 withBuildSystem ::
   SomeBuildSystem ->
@@ -82,6 +84,12 @@ makeTaskFromConfig aCfg mCfg = do
         FileAnalysisProject -> case analysisCfg aCfg of
           Just analysisConfig -> withBuildSystem (getBuildSystem progLang) $ \(_ :: Proxy bs) -> makeAnalysisProject @bs projectTexts analysisConfig
           Nothing -> throwError "Missing analysis config!"
+        TranslationProject -> case translationCfg aCfg of
+          Just trCfg -> withBuildSystem (getBuildSystem progLang) $ \(_ :: Proxy bs) ->
+            withBuildSystem (getBuildSystem (sourceLanguage trCfg)) $ \(_ :: Proxy bsSource) ->
+                                                                        makeTranslateFilesProject @bs @bsSource projectTexts (mkTranslationCfg tCfg trCfg)
+          Nothing -> throwError "Missing analysis config!"
+          
         _ -> throwError $ "Unsupported project kind for TaskFromConfig: " <> show (projectKind aCfg)
   res <- runApp cfg initialState projectFn
   case res of

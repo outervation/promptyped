@@ -389,7 +389,7 @@ toolName :: Tool -> Text
 toolName x = T.drop 4 $ show x
 
 toolSummary :: Text
-toolSummary = "You have the following tools available to you, that you may call with JSON args. Line numbers are included for your focused OpenFiles to simplify your task, but are not present in the files on disk (so don't explicitly write line numbers to disk!). Only a limited number of source files can be 'focused' (shown in full detail) at a time; to avoid overwhelming the context, the rest will only show function types and struct definitions. You may append to an open file that's not focused, but not do any line-number-based edits (as you can't see function bodies in an unfocused file). For tools that modify files, after modification the file will be compiled if a source file, and run if it's a unit test file. \n IMPORTANT NOTE: for Append/Edit/InsertIn file, you don't provide the text as part of the json, instead you set \"rawTextName\": \"someRawTextBox\", and then afterwards include the raw string literal in C++ style RAWTEXT[someRawTextBox]=R\"r( ...the actual text... )r\". This is to avoid the need for JSON-escaping the code/text; you instead directly include the unescaped text in between the R\"r( and )r\". It allows allows multiple commands to refer to the same raw text box where necessary (e.g. if inserting the same code in multiple places). Note that LINE NUMBERS START AT ZERO, and appear at the START of the line, not the end. Also PLEASE NOTE: you can't make overlapping line-based edits, as order of operations for overlapping edits is undefined. Upon any change to a file, the build system will run automatically (e.g. go generate -> go build -> go fmt -> go test, or equivalents for whatever language the project is in).\nNOTE: line number comments like /* 10 */ that you may see in open files are purely for your reference, and are _not_ present in the file on disk, so don't reference these in your tool calls."
+toolSummary = "You have the following tools available to you, that you may call with JSON args. Line numbers are included for your focused OpenFiles to simplify your task, but are not present in the files on disk (so don't explicitly write line numbers to disk!). Only a limited number of source files can be 'focused' (shown in full detail) at a time; to avoid overwhelming the context, the rest will only show function types and struct definitions. You may append to an open file that's not focused, but not do any line-number-based edits (as you can't see function bodies in an unfocused file). Files that arne't source files (e.g. .txt files) will always be shown unminimised and there's no need to focus them for editing. For tools that modify files, after modification the file will be compiled if a source file, and run if it's a unit test file. \n IMPORTANT NOTE: for Append/Edit/InsertIn file, you don't provide the text as part of the json, instead you set \"rawTextName\": \"someRawTextBox\", and then afterwards include the raw string literal in C++ style RAWTEXT[someRawTextBox]=R\"r( ...the actual text... )r\". This is to avoid the need for JSON-escaping the code/text; you instead directly include the unescaped text in between the R\"r( and )r\". It allows allows multiple commands to refer to the same raw text box where necessary (e.g. if inserting the same code in multiple places). Note that LINE NUMBERS START AT ZERO, and appear at the START of the line, not the end. Also PLEASE NOTE: you can't make overlapping line-based edits, as order of operations for overlapping edits is undefined. Upon any change to a file, the build system will run automatically (e.g. go generate -> go build -> go fmt -> go test, or equivalents for whatever language the project is in).\nNOTE: line number comments like /* 10 */ that you may see in open files are purely for your reference, and are _not_ present in the file on disk, so don't reference these in your tool calls."
 
 -- | Compile a Text regex with error reporting using regex-tdfa.
 compileRegex :: Text -> Either Text Regex
@@ -1309,6 +1309,7 @@ handleFileOperation ::
 handleFileOperation fileName ioAction requiresOpenFile requiresFocusedFile opName changeBounds ctxt = do
   theState <- get
   cfg <- ask
+  isFocusable <- BS.isBuildableFile @bs fileName
   liftIO $ Logging.logInfo "FileOperation" $ "Attempting action: " <> opName
   let filePath = FS.toFilePath cfg fileName
   case isFileForbidden cfg fileName of
@@ -1319,14 +1320,14 @@ handleFileOperation fileName ioAction requiresOpenFile requiresFocusedFile opNam
       let alreadyOpen = fileAlreadyOpen fileName theState
           alreadyFocused = fileFocused fileName theState
           openOkay = alreadyOpen || requiresOpenFile == RequiresOpenFileFalse
-          focusedOkay = alreadyFocused || requiresFocusedFile == RequiresFocusedFileFalse
+          focusedOkay = alreadyFocused || requiresFocusedFile == RequiresFocusedFileFalse || not isFocusable
       case (openOkay, focusedOkay) of
         (False, _) -> do
           liftIO $ Logging.logInfo "FileOperation" $ "Attempted to " <> opName <> " file that isn't open: " <> fileName
-          pure $ mkError ctxt OtherMsg ("Error: cannot " <> opName <> " file that isn't open: " <> fileName) (EvtFileOp fileName (FailedWithError "Cannot modify non-opened file"))
+          pure $ mkError ctxt OtherMsg ("Error: cannot " <> opName <> " file that isn't open: " <> fileName <> ". Please use OpenFile tool to open it first.") (EvtFileOp fileName (FailedWithError "Cannot modify non-opened file"))
         (_, False) -> do
           liftIO $ Logging.logInfo "FileOperation" $ "Attempted to " <> opName <> " file that isn't focused: " <> fileName
-          pure $ mkError ctxt OtherMsg ("Error: cannot " <> opName <> " file that isn't focused: " <> fileName) (EvtFileOp fileName (FailedWithError "Cannot modify non-focused file"))
+          pure $ mkError ctxt OtherMsg ("Error: cannot " <> opName <> " file that isn't focused: " <> fileName <> ". Please use FocusFile tool to focus it first.") (EvtFileOp fileName (FailedWithError "Cannot modify non-focused file"))
         (True, True) -> do
           checker <- BS.getFormatChecker @bs cfg
           let checker' :: AppM (Maybe Text)

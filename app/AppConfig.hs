@@ -9,7 +9,7 @@ import Data.Text qualified as T
 import PromptCommon qualified as PC
 import Relude
 
-data ProjectKind = CreateProject | RefactorProject | TargetedRefactorProject | FileAnalysisProject | ChatProject
+data ProjectKind = CreateProject | RefactorProject | TargetedRefactorProject | FileAnalysisProject | ChatProject | TranslationProject
   deriving (Generic, Eq, Ord, Show)
 
 instance FromJSON ProjectKind
@@ -34,7 +34,7 @@ instance FromJSON ModelConfig
 
 instance ToJSON ModelConfig
 
-data ProgLangName = CPlusPlus | GoLang | Python
+data ProgLangName = CPlusPlus | GoLang | Python | Rust
   deriving (Generic, Eq, Ord, Show)
 
 instance ToJSON ProgLangName
@@ -54,6 +54,22 @@ instance FromJSON TaskConfig
 
 instance ToJSON TaskConfig
 
+data TranslationConfig = TranslationConfig
+  { sourceLanguage :: ProgLangName,
+    taskDesc :: Text,
+    sourceDir :: Text
+  }
+  deriving (Generic, Eq, Ord, Show)
+instance FromJSON TranslationConfig
+instance ToJSON TranslationConfig
+
+mkTranslationCfg :: TaskConfig -> TranslationConfig -> PC.TranslationConfig
+mkTranslationCfg tCfg transCfg = PC.TranslationConfig {sourceLanguageName = show $ sourceLanguage transCfg,
+                                                      targetLanguageName = show $ programmingLanguage tCfg,
+                                                      translationTaskShortName = projectName tCfg,
+                                                      translationGuidelines = taskDesc transCfg,
+                                                      sourceDirectory = T.unpack $ sourceDir transCfg}
+
 data AppConfig = AppConfig
   { baseDir :: Text,
     cacheDir :: Text,
@@ -67,12 +83,12 @@ data AppConfig = AppConfig
     targetedRefactorCfg :: Maybe PC.TargetedRefactorConfig,
     bigRefactorCfg :: Maybe PC.BigRefactorConfig,
     taskCfg :: Maybe TaskConfig,
-    analysisCfg :: Maybe PC.AnalysisConfig
+    analysisCfg :: Maybe PC.AnalysisConfig,
+    translationCfg :: Maybe TranslationConfig
   }
   deriving (Generic, Eq, Ord, Show)
 
 instance FromJSON AppConfig
-
 instance ToJSON AppConfig
 
 appAndModelConfigToConfig :: AppConfig -> ModelConfig -> Config
