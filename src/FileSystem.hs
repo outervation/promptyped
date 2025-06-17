@@ -243,7 +243,7 @@ ensureNoLineNumbers (_, removeLineNumberComment) filepath = do
       let originalLines = V.fromList (T.lines contents)
           processedLines = V.map removeLineNumberComment originalLines
           newContents = T.unlines (V.toList processedLines)
-      when (T.length contents > 0) $ TIO.writeFile fp newContents
+      when (T.length contents > 0 && contents /= newContents) $ TIO.writeFile fp newContents
       pure newContents
 
 addTenthLineNumbersToText :: LineNumberAddRemoveFns -> Text -> Text
