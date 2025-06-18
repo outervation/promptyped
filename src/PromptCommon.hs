@@ -10,7 +10,8 @@ import Control.Monad.Except
 import TerminalInput qualified
 import Core
 import Data.Aeson as AE
-import Data.Graph
+--import Data.Graph
+import qualified Data.Graph             as G
 import Data.Map qualified as Map
 import Data.Set qualified as Set
 import Data.Text qualified as T
@@ -99,52 +100,81 @@ compilationAndTestsPass = do
     (Nothing, Nothing) -> True
     _ -> False
 
-topologicalSortThingsWithDependencies :: [ExistingFile] -> ThingsWithDependencies -> Either Text [ThingWithDependencies]
+
+-- | Topologically sort the files so that every dependency comes first.
+--   If two files are independent they stay in the order given in @files@.
+topologicalSortThingsWithDependencies
+  :: [ExistingFile]                          -- ^ things that are already on disk
+  -> ThingsWithDependencies                  -- ^ things we are about to create
+  -> Either Text [ThingWithDependencies]
 topologicalSortThingsWithDependencies existingFiles (ThingsWithDependencies files) = do
-  let alreadyExists name = name `elem` map existingFileName existingFiles
-  -- 1. Build a mapf rom fileName -> ThingWithDependencies
-  let fileMap :: Map Text ThingWithDependencies
-      fileMap = Map.fromList [(f.name, f) | f <- files]
 
-  -- 2. Check every dependency to ensure it exists in fileMap
-  forM_ files $ \pf -> do
-    forM_ pf.dependencies $ \dep ->
-      unless (Map.member dep fileMap || alreadyExists dep)
-        $ Left
-        $ "Error: File "
-        <> pf.name
-        <> " depends on non-existing item: "
-        <> dep
-        <> ". Note that only items we create need to be mentioned, not external items/libs like Boost etc."
+  ------------------------------------------
+  -- 0.  Helpers
+  ------------------------------------------
+  let alreadyExists name =
+        name `elem` map existingFileName existingFiles
 
-  -- 3. Prepare triples for graphFromEdges:
-  --      (the actual node, this node's key, this node's adjacent keys)
-  let triples =
-        [ ( f,
-            f.name,
-            f.dependencies -- edges: f -> each of its dependencies
+      fileMap :: Map Text ThingWithDependencies
+      fileMap = Map.fromList [(name f, f) | f <- files]
+
+  ------------------------------------------
+  -- 1.  Validate dependencies
+  ------------------------------------------
+  forM_ files $ \pf ->
+    forM_ (dependencies pf) $ \dep ->
+      unless (Map.member dep fileMap || alreadyExists dep) $
+        Left $  "Error: File "
+             <> name pf
+             <> " depends on non-existing item "
+             <> dep
+             <> ". (External libraries don’t need to be listed.)"
+
+  ------------------------------------------
+  -- 2.  Build the graph
+  --
+  --      edge direction:  dependency  →  dependant
+  --
+  ------------------------------------------
+
+  -- Collect “who depends on me” lists
+  let dependants :: Map Text [Text]
+      dependants =
+        Map.fromListWith (++)
+          [ (dep, [name pf])
+          | pf  <- files
+          , dep <- dependencies pf
+          , Map.member dep fileMap        -- keep only internal ones
+          ]
+
+      triples :: [(ThingWithDependencies, Text, [Text])]
+      triples =
+        [ ( pf
+          , name pf
+          , Map.findWithDefault [] (name pf) dependants
           )
-        | f <- files
+        | pf <- files                     -- enumeration order ⇒ stability
         ]
 
-  -- Build the graph from these triples
-  let (graph, nodeFromVertex, _vertexFromKey) = graphFromEdges triples
+      -- (graph, nodeFromVertex, _) :: (Graph, Int -> (ThingWithDependencies, Text, [Text]), Text -> Maybe Int)
+      (graph, nodeFromVertex, _) = G.graphFromEdges triples
 
-  -- 4. Detect cycles using stronglyConnComp
-  let sccs = stronglyConnComp triples
-  forM_ sccs $ \case
-    AcyclicSCC _ -> pure ()
-    CyclicSCC cycleGroup ->
-      let cycleNames = map (\x -> x.name) cycleGroup
-       in Left $ "Error: Cycle detected in dependencies: " <> show cycleNames
+  ------------------------------------------
+  -- 3.  Detect cycles
+  ------------------------------------------
+  forM_ (G.stronglyConnComp triples) $ \case
+    G.AcyclicSCC _     -> pure ()
+    G.CyclicSCC grp  ->
+      let cycleNames = map name grp
+      in Left $ "Error: cycle detected in dependencies: " <> show cycleNames
 
-  -- 5. Perform the topological sort
-  let sortedVertices = topSort graph
+  ------------------------------------------
+  -- 4.  Stable topological order
+  ------------------------------------------
+  let sortedVertices = G.topSort graph          -- no reverse!
+      toThing v      = let (f,_,_) = nodeFromVertex v in f
+  pure (map toThing sortedVertices)
 
-  -- 6. Convert each 'Vertex' back into the original 'ThingWithDependencies'
-  let sortedFiles = map (\v -> let (f, _, _) = nodeFromVertex v in f) sortedVertices
-
-  pure $ reverse sortedFiles
 
 validatePropertyOfThingsWithDependencies :: ThingsWithDependencies -> (ThingWithDependencies -> Maybe Text) -> Either (MsgKind, Text) ThingsWithDependencies
 validatePropertyOfThingsWithDependencies (ThingsWithDependencies things) validator =
@@ -1304,4 +1334,32 @@ closeIrrelevantUnfocusedFiles llmBackground taskChanges mainFileName = do
           modify' (Core.closeOpenFile fName) 
           -- Note: For full event tracing, a `Tools.closeFile` that logs EvtCloseFile could be used here.
         liftIO $ putTextLn $ "Successfully closed " <> T.pack (show $ length filesToActuallyClose) <> " irrelevant unfocused files."
+
+
+assert     :: Bool -> String -> IO ()
+assert ok msg = if ok then pure () else do
+  putStrLn $ "❌  " <> msg
+  exitFailure
+
+assertRightNames
+  :: String                       -- ^ label
+  -> [ThingWithDependencies]      -- ^ unsorted input (files)
+  -> [T.Text]                     -- ^ expected names in order
+  -> IO ()
+assertRightNames label files expected = do
+  let res = topologicalSortThingsWithDependencies [] (ThingsWithDependencies files)
+  case res of
+    Right sorted ->
+      assert (map name sorted == expected)
+        (label <> ": expected " <> show expected <> ", got " <> show (map name sorted))
+    Left e ->
+      assert False (label <> ": expected Right, got Left " <> show e)
+
+assertIsLeft
+  :: String                       -- ^ label
+  -> [ThingWithDependencies]
+  -> IO ()
+assertIsLeft label files =
+  assert (isLeft (topologicalSortThingsWithDependencies [] (ThingsWithDependencies files)))
+         (label <> ": expected Left, got Right")
 
