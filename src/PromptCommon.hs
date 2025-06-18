@@ -7,10 +7,10 @@ module PromptCommon where
 
 import BuildSystem as BS
 import Control.Monad.Except
+import Control.Monad (foldM)
 import TerminalInput qualified
 import Core
 import Data.Aeson as AE
---import Data.Graph
 import qualified Data.Graph             as G
 import Data.Map qualified as Map
 import Data.Set qualified as Set
@@ -606,8 +606,9 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
     then liftIO $ putTextLn "LLM indicated no existing files require modification."
     else liftIO $ putTextLn $ "LLM identified files to modify: " <> T.intercalate ", " actualFilesToModify
 
+  let forFoldM agg input fn = foldM fn agg input
   -- 5. Iterate and Plan Refactor Tasks (per file to be modified)
-  tasksForExistingFiles <- if null actualFilesToModify then pure [] else forM actualFilesToModify $ \fileNameToModify -> do
+  tasksForExistingFiles :: [TargetedRefactorConfigItem] <- if null actualFilesToModify then pure [] else forFoldM [] actualFilesToModify $ \existingTasks fileNameToModify -> do
     liftIO $ putTextLn $ "Planning modifications for file: " <> fileNameToModify
     
     currentSt <- get
@@ -640,6 +641,7 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
                 <> (if null refactorCfg.bigRefactorSpecFiles
                     then ""
                     else " The following specification files are also open (unfocused): " <> T.intercalate ", " refactorCfg.bigRefactorSpecFiles <> ". If any spec file is crucial for understanding or implementing the task for `" <> fileNameToModify <> "`, or for verifying its correctness, please list it in `refactorFileDependencies`.")
+               <> "\nThe following tasks for other files have already been planned; make sure you don't duplicate work: " <> show existingTasks
             )
     let exampleDeps = L.nub $ 
           take 1 (filter (/= fileNameToModify) allSourceFileNames) ++
@@ -666,7 +668,7 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
     singleItem <- memoise (configCacheDir cfg) ("targeted_refactor_item_" <> objectiveShortName) fileNameToModify id $ \fileNameKey ->
         Engine.runAiFunc @bs singleFileTaskCtxt HighIntelligenceRequired Engine.readOnlyTools (exampleTargetedRefactorConfigItem { refactorFile = fileNameKey }) validateSingleItem (configTaskMaxFailures cfg)
 
-    pure singleItem
+    pure $ existingTasks ++ [singleItem]
 
   -- 6. Ask LLM for any new files that need to be created
   liftIO $ putTextLn "Asking LLM to identify any new files that need to be created..."
