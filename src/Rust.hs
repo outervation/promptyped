@@ -119,8 +119,8 @@ buildProjectRust timeout dir newEnv = Dir.withCurrentDirectory dir $ do
         buildResult <- runProcessWithTimeout timeout "." newEnv "cargo" ["build"]
         handleExitCode "'cargo build'" buildResult
   let buildTests = do
-        buildResult <- runProcessWithTimeout timeout "." newEnv "cargo" ["test", "--no-run"]
-        handleExitCode "'cargo test --no-run'" buildResult        
+        buildResult <- runProcessWithTimeout timeout "." newEnv "cargo" ["nextest", "run", "--no-run"]
+        handleExitCode "'cargo nextest run --no-run'" buildResult        
   eitherToMaybe <$> runAll [buildIt, buildTests]
 
 runTestsRust ::
@@ -130,12 +130,12 @@ runTestsRust ::
   IO (Maybe (Text, NumFailedTests))
 runTestsRust timeout dir newEnv = Dir.withCurrentDirectory dir $ do
   putTextLn $ "Running Rust tests in dir " <> toText dir
-  let initialArgs = ["test"]
+  let initialArgs = ["nextest", "run"]
   initialTestResult <- runProcessWithTimeout timeout "." newEnv "cargo" initialArgs
 
   case initialTestResult of
     Left procErrText -> do
-      let errMsg = "Cargo test execution ('cargo test') failed: " <> procErrText
+      let errMsg = "Cargo test execution ('cargo nextest run') failed: " <> procErrText
       putTextLn errMsg
       pure $ Just (errMsg, NumFailedTests (-1))
 
@@ -148,7 +148,7 @@ runTestsRust timeout dir newEnv = Dir.withCurrentDirectory dir $ do
         Exit.ExitFailure _ -> do
           let combinedOutput = initialStdout <> "\n" <> initialStderr
               totalLines = length $ T.lines combinedOutput
-              opNameInitial = "'cargo test'"
+              opNameInitial = "'cargo nextest run'"
               failedTests = extractFailedRustTests combinedOutput
               numFailedTests = length failedTests
 
@@ -178,8 +178,8 @@ tryRerunRustOneByOne _ _ [] originalOutput numOriginalFailures = do
 tryRerunRustOneByOne currentTimeout currentNewEnv (testNameToRun : restTestsToTry) originalOutput numOriginalFailures = do
   -- `cargo test <test_name>` runs only tests containing that name.
   -- Adding `-- --exact` makes it match the full test path, which is what we want.
-  let rerunArgs = ["test", T.unpack testNameToRun, "--", "--exact"]
-  let opNameRerun = "'cargo test " <> testNameToRun <> " -- --exact'"
+  let rerunArgs = ["nextest", "run", T.unpack testNameToRun, "--", "--exact"]
+  let opNameRerun = "'cargo nextest run" <> testNameToRun <> " -- --exact'"
 
   putTextLn $ "Attempting to re-run individually: " <> T.unwords (map T.pack rerunArgs)
   rerunResultOrError <- runProcessWithTimeout currentTimeout "." currentNewEnv "cargo" rerunArgs
@@ -274,7 +274,7 @@ instance BuildSystem Rust where
 
   isTestFile = isRustTestFile
 
-  getIgnoredDirs = pure ["target", ".git"]
+  getIgnoredDirs = pure ["target", ".git", "assets"]
 
   getFormatChecker cfg = do
     let baseDir = configBaseDir cfg
@@ -294,3 +294,4 @@ instance BuildSystem Rust where
   addLineNumberComment num txt = addCppStyleLineNumberComment num txt
   removeLineNumberCommentIfPresent txt = removeCppStyleLineNumberComment txt
   fileExtension = ".rs"
+

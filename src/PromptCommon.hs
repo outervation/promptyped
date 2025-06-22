@@ -581,6 +581,7 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
             then ""
             else " The following specification files are also open (unfocused) and might inform which files need changes or provide context: " <> T.intercalate ", " refactorCfg.bigRefactorSpecFiles <> ".")
         <> " Return a JSON object with a single key 'relevantFileNames' containing a list of these filenames (use 'relevantFileNames' as the key, as these are files relevant for modification)."
+        <> "Don't mention filenames that don't exist; for new file creation there'll be a separate prompt later."
 
   let filesToModifyCtxt = makeBaseContext background filesToModifyPromptText
   
@@ -642,6 +643,7 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
                     then ""
                     else " The following specification files are also open (unfocused): " <> T.intercalate ", " refactorCfg.bigRefactorSpecFiles <> ". If any spec file is crucial for understanding or implementing the task for `" <> fileNameToModify <> "`, or for verifying its correctness, please list it in `refactorFileDependencies`.")
                <> "\nThe following tasks for other files have already been planned; make sure you don't duplicate work: " <> show existingTasks
+               <> "\nRemember to return an object in the JSON format described above."
             )
     let exampleDeps = L.nub $ 
           take 1 (filter (/= fileNameToModify) allSourceFileNames) ++

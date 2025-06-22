@@ -292,6 +292,7 @@ contextToMessages Context{..} tools theState isNestedAiFunc isCloseFileTask exam
           openFilesDesc,
           evtsDesc,
           toolDesc,
+          returnValueDesc,
           compileTestResDesc,
           taskDesc,
           respReqsDesc,
