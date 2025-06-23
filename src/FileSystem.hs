@@ -402,36 +402,51 @@ gitSetupUser cfg = DIR.withCurrentDirectory (configBaseDir cfg) $ do
           ]
       handleExitCode ("'git config user.email " <> userEmail <> "'") res
 
-gitAddU :: FilePath -> IO (Either Text ())
-gitAddU path = DIR.withCurrentDirectory path $ do
-  res <- runProcessWithTimeout 10 "." [] "git" ["add", "-u"]
-  handleExitCode ("'git add -u'") res
-
-gitAdd :: FilePath -> Text -> IO (Either Text ())
-gitAdd path name = DIR.withCurrentDirectory path $ do
-  res <- runProcessWithTimeout 10 "." [] "git" ["add", T.unpack name]
-  handleExitCode ("'git add " <> name <> "'") res
-
-gitCommit :: FilePath -> Text -> IO (Either Text ())
-gitCommit path desc = DIR.withCurrentDirectory path $ do
-  res <- runProcessWithTimeout 10 "." [] "git" ["commit", "-m", T.unpack desc]
-  case res of
-    Left err -> return . Left $ "Error running git commit: " <> err
-    Right (_, stdoutR, _) ->
-      if "nothing added to commit"
-        `T.isInfixOf` stdoutR
-        || "On branch"
-        `T.isInfixOf` stdoutR
-        then return $ Right () -- Nothing to commit case - treat as success
-        else handleExitCode ("'git commit -m " <> desc <> "'") res
-
-gitAddAndCommit :: Text -> AppM ()
-gitAddAndCommit file = do
+gitAddU :: AppM ()
+gitAddU = do
   cfg <- ask
   let basePath = configBaseDir cfg
-  liftIO (runAll [gitAdd basePath file, gitCommit basePath ("Modified " <> file)]) >>= \case
+  ret <- liftIO $ DIR.withCurrentDirectory basePath $ do
+    res <- runProcessWithTimeout 10 "." [] "git" ["add", "-u"]
+    handleExitCode ("'git add -u'") res
+  case ret of
+    Left err -> throwError err
+    Right () -> pure ()    
+
+gitAdd :: Text -> AppM ()
+gitAdd name = do
+  cfg <- ask
+  let basePath = configBaseDir cfg
+  ret <- liftIO $ DIR.withCurrentDirectory basePath $ do
+    res <- runProcessWithTimeout 10 "." [] "git" ["add", T.unpack name]
+    handleExitCode ("'git add " <> name <> "'") res
+  case ret of
     Left err -> throwError err
     Right () -> pure ()
+
+gitCommit :: Text -> AppM ()
+gitCommit desc = do
+  cfg <- ask
+  let basePath = configBaseDir cfg
+  ret <- liftIO $ DIR.withCurrentDirectory basePath $ do
+    res <- runProcessWithTimeout 10 "." [] "git" ["commit", "-m", T.unpack desc]
+    case res of
+      Left err -> return . Left $ "Error running git commit: " <> err
+      Right (_, stdoutR, _) ->
+        if "nothing added to commit"
+           `T.isInfixOf` stdoutR
+           || "On branch"
+           `T.isInfixOf` stdoutR
+        then return $ Right () -- Nothing to commit case - treat as success
+        else handleExitCode ("'git commit -m " <> desc <> "'") res
+  case ret of
+    Left err -> throwError err
+    Right () -> pure ()
+ 
+gitAddAndCommit :: Text -> AppM ()
+gitAddAndCommit file = do
+  gitAdd file
+  gitCommit ("Modified " <> file)
 
 gitRevertFile :: FilePath -> FilePath -> IO (Either Text ())
 gitRevertFile basePath name = DIR.withCurrentDirectory basePath $ do

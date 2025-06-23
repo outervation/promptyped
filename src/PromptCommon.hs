@@ -454,8 +454,8 @@ makeRefactorFileTask background initialDeps fileName desiredChanges refactorUnit
   modifications <- forM desiredChanges $ \x -> do
     modification <- memoise (configCacheDir cfg) ("file_modifier_" <> fileName) x (\desc -> desc.name) makeChange
     putTextLn $ "Done task: " <> show x
-    liftIO $ FS.gitAddU (configBaseDir cfg)
-    liftIO $ FS.gitCommit (configBaseDir cfg) x.summary
+    FS.gitAddU
+    FS.gitCommit x.summary
     return $ "Intended modification: " <> x.summary <> ", with model describing what it did as " <> show modification <> "."
   let modificationsTxt = "The model made the following changes: \n" <> T.unlines modifications
   isTest <- BS.isTestFile @bs fileName

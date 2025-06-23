@@ -1360,7 +1360,7 @@ handleFileOperation fileName ioAction requiresOpenFile requiresFocusedFile opNam
           successCtxt = mkSuccess ctxt' (FileModifiedMsg fileName) successMsg (EvtFileOp fileName Succeeded)
       considerBuildAndTest @bs fileName >>= \case
         (Nothing, evts) -> do
-          liftIO $ FS.gitAdd (configBaseDir cfg) fileName
+          FS.gitAdd fileName
           pure $ addEvtsToContext successCtxt evts
         (Just (msgKind, err), evts) -> pure $ (mkErrorNoEvt successCtxt msgKind (show msgKind <> ": " <> err)) `addEvtsToContext` evts
 
