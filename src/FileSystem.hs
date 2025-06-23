@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module FileSystem (replaceInFile, readFileToText, readFileToTextMayThrow, readFileToTextAndOpen, appendToFile, ensureLineNumbers, toFilePath, getFileNames, fileExistsOnDisk, clearFileOnDisk, runProcessWithTimeout, getFileNamesRecursive, handleExitCode, runAll, gitInit, gitAddAndCommit, ensureNoLineNumbers, addTenthLineNumbersToText, updateOpenedFile, reloadOpenFiles, gitSetupUser, gitRevertFile, tryFileOp, checkBinaryOnPath, LineNumberAddRemoveFns, replaceTextInFile) where
+module FileSystem (replaceInFile, readFileToText, readFileToTextMayThrow, readFileToTextAndOpen, appendToFile, ensureLineNumbers, toFilePath, getFileNames, fileExistsOnDisk, clearFileOnDisk, runProcessWithTimeout, getFileNamesRecursive, handleExitCode, runAll, gitInit, gitAdd, gitAddU, gitCommit, ensureNoLineNumbers, addTenthLineNumbersToText, updateOpenedFile, reloadOpenFiles, gitSetupUser, gitRevertFile, tryFileOp, checkBinaryOnPath, LineNumberAddRemoveFns, replaceTextInFile) where
 
 import Control.Concurrent.Async (concurrently) 
 import Control.Exception (IOException, bracket, try)
@@ -401,6 +401,11 @@ gitSetupUser cfg = DIR.withCurrentDirectory (configBaseDir cfg) $ do
             T.unpack userEmail
           ]
       handleExitCode ("'git config user.email " <> userEmail <> "'") res
+
+gitAddU :: FilePath -> IO (Either Text ())
+gitAddU path = DIR.withCurrentDirectory path $ do
+  res <- runProcessWithTimeout 10 "." [] "git" ["add", "-u"]
+  handleExitCode ("'git add -u'") res
 
 gitAdd :: FilePath -> Text -> IO (Either Text ())
 gitAdd path name = DIR.withCurrentDirectory path $ do
