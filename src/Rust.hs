@@ -236,7 +236,7 @@ minimiseRustFile pathText = do
   unless (isRustFileExtension pathText) $
     throwError $ "Error: can only minimise Rust source files (.rs), not " <> pathText
   minimiserExists <- liftIO $ checkBinaryOnPath "rustfile_summariser" envVars
-  unless minimiserExists $ throwError "Error: missing rustfile_summariser binary on path."
+  unless minimiserExists $ throwError "Error: missing rustfile_summariser binary on path. Need to install https://github.com/outervation/rustfile_summariser"
   let baseDir = configBaseDir cfg
       filePath = toFilePath cfg pathText
   res <- liftIO $ minimiseRustFileIO baseDir filePath envVars

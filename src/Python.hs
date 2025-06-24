@@ -234,7 +234,7 @@ minimisePythonFileContents pathText = do
   envVars <- getEnvVars
   unless (isPythonFileExtension pathText) $
     throwError $ "Error: can only process Python source files (.py, .pyi) for 'minimisation', not " <> pathText
-  minimiserExists <- liftIO $ checkBinaryOnPath "gofile_summariser" envVars
+  minimiserExists <- liftIO $ checkBinaryOnPath "pyfile_summariser" envVars
   unless minimiserExists $ throwError "Error: missing pyfile_summariser binary on path; need to install https://github.com/outervation/pyfile_summariser"
   let baseDir = configBaseDir cfg
       filePath = toFilePath cfg pathText
