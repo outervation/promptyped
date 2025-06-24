@@ -532,6 +532,7 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
               <> (if null refactorCfg.bigRefactorSpecFiles
                   then ""
                   else " Additionally, the following specification files are open (unfocused) and may provide important context: " <> T.intercalate ", " refactorCfg.bigRefactorSpecFiles <> ".")
+              <> "DO NOT MAKE ANY CODE CHANGES AT THIS STAGE, just return a value as described."
           )
 
   let exampleFocusNames = L.nub $
@@ -584,6 +585,7 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
             else " The following specification files are also open (unfocused) and might inform which files need changes or provide context: " <> T.intercalate ", " refactorCfg.bigRefactorSpecFiles <> ".")
         <> " Return a JSON object with a single key 'relevantFileNames' containing a list of these filenames (use 'relevantFileNames' as the key, as these are files relevant for modification)."
         <> "Don't mention filenames that don't exist; for new file creation there'll be a separate prompt later."
+        <> "DO NOT MAKE ANY CODE CHANGES AT THIS STAGE, just return a value as described."
 
   let filesToModifyCtxt = makeBaseContext background filesToModifyPromptText
   
@@ -646,6 +648,7 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
                     else " The following specification files are also open (unfocused): " <> T.intercalate ", " refactorCfg.bigRefactorSpecFiles <> ". If any spec file is crucial for understanding or implementing the task for `" <> fileNameToModify <> "`, or for verifying its correctness, please list it in `refactorFileDependencies`.")
                <> "\nThe following tasks for other files have already been planned; make sure you don't duplicate work: " <> show existingTasks
                <> "\nRemember to return an object in the JSON format described above."
+               <> "DO NOT MAKE ANY CODE CHANGES AT THIS STAGE, just return a value as described."
             )
     let exampleDeps = L.nub $ 
           take 1 (filter (/= fileNameToModify) allSourceFileNames) ++
@@ -692,7 +695,7 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
               <> "If a new file's purpose or content is dictated by a specific spec file, ensure that spec file is listed as a dependency. "
               <> "Please also include unit test files for every new file you create (although you may use one test file for multiple new files, where that fits better than one test per file). Tests should be positioned in the list right after the files they test. Where possible please split unit tests for a single source into multiple test files, so that they can be created and opened independently to reduce load on the LLM context."
               <> "If no new files are needed, return an empty list for 'items'.\n"
-              <> "DO NOT call any tools or make any changes for now.\n"
+              <> "DO NOT MAKE ANY CODE CHANGES AT THIS STAGE, just return a value as described.\n"
           )
   let exampleNewFileDeps = L.nub $
         take 1 allSourceFileNames ++ 
