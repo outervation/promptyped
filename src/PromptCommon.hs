@@ -771,11 +771,115 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
     memoise (configCacheDir cfg) ("sorted_tasks_for_refactor_" <> objectiveShortName) () (const "") $ \_ ->
       Engine.runAiFunc @bs sortTasksPrompt HighIntelligenceRequired Engine.readOnlyTools (TargetedRefactorConfigItems allTasksRaw) (validateSortedTasks allTasksRaw) (configTaskMaxFailures cfg)
 
+  --------------------------------------------------
+  -- 8.b  Reconcile possible overlap between *existing-file* refactor tasks
+  --      and *new-file* creation tasks.
+  --
+  --      The refactor tasks were generated earlier, before we knew which
+  --      brand-new files the LLM would propose.  This follow-up call asks the
+  --      LLM to (a) tweak any tasks that clash with, or duplicate, the new
+  --      file tasks, and (b) make minimal ordering fixes where the previous
+  --      ordering is obviously wrong.  Except for such necessary tweaks the
+  --      original ordering must be preserved and no tasks should be lost.
+  --
+  --      The validator below is intentionally strict: it forbids adding or
+  --      removing tasks, and it ensures that all original tasks are still
+  --      present (identified by their ‘refactorFile’ and full record
+  --      contents) – only the ordering may change and textual descriptions
+  --      may be *edited*.
+  -------------------------------------------------
+  cleanedSortedTaskItems :: [TargetedRefactorConfigItem] <-
+    if null sortedTaskItems
+      then pure []    -- nothing to reconcile
+      else do
+        ---------------------------------------------
+        --  Build the prompt
+        ---------------------------------------------
+        let reconciliationPromptText =
+              "You are given a *sorted* list of refactor tasks.\n"
+              <> "These tasks were built in two phases:\n"
+              <> "  1.  Modifications to *existing* files were planned first.\n"
+              <> "  2.  Tasks for creating brand-new files were planned later.\n\n"
+              <> "Because of that, some existing-file tasks might redundantly add a\n"
+              <> "function / type / constant that is now supposed to live in a brand-new\n"
+              <> "file instead.  Please examine the tasks and, *only where necessary*,\n"
+              <> "adjust the descriptions and/or ordering so they make sense together:\n"
+              <> "  •  If a refactor task must now rely on something supplied by a\n"
+              <> "     new-file task, change its wording to *use* that new definition\n"
+              <> "     rather than creating a duplicate.\n"
+              <> "  •  Ensure any such dependent refactor task comes *after* the task\n"
+              <> "     that creates the new file (unless that is already the case).\n"
+              <> "  •  DO NOT add brand-new tasks and DO NOT delete tasks – only edit\n"
+              <> "     text and dependencies, and reorder if strictly necessary.\n"
+              <> "Return the **entire** list (possibly re-ordered / tweaked) in exactly\n"
+              <> "the same JSON schema: `{ \"refactorConfigItems\": [ … ] }`.\n"
+              <> "Preserve the original ordering wherever you are not *certain* it is\n"
+              <> "wrong; err on the side of leaving things unchanged."
+            reconciliationCtxt =
+              makeBaseContext background reconciliationPromptText
+            exampleRecon       = TargetedRefactorConfigItems sortedTaskItems
+
+        ---------------------------------------------
+        --  Validator: allow edits, forbid additions / deletions
+        ---------------------------------------------
+        let validateReconciliation
+              :: Context
+              -> TargetedRefactorConfigItems
+              -> AppM (Either (MsgKind, Text) [TargetedRefactorConfigItem])
+            validateReconciliation _ (TargetedRefactorConfigItems newTasks) = do
+              let origNames = Set.fromList (map refactorFile sortedTaskItems)
+                  newNames  = Set.fromList (map refactorFile newTasks)
+
+                  -- duplicates in the *new* list
+                  dupNames  =
+                    [ L.head grp
+                    | grp <- L.group (L.sort (map refactorFile newTasks))
+                    , length grp > 1
+                    ]
+
+                  missing   = Set.toList (origNames `Set.difference` newNames)
+                  added     = Set.toList (newNames  `Set.difference` origNames)
+
+              case () of
+                _ | not (null missing) || not (null added) ->
+                      pure . Left $
+                        ( OtherMsg
+                        ,  "Reconciliation must keep exactly the same set of "
+                        <> "'refactorFile' names.\n"
+                        <> (if not (null missing)
+                            then "  Missing: " <> show missing <> "\n" else "")
+                        <> (if not (null added)
+                            then "  Added  : " <> show added   <> "\n" else "")
+                        )
+                  | not (null dupNames) ->
+                      pure . Left $
+                        ( OtherMsg
+                        , "Reconciliation contains duplicate entries for: "
+                          <> T.intercalate ", " dupNames
+                        )
+                  | otherwise ->
+                      pure $ Right newTasks
+        ---------------------------------------------
+        --  Run the LLM once (memoised) to reconcile the task list
+        ---------------------------------------------
+        memoise (configCacheDir cfg)
+                ("reconciled_tasks_for_refactor_" <> objectiveShortName)
+                ()
+                (const "")      -- key pretty-printer
+          $ \_ -> Engine.runAiFunc @bs
+                    reconciliationCtxt
+                    HighIntelligenceRequired
+                    Engine.readOnlyTools
+                    exampleRecon
+                    validateReconciliation
+                    (configTaskMaxFailures cfg)
+
+
   -- 9. Aggregate and Prepare Final Configuration
   liftIO $ putTextLn "Aggregating all planned and sorted tasks..."
   let finalTargetedRefactorConfig = TargetedRefactorConfig
         { refactorSummary = task
-        , refactorFileTasks = sortedTaskItems
+        , refactorFileTasks = cleanedSortedTaskItems
         , refactorOpenAllSourceFiles = True 
         }
 
@@ -784,11 +888,11 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
   writeFileIfDoesntExist planFileName (Tools.toJ finalTargetedRefactorConfig)
 
   -- 10. Execute the refactor project
-  if null sortedTaskItems
+  if null cleanedSortedTaskItems
   then liftIO $ putTextLn "No refactoring tasks identified or created. Nothing to execute."
   else do
     liftIO $ putTextLn "Executing the aggregated targeted refactor project..."
-    makeTargetedRefactorProject @bs projectTexts finalTargetedRefactorConfig $ Just (show sortedTaskItems)
+    makeTargetedRefactorProject @bs projectTexts finalTargetedRefactorConfig $ Just (show cleanedSortedTaskItems)
 
   liftIO $ putTextLn "Targeted refactoring process complete."
 
