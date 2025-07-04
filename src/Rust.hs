@@ -274,7 +274,7 @@ instance BuildSystem Rust where
 
   isTestFile = isRustTestFile
 
-  getIgnoredDirs = pure ["target", ".git", "assets"]
+  getIgnoredDirs = pure ["target", ".git", "assets", ".venv"]
 
   getFormatChecker cfg = do
     let baseDir = configBaseDir cfg
