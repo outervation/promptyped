@@ -468,7 +468,6 @@ data BigRefactorConfig = BigRefactorConfig
   { bigRefactorInitialOpenFiles :: [Text],
     bigRefactorOverallTask :: Text,
     bigRefactorOverallTaskShortName :: Text,
-    bigRefactorDoFinalSort :: Bool,
     bigRefactorSpecFiles :: [Text],
     bigRefactorDeliberatelyPromptForTestRefactors :: Bool
   }
@@ -767,8 +766,8 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
           else if Set.fromList originalTasks /= Set.fromList sortedTasks
           then pure $ Left (OtherMsg, "Task sorting modified tasks content or did not return all original tasks. The set of tasks must remain identical in content (refactorFile, refactorTask, etc.), only their order should change.")
           else pure $ Right sortedTasks
-  
-  sortedTaskItems <- if null allTasksRaw then pure [] else if not refactorCfg.bigRefactorDoFinalSort then pure allTasksRaw else
+  let doFinalSort = not $ L.null newFileTasks 
+  sortedTaskItems <- if null allTasksRaw then pure [] else if not doFinalSort then pure allTasksRaw else
     memoise (configCacheDir cfg) ("sorted_tasks_for_refactor_" <> objectiveShortName) () (const "") $ \_ ->
       Engine.runAiFunc @bs sortTasksPrompt HighIntelligenceRequired Engine.readOnlyTools (TargetedRefactorConfigItems allTasksRaw) (validateSortedTasks allTasksRaw) (configTaskMaxFailures cfg)
 
@@ -790,8 +789,7 @@ makeTargetedRefactorFilesProject projectTexts refactorCfg = do
   --      may be *edited*.
   -------------------------------------------------
   cleanedSortedTaskItems :: [TargetedRefactorConfigItem] <-
-    if null sortedTaskItems
-      then pure []    -- nothing to reconcile
+    if null sortedTaskItems then pure [] else if not doFinalSort then pure sortedTaskItems 
       else do
         ---------------------------------------------
         --  Build the prompt
