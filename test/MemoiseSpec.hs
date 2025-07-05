@@ -62,7 +62,10 @@ testWithCache useExistingCache = do
               stateOpenFiles =
                 OpenFile
                   { openFileName = T.pack testFileName,
-                    openFileContents = T.pack testContent
+                    openFileContents = T.pack testContent,
+                    openFileUnfocusedContents = T.pack testContent,
+                    openFileFocused = True,
+                    openFileLastModified = 0
                   }
                   : stateOpenFiles s,
               stateFiles =
@@ -89,7 +92,9 @@ testWithCache useExistingCache = do
             configGitUserName = "",
             configGitUserEmail = "",
             configTaskMaxFailures = RemainingFailureTolerance 1 1,
+            configRejectInvalidSyntaxDiffs = False,
             configForbiddenFiles = [],
+            configMaxNumFocusedFiles = 5,
             configModelTemperature = Nothing,
             configModelMaxInputTokens = 10000
           }
@@ -144,10 +149,9 @@ testWithCache useExistingCache = do
   let expectedOpenFile = OpenFile (T.pack testFileName) (T.pack testContent) (T.pack testContent) True 0
       expectedOpenFiles
         | useExistingCache = []
-        -- \| useExistingCache = [expectedOpenFile] Now we don't load files from cache
-        | otherwise = [expectedOpenFile, expectedOpenFile]
+        | otherwise = [expectedOpenFile]
 
-  stateOpenFiles finalState2 `shouldBe` nub expectedOpenFiles
+  stateOpenFiles finalState2 `shouldBe` expectedOpenFiles
 
 -- Helper to run AppM computations (same as previous)
 runAppMWith :: Config -> AppState -> AppM a -> IO (a, AppState)
