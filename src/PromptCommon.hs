@@ -1400,7 +1400,7 @@ closeIrrelevantUnfocusedFiles llmBackground taskChanges mainFileName = do
           "Note that unfocused source files only show function types and datatypes, not function bodies. " <>
           "Return a JSON object with a single key 'filesToClose' containing a list of just the filenames (from the provided unfocused list) that you determine are completely irrelevant; don't try to take any tool actions to actually close the files. " <>
           "If all unfocused files have some relevance, or if you are unsure, return an empty list for 'filesToClose'. Err on the side of caution; if there's even a tiny chance a file might be useful, don't close it!" <>
-          "DO NOT attempt to make any file changes or call anytools to do so, just return a list in the format below."
+          "DO NOT attempt to make any file changes or call anytools to do so, just return a list in the format below. Don't overthink it too much."
 
     let aiContext = makeBaseContext llmBackground llmSpecificTaskPrompt 
     
