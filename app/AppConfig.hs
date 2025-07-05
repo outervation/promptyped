@@ -109,7 +109,7 @@ appAndModelConfigToConfig aCfg mCfg =
           configEnvVars = envVars aCfg,
           configMaxNumFocusedFiles = maxNumFocusedFiles mCfg,
           configTaskMaxFailures = taskMaxFailures mCfg,
-          configRejectInvalidSyntaxDiffs = rejectInvalidSyntaxDiffs mCfg,
+          configRejectInvalidSyntaxDiffs = rejectInvalidSyntaxDiffs aCfg,
           configForbiddenFiles =
             [ ForbiddenFile "go.sum" cannotModifyDepReason
             ],
