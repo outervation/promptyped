@@ -227,6 +227,42 @@ tryRerunHaskellOneByOne timeout newEnv (testNameToRun : rest) originalOutput num
           putTextLn $ "Test \"" <> testNameToRun <> "\" passed when re-run individually. Trying next."
           tryRerunHaskellOneByOne timeout newEnv rest originalOutput numOriginalFailures
 
+minimiseHaskellFileIO :: FilePath -> FilePath -> [(String, String)] -> IO (Either Text Text)
+minimiseHaskellFileIO baseDir path env = Dir.withCurrentDirectory baseDir $ do
+  let timeout = 5
+  res <- runProcessWithTimeout timeout "." env "hsfile-summariser" [path]
+  case res of
+    Left err -> pure . Left $ "Error minimising Haskell file " <> T.pack path <> ": " <> err
+    Right (exitCode, stdoutRes, stderrRes) ->
+      case exitCode of
+        Exit.ExitSuccess -> pure $ Right stdoutRes
+        Exit.ExitFailure code ->
+          pure
+            . Left
+            $ "Failed to minimise haskell file "
+            <> T.pack path
+            <> " with exit code "
+            <> show code
+            <> "\nstdout:\n"
+            <> truncateText 40 stdoutRes
+            <> "\nstderr:\n"
+            <> truncateText 40 stderrRes
+
+minimiseHaskellFile :: Text -> AppM (Either Text Text)
+minimiseHaskellFile pathText = do
+  cfg <- ask
+  envVars <- getEnvVars
+  unless (isHaskellFileExtension pathText) $
+    throwError $ "Error: can only minimise Haskell source files (.hs), not " <> pathText
+  minimiserExists <- liftIO $ checkBinaryOnPath "hsfile-summariser" envVars
+  unless minimiserExists $ throwError "Error: missing hsfile-summariser binary on path. Need to install https://github.com/outervation/hsfile_summariser"
+  let baseDir = configBaseDir cfg
+      filePath = toFilePath cfg pathText
+  res <- liftIO $ minimiseHaskellFileIO baseDir filePath envVars
+  case res of
+    Left err -> pure $ Left $ "Error minimising haskell file: " <> err
+    Right txt -> pure $ Right txt
+
 addHaskellDependency :: NominalDiffTime -> FilePath -> [(String, String)] -> Text -> IO (Maybe Text)
 addHaskellDependency timeout dir newEnv depName = do
   cabalEditExists <- checkBinaryOnPath "cabal-edit" newEnv
@@ -269,8 +305,7 @@ instance BuildSystem Haskell where
     let timeout = secondsToNominalDiffTime . fromIntegral $ configBuildTimeoutSeconds cfg
     pure $ checkFormatHaskell timeout baseDir
 
-  minimiseFile path =
-    throwError $ "Minimising Haskell files (" <> path <> ") is not yet supported."
+  minimiseFile = minimiseHaskellFile
 
   addDependency name = do
     cfg <- ask
