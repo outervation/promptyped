@@ -163,8 +163,8 @@ buildProjectHaskell :: NominalDiffTime -> FilePath -> [(String, String)] -> IO (
 buildProjectHaskell timeout dir newEnv = Dir.withCurrentDirectory dir $ do
   putTextLn $ "Building Haskell project in dir " <> toText dir
   let buildIt = do
-        buildResult <- runProcessWithTimeout timeout "." newEnv "cabal" ["build", "all"]
-        handleExitCode "'cabal build all'" buildResult
+        buildResult <- runProcessWithTimeout timeout "." newEnv "cabal" ["build", "all", "-fno-code"]
+        handleExitCode "'cabal build all -fno-code'" buildResult
   eitherToMaybe <$> buildIt
 
 runTestsHaskell :: NominalDiffTime -> FilePath -> [(String, String)] -> IO (Maybe (Text, NumFailedTests))

@@ -34,7 +34,7 @@ instance FromJSON ModelConfig
 
 instance ToJSON ModelConfig
 
-data ProgLangName = CPlusPlus | GoLang | Python | Rust
+data ProgLangName = CPlusPlus | GoLang | Python | Rust | Haskell
   deriving (Generic, Eq, Ord, Show)
 
 instance ToJSON ProgLangName

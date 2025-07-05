@@ -20,6 +20,7 @@ library
         CPlusPlus
         GoLang
         Python
+        Haskell
         Rust
         Logging
         OpenRouterClient

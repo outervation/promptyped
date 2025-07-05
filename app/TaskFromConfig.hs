@@ -20,6 +20,7 @@ import FileSystem qualified as FS
 import GoLang qualified as GoLangMod
 import Python qualified as PythonMod
 import Rust qualified as RustMod
+import Haskell qualified as HaskellMod
 import Logging qualified
 import PromptCommon
 import Relude
@@ -34,6 +35,7 @@ getBuildSystem CPlusPlus = SomeBuildSystem (Proxy @CPlusPlusMod.CPlusPlusLang)
 getBuildSystem GoLang = SomeBuildSystem (Proxy @GoLangMod.GoLang)
 getBuildSystem Python = SomeBuildSystem (Proxy @PythonMod.Python)
 getBuildSystem Rust = SomeBuildSystem (Proxy @RustMod.Rust)
+getBuildSystem Haskell = SomeBuildSystem (Proxy @HaskellMod.Haskell)
 
 withBuildSystem ::
   SomeBuildSystem ->
