@@ -36,9 +36,9 @@ testWithCache useExistingCache = do
 
   let addedMetrics =
         Metrics
-          { metricsTokensIn = 5,
-            metricsTokensOut = 3,
-            metricsCost = 7,
+          { metricsLowInt = mempty,
+            metricsMediumInt = mempty,
+            metricsHighInt = mempty,
             metricsApiTime = 9,
             metricsCompileTime = 0,
             metricsTestTime = 0,
@@ -88,7 +88,7 @@ testWithCache useExistingCache = do
             configEnvVars = [],
             configGitUserName = "",
             configGitUserEmail = "",
-            configTaskMaxFailures = 1,
+            configTaskMaxFailures = RemainingFailureTolerance 1 1,
             configForbiddenFiles = [],
             configModelTemperature = Nothing,
             configModelMaxInputTokens = 10000
@@ -98,7 +98,7 @@ testWithCache useExistingCache = do
           { stateMetrics = mempty,
             stateOpenFiles = [],
             stateFiles = [],
-            stateCompileTestRes = CompileTestState Nothing Nothing 0
+            stateCompileTestRes = CompileTestState Nothing Nothing 0 0
           }
 
   -- First run (always compute)
@@ -126,9 +126,9 @@ testWithCache useExistingCache = do
   let expectedMetrics
         | useExistingCache = addedMetrics -- Only first computation
         | otherwise = addedMetrics <> addedMetrics -- Both computations
-  metricsTokensIn (stateMetrics finalState2) `shouldBe` metricsTokensIn expectedMetrics
-  metricsTokensOut (stateMetrics finalState2) `shouldBe` metricsTokensOut expectedMetrics
-  metricsCost (stateMetrics finalState2) `shouldBe` metricsCost expectedMetrics
+  metricsLowInt (stateMetrics finalState2) `shouldBe` metricsLowInt expectedMetrics
+  metricsMediumInt (stateMetrics finalState2) `shouldBe` metricsLowInt expectedMetrics
+  metricsHighInt (stateMetrics finalState2) `shouldBe` metricsLowInt expectedMetrics  
   metricsApiTime (stateMetrics finalState2) `shouldBe` metricsApiTime expectedMetrics
 
   -- Verify file lists
@@ -141,7 +141,7 @@ testWithCache useExistingCache = do
   stateFiles finalState2 `shouldBe` nub expectedFiles
 
   -- Verify open files
-  let expectedOpenFile = OpenFile (T.pack testFileName) (T.pack testContent)
+  let expectedOpenFile = OpenFile (T.pack testFileName) (T.pack testContent) (T.pack testContent) True 0
       expectedOpenFiles
         | useExistingCache = []
         -- \| useExistingCache = [expectedOpenFile] Now we don't load files from cache

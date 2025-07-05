@@ -236,7 +236,7 @@ spec1 = describe "extractRawStrings" $ do
                   { fileName = "myFile",
                     startLineNum = 10,
                     endLineNum = 10,
-                    rawTextName = "replace line",
+                    rawTextName = Just "replace line",
                     origToolName = "someTool"
                   }
               ]
@@ -246,14 +246,14 @@ spec1 = describe "extractRawStrings" $ do
                   { fileName = "myFile",
                     startLineNum = 11,
                     endLineNum = 12,
-                    rawTextName = "replace lines",
+                    rawTextName = Just "replace lines",
                     origToolName = "someTool"
                   }
               ]
       (mergeToolCalls [op1, op2] :: [ToolCallUnit])
         `shouldBe` [ ToolCallFileLineOp
-                       [ FileLineOpArg "myFile" 10 10 "replace line" "someTool",
-                         FileLineOpArg "myFile" 11 12 "replace lines" "someTool"
+                       [ FileLineOpArg "myFile" 10 10 (Just "replace line") "someTool",
+                         FileLineOpArg "myFile" 11 12 (Just "replace lines") "someTool"
                        ]
                    ]
 
@@ -303,11 +303,11 @@ spec2 = describe "getLineNumsFromRegex" $ do
     -- "^nothing$" won't match any line in `testContent`.
     let result = getLineNumsFromRegex ("^nothing$", 2) ("^baz$", 6) testContent
     result
-      `shouldBe` Left "No lines matched the start pattern '^nothing$' in the entire text. Note only POSIX character classes are supported."
+      `shouldBe` Left "No lines matched the start pattern '^nothing$' in the entire text. Note only POSIX character classes are supported (e.g. [:space:] not \\s). Try to use the simplest matching regex possible to minimise mistakes, and only use ^ and $ start/end matching when absolutely necessary to disambiguate."
 
   it "fails if no line matches the end pattern after the start line" $ do
     -- The start pattern matches line 1 (closest to 2).
     -- Then we look for an end pattern that doesn't exist, e.g. "^qqqq$"
     let result = getLineNumsFromRegex ("^foo$", 1) ("^qqqq$", 6) testContent
     result
-      `shouldBe` Left "No lines matched the end pattern '^qqqq$' at or after line 0. Note only POSIX character classes are supported."
+      `shouldBe` Left "No lines matched the end pattern '^qqqq$' at or after line 0. Note only POSIX character classes are supported (e.g. [:space:] not \\s). Try to use the simplest matching regex possible to minimise mistakes, and only use ^ and $ start/end matching when absolutely necessary to disambiguate."
