@@ -535,8 +535,8 @@ toolToDescription x = do
 returnValueToDescription :: (ToJSON a) => a -> Text
 returnValueToDescription example = do
   let exampleTxt = toJ example
-  let fmt = "You must return the output in a format like the following: " <> mkToolCallSyntax ToolReturn exampleTxt
-  fmt <> " \n You must either return a value or call a tool. Because you're part of an automated process, you cannot prompt the user for information, so panic if you don't know how to proceed. Remember COMMENTS ARE NOT SUPPORTED in the JSON."
+  let fmt = "Output returned must be in a format like the following: " <> mkToolCallSyntax ToolReturn exampleTxt
+  fmt
 
 toolsToDescription :: [Tool] -> Text
 toolsToDescription tools = toolSummary <> "\nAll available tools: \n" <> T.unlines (map toolToDescription tools) <> "\n Multiple tool calls are supported, you can do ToolName=<[{ ... }]> for a single set of args or ToolName=<[{...}, {...}]> for multiple sets of args (where the inside of { ... } must be valid JSON without comments). (Replace ToolName here with the actual name of a tool; ToolName itself is not a tool!). E.g. OpenFile=<[{'fileName': 'someFile.txt'}, {'fileName': 'someOtherFile.txt'}]>. \nRemember that the latest state of the files to modify is in the OpenFiles section. Please include one SummariseAction call in each response to capture your intent, and try to limit the number of file edits/modifications per response, to minimise the number of potential compilation errors/unit test failures that need to be fixed at once. Remember COMMENTS ARE NOT SUPPORTED in the JSON."

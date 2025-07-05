@@ -1388,7 +1388,7 @@ closeIrrelevantUnfocusedFiles llmBackground taskChanges mainFileName = do
   else do
     liftIO $ putTextLn $ "Currently unfocused open files: " <> T.intercalate ", " unfocusedOpenFileNames
 
-    let taskSummary = "Your task is to close open source files (not documentation/spec files) that are completely irrelevant for the main task; the main task (which will be done after the irrelevant files are closed) is:\nTo modify the file '" <> mainFileName <> "' based on the following required changes: " <> Tools.toJ taskChanges <> "."
+    let taskSummary = "Your task is to identify open source files (not documentation/spec files) that are completely irrelevant for the main task, and hence may be closed. The main task (which will be done after the irrelevant files are closed; DO NOT attempt this task now) is:\n'''To modify the file '" <> mainFileName <> "' based on the following required changes: " <> Tools.toJ taskChanges <> "'''.\n Remember you should NOT do that task now, instead return a list of completely irrelevant files to close for that task."
     
     let llmSpecificTaskPrompt =
           taskSummary <> "\n\n" <>
@@ -1400,7 +1400,7 @@ closeIrrelevantUnfocusedFiles llmBackground taskChanges mainFileName = do
           "Note that unfocused source files only show function types and datatypes, not function bodies. " <>
           "Return a JSON object with a single key 'filesToClose' containing a list of just the filenames (from the provided unfocused list) that you determine are completely irrelevant; don't try to take any tool actions to actually close the files. " <>
           "If all unfocused files have some relevance, or if you are unsure, return an empty list for 'filesToClose'. Err on the side of caution; if there's even a tiny chance a file might be useful, don't close it!" <>
-          "DO NOT attempt to make any file changes or call anytools to do so, just return a list in the format below. Don't overthink it too much."
+          "DO NOT attempt to make any file changes or call any tools to do so, just return a list in the format below. Don't overthink it too much."
 
     let aiContext = makeBaseContext llmBackground llmSpecificTaskPrompt 
     

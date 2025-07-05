@@ -304,7 +304,7 @@ contextToMessages Context{..} tools theState isNestedAiFunc isCloseFileTask exam
     pure $ mergeAdjacentRoleMessages $ Message {role = roleName RoleUser, content = T.unlines allTexts} : messages
   where
     toolDesc = Tools.toolsToDescription tools
-    respReqsDesc = "Your response must either call at least one tool or return a value. If calling any tool, please also include a SummariseAction tool call too, for tracking the intent and future plans."
+    respReqsDesc = "Your response must either call at least one tool or return a value. If calling any tool, please also include a SummariseAction tool call too, for tracking the intent and future plans (but you DO NOT need to do this if the task asks you to directly return some value without making some file modifications/doing IO). Because you're part of an automated process, you cannot prompt the user for information, so panic if you don't know how to proceed. Remember COMMENTS ARE NOT SUPPORTED in the JSON."
     evtsDesc = "Here is a list of your recent actions, the intent behind them and their results. Look carefully to identify any circular behaviour here, to avoid getting stuck in a loop, and so you don't lose track of your train of thought/intention:[\n\n" <> T.intercalate "\n" (map show (takeEnd numRecentEventsToShow contextEvents)) <> "\n]\n"
     render :: FileFocused -> Text -> AppM Text
     render isFocused file = do
@@ -507,7 +507,7 @@ runAiFuncInner isNestedAiFunc isCloseFileTask initialCtxt intReq tools exampleRe
       ctxtWithAiMsg = addToContextAi ctxt OtherMsg aiMsg
   case (mayToolsCalled, mayRawTextBlocks) of
     (Left err, _) -> addErrorAndRecurse ("Error in function calls/return: " <> err) ctxtWithAiMsg SyntaxError OtherMsg
-    (Right [], _) -> addErrorAndRecurse "Must call a tool or return. Remember the syntax is ToolName=<[{ someJson }]> , not ToolName=[{ someJson }] and not ToolName<[{ someJson }]> (replace ToolName here with the actual name of the tool; ToolName itself is not a tool!)." ctxtWithAiMsg SyntaxError OtherMsg
+    (Right [], _) -> addErrorAndRecurse ("Must call a tool or return. Remember the syntax is ToolName=<[{ someJson }]> , not ToolName=[{ someJson }] and not ToolName<[{ someJson }]> (replace ToolName here with the actual name of the tool; ToolName itself is not a tool!)." <> Tools.returnValueToDescription exampleReturn) ctxtWithAiMsg SyntaxError OtherMsg
     (_, Left err) -> addErrorAndRecurse ("Error in raw text syntax: " <> err) ctxtWithAiMsg SyntaxError OtherMsg
     (Right callsRaw, Right _) | toolCallsMissingRequiredSummary callsRaw -> addErrorAndRecurse ("Made state-changing tool calls but didn't include SummariseAction=<[{...}]> call") ctxtWithAiMsg SyntaxError OtherMsg
     (Right callsRaw, Right rawTextBlocks) | otherwise -> handleToolCalls ctxtWithAiMsg callsRaw rawTextBlocks
