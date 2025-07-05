@@ -23,7 +23,6 @@ data ModelConfig = ModelConfig
     mediumIntModelName :: Text,
     highIntModelName :: Text,
     taskMaxFailures :: RemainingFailureTolerance,
-    rejectInvalidSyntaxDiffs :: Bool,
     maxNumFocusedFiles :: Int,
     modelTemperature :: Maybe Float,
     modelMaxInputTokens :: Int
@@ -80,6 +79,7 @@ data AppConfig = AppConfig
     gitUserEmail :: Text,
     envVars :: [(Text, Text)],
     projectKind :: ProjectKind,
+    rejectInvalidSyntaxDiffs :: Bool,
     targetedRefactorCfg :: Maybe PC.TargetedRefactorConfig,
     bigRefactorCfg :: Maybe PC.BigRefactorConfig,
     taskCfg :: Maybe TaskConfig,
