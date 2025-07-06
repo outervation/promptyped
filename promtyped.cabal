@@ -26,6 +26,7 @@ library
         OpenRouterClient
         ShapeChecker
         TerminalInput
+        Typst
 
     hs-source-dirs:     src
     default-language:   GHC2024
@@ -112,6 +113,7 @@ test-suite promtyped-tests
     other-modules:
         MemoiseSpec
         FileSystemSpec
+        TypstSpec
         ToolsSpec
 
     default-language:   GHC2024

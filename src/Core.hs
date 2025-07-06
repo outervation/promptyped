@@ -13,7 +13,6 @@ import Data.Text qualified as T
 import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
 import Data.Time.Clock.System (SystemTime, getSystemTime, systemToTAITime)
 import Data.Time.Clock.TAI (diffAbsoluteTime)
-import Data.Typeable ()
 import qualified Text.Show
 import Data.Vector qualified as V
 import Relude
@@ -163,15 +162,21 @@ addOpenFile :: Text -> Text -> Text -> AppState -> AppState
 addOpenFile name contents unfocusedContents theState =
   theState {stateOpenFiles = OpenFile name contents unfocusedContents False 0 : stateOpenFiles theState}
 
-updateOpenFile :: Text -> Text -> AppState -> AppState
-updateOpenFile name contents theState =
+updateOpenFileContentsOnly :: Text -> Text -> AppState -> AppState
+updateOpenFileContentsOnly name contents theState =
   let upd x = x {openFileContents = contents}
+   in theState {stateOpenFiles = map (\x -> if openFileName x /= name then x else upd x) (stateOpenFiles theState)}
+
+updateOpenFile :: Text -> Text -> Text -> AppState -> AppState
+updateOpenFile name contents unfocusedContents theState =
+  let upd x = x {openFileContents = contents,
+                openFileUnfocusedContents = unfocusedContents}
    in theState {stateOpenFiles = map (\x -> if openFileName x /= name then x else upd x) (stateOpenFiles theState)}
 
 ensureOpenFile :: Text -> Text -> Text -> AppState -> AppState
 ensureOpenFile name contents unfocusedContents theState =
   if any (\x -> openFileName x == name) (stateOpenFiles theState)
-    then updateOpenFile name contents theState
+    then updateOpenFile name contents unfocusedContents theState
     else addOpenFile name contents unfocusedContents theState
 
 closeOpenFile :: Text -> AppState -> AppState
@@ -630,7 +635,7 @@ focusedFileNames st =
   map openFileName $ filter (\file -> openFileFocused file) (stateOpenFiles st)
 
 data TimeOverflowException = TimeOverflowException
-  deriving (Show, Typeable)
+  deriving (Show)
 
 instance Exception TimeOverflowException
 

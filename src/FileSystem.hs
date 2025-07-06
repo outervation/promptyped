@@ -136,7 +136,8 @@ updateOpenedFile lineNumberFns fileName = do
         $ liftIO (ensureNoLineNumbers lineNumberFns (toFilePath cfg fileName))
         >>= \case
           Left err -> throwError (fmtErr err)
-          Right contents -> modify' (updateOpenFile fileName contents)
+          -- The focused contents shouldn't have changed
+          Right contents -> modify' (updateOpenFileContentsOnly fileName contents)
 
 reloadOpenFiles :: LineNumberAddRemoveFns -> AppM ()
 reloadOpenFiles lineNumberFns = do
