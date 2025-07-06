@@ -1267,8 +1267,9 @@ buildAndTest = do
       {-          case result of
                   Just err -> liftIO $ putTextLn $ "Test error: " <> err
                   Nothing -> return () -}
+      let errExtra = "\nIf the failure occurred in a file that's not open and focused, you may want to open and focus it."
       return $ case result of
-        Just (err, numTestsFailed) -> (Just (TestFailMsg, err), evts ++ [EvtTestProject Failed numTestsFailed])
+        Just (err, numTestsFailed) -> (Just (TestFailMsg, err <> errExtra), evts ++ [EvtTestProject Failed numTestsFailed])
         Nothing -> (Nothing, evts ++ [EvtTestProject Succeeded $ NumFailedTests 0])
 
 considerBuildAndTest :: forall a. (BS.BuildSystem a) => Text -> AppM (Maybe (MsgKind, Text), [TracedEvent])

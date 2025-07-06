@@ -323,7 +323,7 @@ contextToMessages Context{..} tools theState isNestedAiFunc isCloseFileTask exam
             Just err -> "Failed with error: \n" <> err
             Nothing -> "Succeeded!"
           testDesc = case ctRes.testRes of
-            Just (err, NumFailedTests numFailedTests) -> "Failed with " <> show numFailedTests <> "total test failures; the error was: \n" <> err
+            Just (err, NumFailedTests numFailedTests) -> "Failed with " <> show numFailedTests <> " total test failures; the error was: \n" <> err <>"\nIf the failure occurred in a file that's not open and focused, you may want to open and focus it."
             Nothing -> "Succeeded!"
       "\nLATEST COMPILE/TEST STATE (note this represents the latest results even after messages that many occur below in the context): \nLast compilation: " <> compDesc <> "\nLast unit test run: " <> testDesc <> "\n"
 
@@ -507,7 +507,7 @@ runAiFuncInner isNestedAiFunc isCloseFileTask initialCtxt intReq tools exampleRe
       ctxtWithAiMsg = addToContextAi ctxt OtherMsg aiMsg
   case (mayToolsCalled, mayRawTextBlocks) of
     (Left err, _) -> addErrorAndRecurse ("Error in function calls/return: " <> err) ctxtWithAiMsg SyntaxError OtherMsg
-    (Right [], _) -> addErrorAndRecurse ("Must call a tool or return. Remember the syntax is ToolName=<[{ someJson }]> , not ToolName=[{ someJson }] and not ToolName<[{ someJson }]> (replace ToolName here with the actual name of the tool; ToolName itself is not a tool!)." <> Tools.returnValueToDescription exampleReturn) ctxtWithAiMsg SyntaxError OtherMsg
+    (Right [], _) -> addErrorAndRecurse ("Must call a tool or return. Remember the syntax is ToolName=<[{ someJson }]> , not ToolName=[{ someJson }] and not ToolName<[{ someJson }]> (replace ToolName here with the actual name of the tool; ToolName itself is not a tool!). " <> Tools.returnValueToDescription exampleReturn) ctxtWithAiMsg SyntaxError OtherMsg
     (_, Left err) -> addErrorAndRecurse ("Error in raw text syntax: " <> err) ctxtWithAiMsg SyntaxError OtherMsg
     (Right callsRaw, Right _) | toolCallsMissingRequiredSummary callsRaw -> addErrorAndRecurse ("Made state-changing tool calls but didn't include SummariseAction=<[{...}]> call") ctxtWithAiMsg SyntaxError OtherMsg
     (Right callsRaw, Right rawTextBlocks) | otherwise -> handleToolCalls ctxtWithAiMsg callsRaw rawTextBlocks
