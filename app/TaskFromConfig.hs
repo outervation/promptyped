@@ -21,6 +21,7 @@ import GoLang qualified as GoLangMod
 import Python qualified as PythonMod
 import Rust qualified as RustMod
 import Haskell qualified as HaskellMod
+import Typst qualified as TypstMod
 import Logging qualified
 import PromptCommon
 import Relude
@@ -36,6 +37,7 @@ getBuildSystem GoLang = SomeBuildSystem (Proxy @GoLangMod.GoLang)
 getBuildSystem Python = SomeBuildSystem (Proxy @PythonMod.Python)
 getBuildSystem Rust = SomeBuildSystem (Proxy @RustMod.Rust)
 getBuildSystem Haskell = SomeBuildSystem (Proxy @HaskellMod.Haskell)
+getBuildSystem Typst = SomeBuildSystem (Proxy @TypstMod.Typst)
 
 withBuildSystem ::
   SomeBuildSystem ->
