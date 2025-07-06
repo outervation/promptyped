@@ -1,4 +1,5 @@
 
+
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 
@@ -56,7 +57,7 @@ spec = describe "Typst BuildSystem" $ do
       TIO.writeFile testFilePath fileContent
 
       let config = baseConfig { configBaseDir = tmpDir }
-      
+
       (result, _) <- runAppMWith config baseState (minimiseFile @Typst (toText testFileName))
-      
+
       result `shouldBe` Right fileContent
