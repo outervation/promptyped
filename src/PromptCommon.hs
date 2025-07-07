@@ -932,8 +932,8 @@ makeTargetedRefactorProject projectTexts refactorCfg mOverallWorkplan = do
   _ <- Tools.buildAndTest @bs
   let filterSourceFile x = do
         buildable <- BS.isBuildableFile @bs x
-        --isTest <- BS.isTestFile @bs x
-        return $ buildable -- && not isTest
+        isTest <- BS.isTestFile @bs x
+        return $ buildable && not isTest
 
       setupOpenFiles fileNames = do
         modify' clearOpenFiles
