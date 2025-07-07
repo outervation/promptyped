@@ -445,7 +445,7 @@ makeRefactorFileTask background initialDeps fileName desiredChanges refactorUnit
   let dependencies = [(fileName, Tools.DoFocusOpenedFile), (journalFileName, Tools.DoFocusOpenedFile)] ++ map (\(x, shouldFocus) -> (x.existingFileName, shouldFocus)) initialDeps
   forM_ dependencies $ \(x, shouldFocus) -> Tools.openFile @bs shouldFocus x cfg
   Tools.forceFocusFile fileName
-  closeIrrelevantUnfocusedFiles @bs background desiredChanges fileName
+  when (length desiredChanges > 0) $ closeIrrelevantUnfocusedFiles @bs background desiredChanges fileName
   let makeChange description = do
         let ctxt = makeBaseContext background $ "Your task for working on file " <> fileName <> " is to make the change: " <> (summary description) <> ". Do NOT make other changes yet. If the build/tests are currently broken, fix those first. If the change has already been made, you can (and should) return directly. Where the task has multiple steps, you don't need to do it all at once; it's better to do it step-by-step (one step per response) to reduce the chance of errors, and only Return after all steps are done."
             exampleChange = ModifiedFile "someFile.go" "Update the file to add ... so that it ..."
