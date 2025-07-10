@@ -358,7 +358,7 @@ checkCompileTestResults = do
   pure $ case (compileRes res, testRes res) of
     (Nothing, Nothing) -> Right ()
     (Just _, _) -> Left (CompileFailMsg, "Error, compilation failed, fix it before returning. Note that if you see a 'missing import path' compilation error, it may be because you forgot a closing ')' for the go import list. If you see 'is not a package path' when trying to import a local file you created, remember you should include 'project_name/filename', NOT '/home/username/project_name/filename' or 'username/project_name/filename'. The compilation error is described earlier above.")
-    (Nothing, Just _) -> Left (TestFailMsg, "Error, unit tests didn't all pass (or failed to compile), fix them first. I encourage you to add more logging/printf for debugging if necessary, and to record your current step and planned future steps in the journal.txt . If you see 'is not a package path' when trying to import a local file you created into a test, remember you should include 'project_name/filename', NOT '/home/username/project_name/filename' or 'username/project_name/filename'. The error with unit tests is described earlier above.")
+    (Nothing, Just _) -> Left (TestFailMsg, "Error, unit tests didn't all pass (or failed to compile), fix them first. I encourage you to add more logging/printf for debugging if necessary, and to record your current step and planned future steps in the journal.txt . If you see 'is not a package path' when trying to import a local file you created into a test, remember you should include 'project_name/filename', NOT '/home/username/project_name/filename' or 'username/project_name/filename'. The error with unit tests is described earlier above. Try to avoid making assumptions about what caused the test failure until you've added debug logging to confirm it, unless it's obvious.")
 
 validateUnitTest :: Context -> UnitTestDone -> AppM (Either (MsgKind, Text) ())
 validateUnitTest _ t = case unitTestPassedSuccessfully t of
@@ -945,7 +945,7 @@ makeTargetedRefactorProject projectTexts refactorCfg mOverallWorkplan = do
 
       summary = refactorCfg.refactorSummary
       workplanDesc = case mOverallWorkplan of
-        Just x -> "You're working on a single section of the following overall work plan:\n" <> x <> "\n\n"
+        Just x -> "You're working on a single section of the following overall work plan:\n" <> x <> "\n\nOnly do the part of the plan described below, then Return; don't continue to other parts of the plan after finishing that part."
         Nothing -> ""
 
       doRefactor :: TargetedRefactorConfigItem -> AppM ()
